@@ -1,0 +1,12 @@
+# Archivos de Flutter
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+
+# Ignorar archivo de llaves (si las tienes separadas)
+lib/core/keys.dart 
+.env
