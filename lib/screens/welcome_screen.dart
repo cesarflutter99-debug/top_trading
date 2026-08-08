@@ -1,18 +1,22 @@
+import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/supabase_client.dart';
-import '../services/tiendas_service.dart';
-import 'admin_panel_screen.dart';
-import 'home_screen.dart';
-import 'login_screen.dart';
-import 'onboarding_tienda_screen.dart';
-import 'panel_vendedor_screen.dart';
+import '../services/notificaciones_service.dart';
 
-/// Adaptado del diseño original hecho en FlutterFlow ("Onboarding Entry").
-/// Se reconstruyó con widgets Flutter puros para conectarlo a la
-/// navegación y lógica reales de la app (sin las dependencias del
-/// paquete FlutterFlowTheme / componentes personalizados del export).
+/// Pantalla de entrada única. Ya no existe navegación anónima: todo
+/// usuario (comprador o vendedor) debe autenticarse con Google antes
+/// de entrar al marketplace.
+///
+/// Antes esto abría LoginScreen (pantalla intermedia con un solo
+/// botón). Se fusionó aquí porque esa pantalla no aportaba nada por sí
+/// sola -- "Continuar con Google" dispara el OAuth directo desde este
+/// mismo botón, sin la pantalla de en medio. LoginScreen puede
+/// borrarse del proyecto (y su ruta /login de router.dart, si aún
+/// existe) una vez confirmes que esto funciona.
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
 
@@ -21,72 +25,58 @@ class WelcomeScreen extends StatefulWidget {
 }
 
 class _WelcomeScreenState extends State<WelcomeScreen> {
-  // true mientras comprobamos si ya hay una sesión de vendedor guardada.
-  // Evita el parpadeo de la pantalla de bienvenida si vamos a redirigir.
-  bool _verificandoSesion = true;
+  bool _cargando = false;
+  StreamSubscription<AuthState>? _authSub;
 
-  @override
-  void initState() {
-    super.initState();
-    _verificarSesionExistente();
+  Future<void> _entrarConGoogle() async {
+    setState(() => _cargando = true);
+    try {
+      await supabase.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'io.supabase.toptrading://login-callback/',
+      );
+
+      // Si ya había una suscripción de un intento anterior, no
+      // agregamos otra encima.
+      _authSub ??= supabase.auth.onAuthStateChange.listen((data) async {
+        final sesion = data.session;
+        if (sesion != null && mounted) {
+          // Arranca el servicio de notificaciones (historial +
+          // Realtime) justo después de un login exitoso -- antes esto
+          // vivía en login_screen.dart y nunca se llamaba.
+          await NotificacionesService.instance.iniciar();
+
+          // AJUSTA '/home' si en tu router.dart la ruta de HomeScreen
+          // tiene otro path.
+          if (mounted) context.go('/home');
+          await _authSub?.cancel();
+          _authSub = null;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al iniciar sesión: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _cargando = false);
+    }
   }
 
-  /// Supabase ya persiste la sesión en el dispositivo por defecto.
-  /// Esto solo la lee y, si es válida, manda directo al panel
-  /// correspondiente sin pasar por LoginScreen -- así el vendedor
-  /// no tiene que loguearse cada vez que abre la app.
-  Future<void> _verificarSesionExistente() async {
-    final session = supabase.auth.currentSession;
-
-    if (session == null) {
-      if (mounted) setState(() => _verificandoSesion = false);
-      return;
-    }
-
-    try {
-      final tiendasService = TiendasService();
-
-      final esAdmin = await tiendasService.esAdmin();
-      if (!mounted) return;
-
-      if (esAdmin) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
-        );
-        return;
-      }
-
-      final tienda = await tiendasService.obtenerMiTienda();
-      if (!mounted) return;
-
-      if (tienda == null) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const OnboardingTiendaScreen()),
-        );
-      } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => PanelVendedorScreen(tienda: tienda)),
-        );
-      }
-    } catch (e) {
-      // Si falla la consulta (ej. sin internet), no bloqueamos al usuario:
-      // simplemente mostramos la bienvenida normal.
-      if (mounted) setState(() => _verificandoSesion = false);
-    }
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-
-    if (_verificandoSesion) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
+    final fondo = Theme.of(context).scaffoldBackgroundColor;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: fondo,
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -111,8 +101,8 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                         begin: Alignment.bottomCenter,
                         end: Alignment.topCenter,
                         colors: [
-                          Colors.white,
-                          Colors.white.withOpacity(0.75),
+                          fondo,
+                          fondo.withOpacity(0.75),
                           Colors.transparent,
                         ],
                         stops: const [0, 0.6, 1],
@@ -133,7 +123,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                             borderRadius: BorderRadius.circular(9999),
                           ),
                           child: Text(
-                            'HABANA MARKET',
+                            'AlLADO',
                             style: GoogleFonts.inter(
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
@@ -148,7 +138,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                             fontWeight: FontWeight.w900,
                             fontSize: 30,
                             height: 1.2,
-                            color: Colors.black87,
+                            color: Theme.of(context).textTheme.bodyLarge?.color,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -157,7 +147,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                           style: GoogleFonts.inter(
                             fontSize: 16,
                             height: 1.5,
-                            color: Colors.black54,
+                            color: Theme.of(context).textTheme.bodyMedium?.color,
                           ),
                         ),
                       ],
@@ -175,44 +165,35 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                   _FeatureItem(
                     icon: Icons.store_rounded,
                     title: 'Tiendas Verificadas',
-                    desc: 'Compra con seguridad en comercios validados por la comunidad.',
+                    desc:
+                        'Compra con seguridad en comercios validados por la comunidad.',
                     color: primary,
                   ),
                   const SizedBox(height: 24),
                   _FeatureItem(
                     icon: Icons.payments_rounded,
                     title: 'Precio Local',
-                    desc: 'Conversión automática USD/CUP según la tasa del día.',
+                    desc:
+                        'Conversión automática USD/CUP según la tasa del día.',
                     color: primary,
                   ),
                   const SizedBox(height: 24),
                   _FeatureItem(
                     icon: Icons.location_on_rounded,
                     title: 'Geolocalización',
-                    desc: 'Encuentra productos cerca de ti en todos los municipios.',
+                    desc:
+                        'Encuentra productos cerca de ti en todos los municipios.',
                     color: primary,
                   ),
                 ],
               ),
             ),
 
-            // ---------- Botones de acceso ----------
+            // ---------- CTA único: Google directo, sin pantalla intermedia ----------
             Padding(
               padding: const EdgeInsets.all(32),
               child: Column(
                 children: [
-                  Text(
-                    '¿Quieres empezar a comprar?',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.inter(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Comprador: entra directo, sin login (navegación anónima)
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
@@ -220,66 +201,18 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         backgroundColor: primary,
                       ),
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const HomeScreen()),
-                        );
-                      },
-                      icon: const Icon(Icons.arrow_forward_rounded),
-                      label: const Text('Explorar como Comprador'),
-                    ),
-                  ),
-
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: Row(
-                      children: [
-                        const Expanded(child: Divider()),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Text('O',
-                              style: GoogleFonts.inter(color: Colors.black45)),
-                        ),
-                        const Expanded(child: Divider()),
-                      ],
-                    ),
-                  ),
-
-                  Text(
-                    '¿Eres vendedor?',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.inter(fontSize: 14, color: Colors.black54),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Vendedor: requiere autenticación Google (obligatoria)
-                  InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const LoginScreen()),
-                      );
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.black12),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.g_mobiledata_rounded, size: 28),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Entrar como Vendedor',
-                            style: GoogleFonts.inter(
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black87,
-                            ),
-                          ),
-                        ],
-                      ),
+                      onPressed: _cargando ? null : _entrarConGoogle,
+                      icon: _cargando
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.login_rounded),
+                      label: const Text('Continuar con Google'),
                     ),
                   ),
                 ],
@@ -293,7 +226,9 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                 children: [
                   Text(
                     'Al continuar, aceptas nuestros',
-                    style: GoogleFonts.inter(fontSize: 12, color: Colors.black45),
+                    style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Theme.of(context).textTheme.bodySmall?.color),
                   ),
                   const SizedBox(height: 4),
                   Row(
@@ -306,7 +241,9 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                               decoration: TextDecoration.underline)),
                       Text(' y ',
                           style: GoogleFonts.inter(
-                              fontSize: 12, color: Colors.black45)),
+                              fontSize: 12,
+                              color:
+                                  Theme.of(context).textTheme.bodySmall?.color)),
                       Text('Privacidad',
                           style: GoogleFonts.inter(
                               fontSize: 12,
@@ -362,7 +299,9 @@ class _FeatureItem extends StatelessWidget {
               const SizedBox(height: 4),
               Text(desc,
                   style: GoogleFonts.inter(
-                      fontSize: 13, color: Colors.black54, height: 1.4)),
+                      fontSize: 13,
+                      color: Theme.of(context).textTheme.bodySmall?.color,
+                      height: 1.4)),
             ],
           ),
         ),

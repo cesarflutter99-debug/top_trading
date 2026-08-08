@@ -13,7 +13,13 @@ dependencies:
   # Backend
   supabase_flutter: ^2.5.6
 
-  # Login nativo con Google (selector de cuentas del sistema)
+  # Navegación avanzada
+  go_router: ^14.2.0
+
+  # Compartir contenido
+  share_plus: ^10.1.0
+
+  # Login nativo con Google
   google_sign_in: ^6.2.1
 
   # Geolocalización
@@ -22,7 +28,7 @@ dependencies:
   # Deep linking a WhatsApp
   url_launcher: ^6.3.2
 
-  # Estado (elige el que prefieras; Provider es el más simple para empezar)
+  # Estado
   provider: ^6.1.2
 
   # Carga de imágenes remotas con cache
@@ -36,6 +42,9 @@ dependencies:
 
   # Formularios / validaciones opcionales
   intl: ^0.19.0
+  
+  # QR Code
+  qr_flutter: ^4.1.0
 
   cupertino_icons: ^1.0.6
 
@@ -44,5 +53,25 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
 
+  # Genera el ícono de la app (launcher icon) para Android e iOS
+  # a partir de assets/icon/icon.png
+  flutter_launcher_icons: ^0.13.1
+
 flutter:
   uses-material-design: true
+
+  # Carpeta de recursos gráficos (logo del AppBar, ícono fuente, etc.)
+  assets:
+    - assets/logo.png
+    - assets/icon/icon.png
+
+    
+
+# Configuración de flutter_launcher_icons.
+# Después de guardar tu imagen en assets/icon/icon.png, corre:
+#   flutter pub get
+#   flutter pub run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"

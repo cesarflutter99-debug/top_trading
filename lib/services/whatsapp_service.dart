@@ -50,4 +50,28 @@ class WhatsappService {
       throw Exception('No se pudo abrir WhatsApp');
     }
   }
+
+  /// Notifica al admin sobre un nuevo registro de afiliado, incluyendo
+  /// su código para que el admin pueda buscarlo/verificarlo.
+  Future<void> notificarNuevoAfiliado({
+    required String telefonoAdmin,
+    required String nombre,
+    required String telefonoAfiliado,
+    required String codigo,
+  }) async {
+    final mensaje = Uri.encodeComponent(
+      'Nuevo afiliado registrado en Top Trading:\n'
+      '- Nombre: $nombre\n'
+      '- Teléfono: $telefonoAfiliado\n'
+      '- Código: $codigo\n'
+      'Puedes buscarlo por este código en el panel de administración.',
+    );
+    final url = Uri.parse('https://wa.me/$telefonoAdmin?text=$mensaje');
+
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } else {
+      throw Exception('No se pudo abrir WhatsApp');
+    }
+  }
 }

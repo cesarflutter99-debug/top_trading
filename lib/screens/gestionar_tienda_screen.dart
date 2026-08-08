@@ -1,20 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
+import '../services/storage_service.dart';
+import 'gestionar_planes_screen.dart';
 import 'gestionar_ventas_screen.dart';
 
 class GestionarTiendaScreen extends StatefulWidget {
   final Map<String, dynamic> tienda;
 
-  const GestionarTiendaScreen({super.key, required this.tienda});
+  const GestionarTiendaScreen({
+    super.key,
+    required this.tienda,
+  });
 
   @override
   State<GestionarTiendaScreen> createState() => _GestionarTiendaScreenState();
 }
 
 class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
-  late String _planActual = widget.tienda['plan'] ?? 'basic';
+  final _storageService = StorageService();
   bool _procesando = false;
 
   // ---------------------------------------------------------------------
@@ -48,6 +53,10 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
     setState(() => _procesando = true);
     try {
       final idTienda = widget.tienda['id_tienda'];
+      // Primero los archivos (logo, portada, fotos de productos), para
+      // no dejar nada huérfano ocupando espacio en Storage; después la
+      // fila de la base de datos.
+      await _storageService.borrarArchivosDeTienda(idTienda);
       await supabase.from('tiendas').delete().eq('id_tienda', idTienda);
 
       if (mounted) {
@@ -64,135 +73,6 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
       }
     } finally {
       if (mounted) setState(() => _procesando = false);
-    }
-  }
-
-  // ---------------------------------------------------------------------
-  // 2. CAMBIAR DE PLAN
-  // ---------------------------------------------------------------------
-  Future<void> _cambiarPlan() async {
-    final nuevoPlan = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cambiar plan'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioListTile<String>(
-              title: const Text('Basic'),
-              subtitle: const Text('20 productos, 20 fotos'),
-              value: 'basic',
-              groupValue: _planActual,
-              onChanged: (v) => Navigator.pop(ctx, v),
-            ),
-            RadioListTile<String>(
-              title: const Text('Premium'),
-              subtitle: const Text('50 productos, 50 fotos, Portada Mensual'),
-              value: 'premium',
-              groupValue: _planActual,
-              onChanged: (v) => Navigator.pop(ctx, v),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
-          ),
-        ],
-      ),
-    );
-
-    if (nuevoPlan == null || nuevoPlan == _planActual) return;
-
-    setState(() => _procesando = true);
-    try {
-      final idTienda = widget.tienda['id_tienda'];
-      await supabase
-          .from('tiendas')
-          .update({'plan': nuevoPlan})
-          .eq('id_tienda', idTienda);
-
-      setState(() => _planActual = nuevoPlan);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Plan actualizado a ${nuevoPlan == "premium" ? "Premium" : "Basic"}',
-            ),
-          ),
-        );
-        // Ofrecemos de una vez enviar el pago/verificación por WhatsApp
-        _solicitarVerificacion();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo cambiar el plan: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _procesando = false);
-    }
-  }
-
-  // ---------------------------------------------------------------------
-  // 3. SOLICITAR VERIFICACIÓN POR WHATSAPP
-  //    Lee el número marcado como activo=true en contactos_whatsapp.
-  //    Debe haber SOLO UNO activo (garantízalo desde el panel de admin).
-  // ---------------------------------------------------------------------
-  Future<String?> _obtenerNumeroWhatsappActivo() async {
-    try {
-      final data = await supabase
-          .from('contactos_whatsapp')
-          .select('telefono')
-          .eq('activo', true)
-          .limit(1)
-          .maybeSingle();
-      return data?['telefono'] as String?;
-    } catch (e) {
-      debugPrint('Error obteniendo número WhatsApp activo: $e');
-      return null;
-    }
-  }
-
-  Future<void> _solicitarVerificacion() async {
-    setState(() => _procesando = true);
-    final numero = await _obtenerNumeroWhatsappActivo();
-    if (mounted) setState(() => _procesando = false);
-
-    if (numero == null || numero.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No hay un número de contacto activo configurado. '
-              'Contacta al administrador.',
-            ),
-          ),
-        );
-      }
-      return;
-    }
-
-    final usuario = supabase.auth.currentUser;
-    final idUsuario = usuario?.email ?? usuario?.id ?? 'desconocido';
-    final nombrePlan = _planActual == 'premium' ? 'Premium' : 'Basic';
-
-    final mensaje = Uri.encodeComponent(
-      'Hola, soy el usuario $idUsuario y quiero verificar mi tienda '
-      'con el plan $nombrePlan.',
-    );
-
-    final url = Uri.parse('https://wa.me/$numero?text=$mensaje');
-
-    final abierto = await launchUrl(url, mode: LaunchMode.externalApplication);
-
-    if (!abierto && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo abrir WhatsApp')),
-      );
     }
   }
 
@@ -219,13 +99,16 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
                       child: Icon(Icons.receipt_long_outlined, color: primary),
                     ),
                     title: Text('Gestionar Ventas',
-                        style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-                    subtitle: const Text('Solicitudes pendientes y ventas del mes'),
+                        style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w600)),
+                    subtitle:
+                        const Text('Solicitudes pendientes y ventas del mes'),
                     trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => GestionarVentasScreen(tienda: widget.tienda),
+                          builder: (_) =>
+                              GestionarVentasScreen(tienda: widget.tienda),
                         ),
                       );
                     },
@@ -236,29 +119,44 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
                   child: ListTile(
                     leading: CircleAvatar(
                       backgroundColor: primary.withOpacity(0.1),
-                      child: Icon(Icons.workspace_premium_outlined, color: primary),
+                      child: Icon(Icons.inventory_2_outlined, color: primary),
                     ),
-                    title: Text(
-                      'Plan actual: ${_planActual == "premium" ? "Premium" : "Basic"}',
-                      style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: const Text('Toca para cambiar de plan'),
+                    title: Text('Gestionar Productos',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w600)),
+                    subtitle:
+                        const Text('Editar, ocultar o eliminar productos'),
                     trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: _cambiarPlan,
+                    // Los productos ya se gestionan en PanelVendedorScreen
+                    // (grid + ProductEditModal al tocar uno, botón "Nuevo
+                    // producto"). Esta pantalla está apilada encima de esa,
+                    // así que simplemente regresamos a ella.
+                    onTap: () => Navigator.of(context).pop(),
                   ),
                 ),
                 const SizedBox(height: 12),
                 Card(
                   child: ListTile(
-                    leading: const CircleAvatar(
-                      backgroundColor: Color(0xFFDCF8C6),
-                      child: Icon(Icons.verified_outlined, color: Colors.green),
+                    leading: CircleAvatar(
+                      backgroundColor: AppColors.primary.withOpacity(0.1),
+                      child: const Icon(Icons.workspace_premium_outlined,
+                          color: AppColors.primary),
                     ),
-                    title: Text('Solicitar verificación',
-                        style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-                    subtitle: const Text('Envía tu solicitud por WhatsApp'),
+                    title: Text('Cambiar Plan',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                      'Plan actual: ${widget.tienda['plan'] ?? 'Sin plan'}',
+                    ),
                     trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: _solicitarVerificacion,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              GestionarPlanesScreen(tienda: widget.tienda),
+                        ),
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -271,7 +169,7 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
                     ),
                     title: Text(
                       'Eliminar tienda',
-                      style: GoogleFonts.inter(
+                      style: GoogleFonts.plusJakartaSans(
                           fontWeight: FontWeight.w600, color: Colors.red),
                     ),
                     subtitle: const Text('Acción permanente'),

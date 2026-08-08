@@ -16,6 +16,8 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
   late Future<List<Map<String, dynamic>>> _pendientes;
   late Future<int> _ventasDelMes;
   final Set<String> _procesando = {};
+  final _busquedaCtrl = TextEditingController();
+  String _busqueda = '';
 
   @override
   void initState() {
@@ -29,6 +31,24 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
     _ventasDelMes = _tiendasService.contarVentasDelMes(idTienda);
   }
 
+  @override
+  void dispose() {
+    _busquedaCtrl.dispose();
+    super.dispose();
+  }
+
+  /// Filtra la lista ya cargada por número de pedido. Se busca por
+  /// "contiene", no exacto, para que el vendedor pueda escribir solo
+  /// una parte del número (ej. "45" encuentra el pedido #12345).
+  List<Map<String, dynamic>> _filtrarPedidos(List<Map<String, dynamic>> todos) {
+    if (_busqueda.trim().isEmpty) return todos;
+    final query = _busqueda.trim().toLowerCase();
+    return todos.where((p) {
+      final numero = (p['numero_pedido'] ?? '').toString().toLowerCase();
+      return numero.contains(query);
+    }).toList();
+  }
+
   Future<void> _marcarVendido(String idPedido) async {
     final confirmar = await showDialog<bool>(
       context: context,
@@ -39,8 +59,12 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
           'Se sumarán +15 puntos a tu tienda.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Confirmar')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Confirmar')),
         ],
       ),
     );
@@ -98,7 +122,8 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
                     builder: (context, snapshot) => _statCard(
                       icon: Icons.hourglass_top_rounded,
                       color: primary,
-                      valor: snapshot.hasData ? '${snapshot.data!.length}' : '-',
+                      valor:
+                          snapshot.hasData ? '${snapshot.data!.length}' : '-',
                       etiqueta: 'Pendientes',
                     ),
                   ),
@@ -112,7 +137,37 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
             ),
             const SizedBox(height: 24),
 
-            Text('Solicitudes pendientes', style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 18)),
+            Text('Solicitudes pendientes',
+                style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w800, fontSize: 18)),
+            const SizedBox(height: 12),
+
+            // ---------- Buscador por número de pedido ----------
+            TextField(
+              controller: _busquedaCtrl,
+              onChanged: (v) => setState(() => _busqueda = v),
+              decoration: InputDecoration(
+                hintText: 'Buscar por número de pedido (ej. 1234)',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _busqueda.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(() {
+                          _busquedaCtrl.clear();
+                          _busqueda = '';
+                        }),
+                      ),
+                filled: true,
+                fillColor: Colors.grey.shade100,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+              ),
+            ),
             const SizedBox(height: 12),
 
             FutureBuilder<List<Map<String, dynamic>>>(
@@ -133,8 +188,9 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
                     ),
                   );
                 }
-                final pedidos = snapshot.data ?? [];
-                if (pedidos.isEmpty) {
+                final todos = snapshot.data ?? [];
+                final pedidos = _filtrarPedidos(todos);
+                if (todos.isEmpty) {
                   return Padding(
                     padding: const EdgeInsets.all(24),
                     child: Center(
@@ -145,11 +201,23 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
                     ),
                   );
                 }
+                if (pedidos.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Center(
+                      child: Text(
+                        'Ningún pedido pendiente coincide con "$_busqueda"',
+                        style: GoogleFonts.inter(color: Colors.black54),
+                      ),
+                    ),
+                  );
+                }
                 return Column(
                   children: pedidos.map((p) {
                     final id = p['id_pedido'] as String;
                     final procesando = _procesando.contains(id);
                     final detalle = (p['detalle'] as List?) ?? [];
+                    final numeroPedido = p['numero_pedido'];
                     return Card(
                       margin: const EdgeInsets.only(bottom: 12),
                       child: Padding(
@@ -157,6 +225,16 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            if (numeroPedido != null) ...[
+                              Text(
+                                'Pedido #$numeroPedido',
+                                style: GoogleFonts.inter(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: primary),
+                              ),
+                              const SizedBox(height: 6),
+                            ],
                             for (final item in detalle)
                               Text(
                                 '${item['cantidad']}x ${item['nombre']}',
@@ -165,17 +243,23 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
                             const SizedBox(height: 8),
                             Text(
                               'Total: \$${p['total_usd']} USD',
-                              style: GoogleFonts.inter(fontWeight: FontWeight.bold),
+                              style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 12),
                             SizedBox(
                               width: double.infinity,
                               child: FilledButton.icon(
-                                onPressed: procesando ? null : () => _marcarVendido(id),
+                                onPressed: procesando
+                                    ? null
+                                    : () => _marcarVendido(id),
                                 icon: procesando
                                     ? const SizedBox(
-                                        height: 16, width: 16,
-                                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                        height: 16,
+                                        width: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white))
                                     : const Icon(Icons.check_rounded),
                                 label: const Text('Marcar como vendido'),
                               ),
@@ -207,8 +291,11 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen> {
           children: [
             Icon(icon, color: color, size: 28),
             const SizedBox(height: 6),
-            Text(valor, style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 20)),
-            Text(etiqueta, style: GoogleFonts.inter(fontSize: 12, color: Colors.black54)),
+            Text(valor,
+                style: GoogleFonts.inter(
+                    fontWeight: FontWeight.bold, fontSize: 20)),
+            Text(etiqueta,
+                style: GoogleFonts.inter(fontSize: 12, color: Colors.black54)),
           ],
         ),
       ),

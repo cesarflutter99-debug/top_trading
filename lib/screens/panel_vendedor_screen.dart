@@ -2,9 +2,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
+import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
+import '../main.dart' show AppBanner;
 import '../services/storage_service.dart';
 import '../services/tiendas_service.dart';
+import '../widgets/product_edit_modal.dart';
+import '../widgets/modal_pago_plan.dart';
 import 'admin_panel_screen.dart';
 import 'agregar_producto_screen.dart';
 import 'gestionar_tienda_screen.dart';
@@ -27,6 +31,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
   late Future<List<Map<String, dynamic>>> _productos;
   bool _esAdmin = false;
   bool _subiendoLogo = false;
+  bool _cargandoDatosPago = false;
 
   @override
   void initState() {
@@ -72,7 +77,52 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
   }
 
   void _cargarProductos() {
-    _productos = _tiendasService.obtenerProductosDeTienda(_tienda['id_tienda'] as String);
+    _productos = _tiendasService
+        .obtenerProductosDeTienda(_tienda['id_tienda'] as String);
+  }
+
+  // Reabre el modal de pago (QR + pasos + botón "Verificar Pago") del
+  // plan actual de la tienda. Útil si al vendedor "se le fue" el mensaje
+  // de WhatsApp con los datos de transferencia y necesita verlos de
+  // nuevo para completar la verificación. No aplica al plan gratis
+  // (no requiere pago).
+  Future<void> _verDatosPago() async {
+    final codigoPlan = _tienda['plan'] as String?;
+    if (codigoPlan == null || codigoPlan == 'gratis') return;
+
+    setState(() => _cargandoDatosPago = true);
+    try {
+      final plan = await _tiendasService.obtenerPlanPorCodigo(codigoPlan);
+      if (!mounted) return;
+      if (plan == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('No se encontraron los datos de este plan')),
+        );
+        return;
+      }
+      await showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (_) => ModalPagoPlan(
+          tienda: _tienda,
+          plan: plan,
+          tiendasService: _tiendasService,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('No se pudieron cargar los datos de pago: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _cargandoDatosPago = false);
+    }
   }
 
   Future<void> _recargarTodo() async {
@@ -87,15 +137,36 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     }
   }
 
+  // NUEVO: abre el modal de edición de producto. Al volver con `true`
+  // (se guardó o se eliminó algo), recarga la lista de productos.
+  Future<void> _editarProducto(Map<String, dynamic> producto) async {
+    final actualizado = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => ProductEditModal(producto: producto),
+    );
+    if (actualizado == true && mounted) {
+      setState(_cargarProductos);
+    }
+  }
+
   Future<void> _cerrarSesion() async {
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('¿Cerrar sesión?'),
-        content: const Text('Tendrás que volver a iniciar sesión con Google para gestionar tu tienda.'),
+        content: const Text(
+            'Tendrás que volver a iniciar sesión con Google para gestionar tu tienda.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Cerrar sesión')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Cerrar sesión')),
         ],
       ),
     );
@@ -113,40 +184,62 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
 
   void _abrirEdicion() {
     final nombreCtrl = TextEditingController(text: _tienda['nombre'] ?? '');
-    final telefonoCtrl = TextEditingController(text: _tienda['telefono_whatsapp'] ?? '');
-    final provinciaCtrl = TextEditingController(text: _tienda['provincia'] ?? '');
-    final municipioCtrl = TextEditingController(text: _tienda['municipio'] ?? '');
+    final telefonoCtrl =
+        TextEditingController(text: _tienda['telefono_whatsapp'] ?? '');
+    final provinciaCtrl =
+        TextEditingController(text: _tienda['provincia'] ?? '');
+    final municipioCtrl =
+        TextEditingController(text: _tienda['municipio'] ?? '');
+    final descripcionCtrl =
+        TextEditingController(text: _tienda['descripcion'] ?? '');
     bool guardando = false;
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text('Editar tienda', style: GoogleFonts.inter(fontWeight: FontWeight.w800)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Editar tienda',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w800)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: nombreCtrl,
-                  decoration: const InputDecoration(labelText: 'Nombre del negocio', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Nombre del negocio',
+                      border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: telefonoCtrl,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: 'WhatsApp', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'WhatsApp', border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: provinciaCtrl,
-                  decoration: const InputDecoration(labelText: 'Provincia', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Provincia', border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: municipioCtrl,
-                  decoration: const InputDecoration(labelText: 'Municipio', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Municipio', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: descripcionCtrl,
+                  maxLines: 3,
+                  maxLength: 200,
+                  decoration: const InputDecoration(
+                      labelText: 'Descripción',
+                      hintText: 'Cuéntale a tus clientes qué vendes',
+                      border: OutlineInputBorder()),
                 ),
               ],
             ),
@@ -168,6 +261,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                           telefonoWhatsapp: telefonoCtrl.text.trim(),
                           provincia: provinciaCtrl.text.trim(),
                           municipio: municipioCtrl.text.trim(),
+                          descripcion: descripcionCtrl.text.trim(),
                         );
                         if (context.mounted) {
                           Navigator.pop(context);
@@ -184,7 +278,9 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                     },
               child: guardando
                   ? const SizedBox(
-                      height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
                   : const Text('Guardar'),
             ),
           ],
@@ -209,7 +305,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
               tooltip: 'Panel Admin',
               onPressed: () {
                 Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+                  MaterialPageRoute(builder: (_) => AdminPanelScreen()),
                 );
               },
             ),
@@ -229,7 +325,8 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
         onPressed: () async {
           await Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => AgregarProductoScreen(idTienda: _tienda['id_tienda'] as String),
+              builder: (_) => AgregarProductoScreen(
+                  idTienda: _tienda['id_tienda'] as String),
             ),
           );
           await _recargarTodo();
@@ -259,12 +356,15 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                 radius: 36,
                                 backgroundColor: Colors.grey[200],
                                 backgroundImage: (_tienda['logo_url'] != null &&
-                                        (_tienda['logo_url'] as String).isNotEmpty)
-                                    ? NetworkImage(_tienda['logo_url'] as String)
+                                        (_tienda['logo_url'] as String)
+                                            .isNotEmpty)
+                                    ? NetworkImage(
+                                        _tienda['logo_url'] as String)
                                     : null,
                                 child: (_tienda['logo_url'] == null ||
                                         (_tienda['logo_url'] as String).isEmpty)
-                                    ? const Icon(Icons.storefront_outlined, size: 32, color: Colors.grey)
+                                    ? const Icon(Icons.storefront_outlined,
+                                        size: 32, color: Colors.grey)
                                     : null,
                               ),
                               if (_subiendoLogo)
@@ -278,9 +378,11 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                     decoration: BoxDecoration(
                                       color: primary,
                                       shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.white, width: 2),
+                                      border: Border.all(
+                                          color: Colors.white, width: 2),
                                     ),
-                                    child: const Icon(Icons.camera_alt, size: 14, color: Colors.white),
+                                    child: const Icon(Icons.camera_alt,
+                                        size: 14, color: Colors.white),
                                   ),
                                 ),
                             ],
@@ -296,27 +398,38 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                   Flexible(
                                     child: Text(
                                       _tienda['nombre'] ?? '',
-                                      style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 18),
+                                      style: GoogleFonts.inter(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 18),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
-                                  if ((_tienda['plan'] as String? ?? 'basic') == 'premium') ...[
+                                  if ((_tienda['plan'] as String? ?? 'basic') ==
+                                      'premium') ...[
                                     const SizedBox(width: 6),
                                     Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
                                         gradient: const LinearGradient(
-                                          colors: [Color(0xFFFFD700), Color(0xFFB8860B)],
+                                          colors: [
+                                            Color(0xFFFFD700),
+                                            Color(0xFFB8860B)
+                                          ],
                                         ),
                                         borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: const Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Icon(Icons.star_rounded, size: 12, color: Colors.white),
+                                          Icon(Icons.star_rounded,
+                                              size: 12, color: Colors.white),
                                           SizedBox(width: 2),
-                                          Text('VIP', style: TextStyle(
-                                              color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                          Text('VIP',
+                                              style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold)),
                                         ],
                                       ),
                                     ),
@@ -326,7 +439,8 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                               const SizedBox(height: 4),
                               Text(
                                 '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}',
-                                style: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+                                style: GoogleFonts.inter(
+                                    fontSize: 12, color: Colors.black54),
                               ),
                             ],
                           ),
@@ -340,8 +454,19 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                           child: _statChip(
                             icon: Icons.star_rounded,
                             color: Colors.amber[700]!,
-                            valor: (_tienda['promedio_estrellas'] ?? 0).toString(),
+                            valor:
+                                (_tienda['promedio_estrellas'] ?? 0).toString(),
                             etiqueta: 'Estrellas',
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _statChip(
+                            icon: Icons.local_fire_department_rounded,
+                            color: primary,
+                            valor:
+                                (_tienda['puntos_semanales'] ?? 0).toString(),
+                            etiqueta: 'Popular esta semana',
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -349,8 +474,8 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                           child: _statChip(
                             icon: Icons.bolt_rounded,
                             color: primary,
-                            valor: (_tienda['puntos'] ?? 0).toString(),
-                            etiqueta: 'Puntos',
+                            valor: (_tienda['puntos_totales'] ?? 0).toString(),
+                            etiqueta: 'Puntos totales',
                           ),
                         ),
                       ],
@@ -362,7 +487,8 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                         onPressed: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => GestionarTiendaScreen(tienda: _tienda),
+                              builder: (_) =>
+                                  GestionarTiendaScreen(tienda: _tienda),
                             ),
                           );
                         },
@@ -377,60 +503,56 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
             const SizedBox(height: 16),
 
             // ---------- Banner de estado ----------
-            if (esPending)
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E0),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFFFCC80)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(Icons.hourglass_top_rounded, color: Color(0xFFE65100)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Tienda en revisión',
-                              style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: const Color(0xFFE65100)),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Tu tienda todavía no es visible en el marketplace. '
-                              'Puedes gestionar tu información y subir productos mientras '
-                              'el administrador la verifica; las fotos se harán públicas '
-                              'una vez aprobada.',
-                              style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFFE65100), height: 1.4),
-                            ),
-                          ],
+            if (esPending) ...[
+              AppBanner(
+                icon: Icons.hourglass_top_rounded,
+                titulo: 'Tienda en revisión',
+                mensaje: 'Tu tienda todavía no es visible en el marketplace. '
+                    'Puedes gestionar tu información y subir productos mientras '
+                    'el administrador la verifica; las fotos se harán públicas '
+                    'una vez aprobada.',
+                accion: (_tienda['plan'] != null && _tienda['plan'] != 'gratis')
+                    ? SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _cargandoDatosPago ? null : _verDatosPago,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.warm,
+                            side: BorderSide(color: AppColors.warm),
+                          ),
+                          icon: _cargandoDatosPago
+                              ? const SizedBox(
+                                  height: 16,
+                                  width: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.qr_code_rounded, size: 18),
+                          label: const Text('Ver datos de pago / WhatsApp'),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
+                      )
+                    : null,
+              ),
+            ] else
               Container(
                 decoration: BoxDecoration(
                   color: const Color(0xFFE8F5E9),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(kCardRadius),
                   border: Border.all(color: const Color(0xFFA5D6A7)),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
                     children: [
-                      const Icon(Icons.verified_rounded, color: Color(0xFF2E7D32)),
+                      const Icon(Icons.verified_rounded,
+                          color: Color(0xFF2E7D32)),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           'Tienda activa y visible en el marketplace',
-                          style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: const Color(0xFF2E7D32)),
+                          style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF2E7D32)),
                         ),
                       ),
                     ],
@@ -450,10 +572,12 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Plan', style: GoogleFonts.inter(color: Colors.black54)),
+                        Text('Plan',
+                            style: GoogleFonts.inter(color: Colors.black54)),
                         Text(
                           (_tienda['plan'] as String? ?? 'basic').toUpperCase(),
-                          style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: primary),
+                          style: GoogleFonts.inter(
+                              fontWeight: FontWeight.bold, color: primary),
                         ),
                       ],
                     ),
@@ -461,7 +585,8 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('WhatsApp', style: GoogleFonts.inter(color: Colors.black54)),
+                        Text('WhatsApp',
+                            style: GoogleFonts.inter(color: Colors.black54)),
                         Text(_tienda['telefono_whatsapp'] ?? '-'),
                       ],
                     ),
@@ -469,8 +594,10 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Ubicación', style: GoogleFonts.inter(color: Colors.black54)),
-                        Text('${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}'),
+                        Text('Ubicación',
+                            style: GoogleFonts.inter(color: Colors.black54)),
+                        Text(
+                            '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}'),
                       ],
                     ),
                   ],
@@ -480,7 +607,18 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
 
             const SizedBox(height: 24),
 
-            Text('Mis productos', style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 18)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Mis productos',
+                    style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w800, fontSize: 18)),
+                Text(
+                  'Toca un producto para editarlo',
+                  style: GoogleFonts.inter(fontSize: 12, color: Colors.black45),
+                ),
+              ],
+            ),
             const SizedBox(height: 12),
 
             FutureBuilder<List<Map<String, dynamic>>>(
@@ -518,77 +656,137 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                   itemBuilder: (context, i) {
                     final p = productos[i];
                     final visible = p['es_visible'] as bool? ?? true;
-                    return Card(
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Image.network(
-                                  p['imagen_url'] ?? '',
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    color: Colors.grey[200],
-                                    child: const Icon(Icons.image_not_supported_outlined),
-                                  ),
-                                ),
-                                if (esPending)
-                                  Positioned(
-                                    top: 6,
-                                    right: 6,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black54,
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: const Text(
-                                        'No público',
-                                        style: TextStyle(color: Colors.white, fontSize: 10),
-                                      ),
+                    final sinStock =
+                        (p['cantidad_disponible'] as num? ?? 0) <= 0;
+                    return GestureDetector(
+                      // NUEVO: esto es lo que faltaba. Sin esto no había
+                      // ninguna forma de editar cantidad_disponible.
+                      onTap: () => _editarProducto(p),
+                      child: Card(
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Image.network(
+                                    p['imagen_url'] ?? '',
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: Colors.grey[200],
+                                      child: const Icon(
+                                          Icons.image_not_supported_outlined),
                                     ),
                                   ),
-                                if (!visible && !esPending)
+                                  // Ícono de editar, siempre visible
                                   Positioned(
                                     top: 6,
-                                    right: 6,
+                                    left: 6,
                                     child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: const BoxDecoration(
                                         color: Colors.black54,
-                                        borderRadius: BorderRadius.circular(6),
+                                        shape: BoxShape.circle,
                                       ),
-                                      child: const Text(
-                                        'Oculto',
-                                        style: TextStyle(color: Colors.white, fontSize: 10),
-                                      ),
+                                      child: const Icon(Icons.edit,
+                                          size: 14, color: Colors.white),
                                     ),
                                   ),
-                              ],
+                                  if (esPending)
+                                    Positioned(
+                                      top: 6,
+                                      right: 6,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black54,
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                        child: const Text(
+                                          'No público',
+                                          style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10),
+                                        ),
+                                      ),
+                                    ),
+                                  if (!visible && !esPending)
+                                    Positioned(
+                                      top: 6,
+                                      right: 6,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black54,
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                        child: const Text(
+                                          'Oculto',
+                                          style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10),
+                                        ),
+                                      ),
+                                    ),
+                                  // NUEVO: aviso de "Sin stock" cuando
+                                  // cantidad_disponible <= 0 -- esto es
+                                  // justo lo que hace que al comprador
+                                  // le salga "Agotado" en el modal.
+                                  if (sinStock)
+                                    Positioned(
+                                      bottom: 6,
+                                      left: 6,
+                                      right: 6,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.withOpacity(0.85),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                        child: const Text(
+                                          'Sin stock',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  p['nombre'] ?? '',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13),
-                                ),
-                                Text(
-                                  '\$${p['precio_usd']}',
-                                  style: GoogleFonts.inter(color: Colors.black54, fontSize: 12),
-                                ),
-                              ],
+                            Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    p['nombre'] ?? '',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13),
+                                  ),
+                                  Text(
+                                    '\$${p['precio_usd']}',
+                                    style: GoogleFonts.inter(
+                                        color: Colors.black54, fontSize: 12),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -618,8 +816,18 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
         children: [
           Icon(icon, color: color, size: 20),
           const SizedBox(height: 2),
-          Text(valor, style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 15)),
-          Text(etiqueta, style: GoogleFonts.inter(fontSize: 11, color: Colors.black54)),
+          Text(valor,
+              style:
+                  GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 15)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(etiqueta,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    GoogleFonts.inter(fontSize: 10.5, color: Colors.black54)),
+          ),
         ],
       ),
     );

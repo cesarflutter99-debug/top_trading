@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:go_router/go_router.dart';
 import '../services/location_service.dart';
 import '../services/tiendas_service.dart';
-import '../services/whatsapp_service.dart';
 
 class OnboardingTiendaScreen extends StatefulWidget {
   const OnboardingTiendaScreen({super.key});
@@ -15,7 +15,6 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
   final _formKey = GlobalKey<FormState>();
   final _locationService = LocationService();
   final _tiendasService = TiendasService();
-  final _whatsappService = WhatsappService();
 
   final _nombreCtrl = TextEditingController();
   final _telefonoCtrl = TextEditingController();
@@ -51,16 +50,14 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     if (!_formKey.currentState!.validate()) return;
     if (_lat == null || _lon == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Captura la ubicación de tu negocio primero'),
-        ),
+        const SnackBar(content: Text('Captura la ubicación de tu negocio primero')),
       );
       return;
     }
 
     setState(() => _guardando = true);
     try {
-      await _tiendasService.crearTienda(
+      final idTienda = await _tiendasService.crearTienda(
         nombre: _nombreCtrl.text.trim(),
         telefonoWhatsapp: _telefonoCtrl.text.trim(),
         provincia: _provinciaCtrl.text.trim(),
@@ -68,57 +65,12 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
         lat: _lat!,
         lon: _lon!,
         plan: _plan,
+        codigoAfiliado: null,
       );
 
-      // La tienda ya quedó creada en Supabase con estado 'pending'.
-      // Ahora abrimos WhatsApp hacia el admin para que valide manualmente
-      // (Doc Maestro, Flujo 4.1: notificación automática al Administrador).
-      // El número lo configura el admin desde su panel (tabla contactos_whatsapp).
-      try {
-        final telefonoAdmin = await _tiendasService
-            .obtenerContactoWhatsappActivo();
-        if (telefonoAdmin != null) {
-          await _whatsappService.solicitarVerificacion(
-            telefonoAdmin: telefonoAdmin,
-            nombreTienda: _nombreCtrl.text.trim(),
-            plan: _plan,
-            municipio: _municipioCtrl.text.trim(),
-          );
-        }
-        // Si no hay ningún número activo configurado, la tienda ya quedó
-        // registrada igual; el admin la verá en su panel bajo "pendientes".
-      } catch (_) {
-        // Si WhatsApp no está instalado o falla el intent, la tienda
-        // ya quedó registrada igual; no bloqueamos el flujo por esto.
-      }
-
       if (mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: Text(
-              '¡Solicitud enviada!',
-              style: GoogleFonts.inter(fontWeight: FontWeight.w800),
-            ),
-            content: Text(
-              'Tu tienda quedó registrada y pendiente de aprobación. '
-              'Te avisaremos por WhatsApp en cuanto esté activa.',
-              style: GoogleFonts.inter(height: 1.5),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context)
-                  ..pop()
-                  ..pop(),
-                child: const Text('Entendido'),
-              ),
-            ],
-          ),
-        );
+        // Navegar al modal de pago del plan
+        context.go('/pago-plan', extra: {'idTienda': idTienda, 'plan': _plan});
       }
     } catch (e) {
       if (mounted) {
@@ -140,7 +92,7 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: Scaffold(
-        resizeToAvoidBottomInset: false,
+        resizeToAvoidBottomInset: true,
         backgroundColor: Colors.white,
         body: SafeArea(
           child: SingleChildScrollView(
@@ -251,8 +203,7 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                           hint: 'Ej: Playa',
                           icon: Icons.location_city_outlined,
                         ),
-
-                        const SizedBox(height: 32),
+                        const SizedBox(height: 16),
 
                         // ---------- Sección: Ubicación GPS ----------
                         Text(
@@ -434,7 +385,7 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                               ],
                             ),
                           ),
-                        ),
+),
 
                         const SizedBox(height: 24),
 
