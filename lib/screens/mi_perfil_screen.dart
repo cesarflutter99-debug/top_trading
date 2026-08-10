@@ -62,7 +62,8 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
     if (user == null) return 'Usuario';
     return user.userMetadata?['full_name'] as String? ??
         user.userMetadata?['name'] as String? ??
-        user.email ?? 'Usuario';
+        user.email ??
+        'Usuario';
   }
 
   String _email() {
@@ -99,12 +100,6 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
                     _buildTiendaCard(esOscuro),
                     const SizedBox(height: 16),
                   ],
-                  if (_miTienda != null) ...[
-                    _buildSectionTitle('Mis Ventas'),
-                    const SizedBox(height: 8),
-                    _buildVentasCard(esOscuro),
-                    const SizedBox(height: 16),
-                  ],
                   if (_miAfiliado != null) ...[
                     _buildSectionTitle('Mi Programa de Afiliados'),
                     const SizedBox(height: 8),
@@ -117,7 +112,9 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
                     _buildAdminCard(esOscuro),
                     const SizedBox(height: 16),
                   ],
-                  if (_miTienda == null && _miAfiliado == null && !_esAdmin) ...[
+                  if (_miTienda == null &&
+                      _miAfiliado == null &&
+                      !_esAdmin) ...[
                     _buildSectionTitle('Tu Cuenta'),
                     const SizedBox(height: 8),
                     _buildCuentaVaciaCard(esOscuro),
@@ -131,29 +128,70 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
   }
 
   Widget _buildHeader(bool esOscuro) {
-    return Card(
-      color: esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(kCardRadius),
+      child: Container(
+        decoration: BoxDecoration(
+          color: esOscuro
+              ? AppColors.cardTransparentDark
+              : AppColors.cardTransparentLight,
+          border: Border.all(
+            color: (esOscuro ? AppColors.borderDark : AppColors.borderLight)
+                .withOpacity(0.6),
+          ),
+        ),
+        child: Column(
           children: [
-            CircleAvatar(
-              radius: 36,
-              backgroundColor: AppColors.primary.withOpacity(0.1),
-              backgroundImage: _fotoUrl().isNotEmpty
-                  ? NetworkImage(_fotoUrl())
-                  : null,
-              child: _fotoUrl().isEmpty
-                  ? const Icon(Icons.person, size: 36, color: AppColors.primary)
-                  : null,
+            // ---- Franja degradada + avatar superpuesto encima, con
+            // Stack/Positioned (no Transform.translate, que deja hueco
+            // vacío porque no afecta el layout, solo el dibujo). ----
+            Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.topCenter,
+              children: [
+                Container(
+                  height: 60,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [AppColors.primary, AppColors.primaryDark],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 20,
+                  child: CircleAvatar(
+                    radius: 44,
+                    backgroundColor:
+                        esOscuro ? AppColors.surfaceDark : Colors.white,
+                    child: CircleAvatar(
+                      radius: 40,
+                      backgroundColor: AppColors.primary.withOpacity(0.1),
+                      backgroundImage: _fotoUrl().isNotEmpty
+                          ? NetworkImage(_fotoUrl())
+                          : null,
+                      child: _fotoUrl().isEmpty
+                          ? const Icon(Icons.person,
+                              size: 40, color: AppColors.primary)
+                          : null,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 16),
-            Expanded(
+            // Reserva el espacio que el avatar sobresale por debajo de
+            // la franja (top:20 + diámetro 88 - franja 60 = 48).
+            const SizedBox(height: 48),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     _nombre(),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
@@ -163,22 +201,26 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
                   const SizedBox(height: 4),
                   Text(
                     _email(),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 13,
                       color: AppColors.inkSecundarioLight,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Row(
+                  const SizedBox(height: 12),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       if (_miTienda != null)
                         _buildRoleChip('Vendedor', Icons.storefront_rounded,
                             AppColors.primary),
-                      const SizedBox(width: 8),
                       if (_miAfiliado != null)
                         _buildRoleChip('Afiliado', Icons.handshake_outlined,
                             AppColors.warm),
-                      const SizedBox(width: 8),
                       if (_esAdmin)
                         _buildRoleChip('Admin', Icons.admin_panel_settings,
                             Colors.deepPurple),
@@ -217,13 +259,17 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
   Widget _buildSectionTitle(String title) {
     return Text(title,
         style: GoogleFonts.plusJakartaSans(
-            fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.inkLight));
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: AppColors.inkLight));
   }
 
   Widget _buildTiendaCard(bool esOscuro) {
     final t = _miTienda!;
     return Card(
-      color: esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight,
+      color: esOscuro
+          ? AppColors.cardTransparentDark
+          : AppColors.cardTransparentLight,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -235,11 +281,11 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
                   radius: 24,
                   backgroundColor: AppColors.primary.withOpacity(0.1),
                   backgroundImage: (t['logo_url'] as String?) != null &&
-                      (t['logo_url'] as String).isNotEmpty
+                          (t['logo_url'] as String).isNotEmpty
                       ? NetworkImage(t['logo_url'] as String)
                       : null,
                   child: (t['logo_url'] as String?) == null ||
-                      (t['logo_url'] as String).isEmpty
+                          (t['logo_url'] as String).isEmpty
                       ? const Icon(Icons.storefront_rounded,
                           size: 24, color: AppColors.primary)
                       : null,
@@ -266,65 +312,52 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
             Row(
               children: [
                 Expanded(
-                  child: _buildStatItem('Productos',
-                      '${_miTienda!['productos_count'] ?? 0}', Icons.shopping_bag),
+                  child: _buildStatItem(
+                      'Productos',
+                      '${_miTienda!['productos_count'] ?? 0}',
+                      Icons.shopping_bag,
+                      AppColors.primary),
                 ),
                 Expanded(
-                  child: _buildStatItem('Pedidos',
-                      '${_miTienda!['pedidos_count'] ?? 0}', Icons.shopping_cart),
+                  child: _buildStatItem(
+                      'Pedidos',
+                      '${_miTienda!['pedidos_count'] ?? 0}',
+                      Icons.shopping_cart,
+                      AppColors.primary),
                 ),
                 Expanded(
-                  child: _buildStatItem('Ingresos',
-                      '\$${_miTienda!['ingresos'] ?? 0}', Icons.attach_money),
+                  child: _buildStatItem(
+                      'Ingresos',
+                      '\$${_miTienda!['ingresos'] ?? 0}',
+                      Icons.attach_money,
+                      AppColors.primary),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  context.push('/gestionar-tienda', extra: _miTienda);
-                },
-                icon: const Icon(Icons.settings_outlined, size: 18),
-                label: const Text('Gestionar tienda'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVentasCard(bool esOscuro) {
-    return Card(
-      color: esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+            const SizedBox(height: 14),
             Row(
               children: [
-                const Icon(Icons.shopping_bag_outlined,
-                    color: AppColors.primary, size: 20),
-                const SizedBox(width: 8),
-                Text('Resumen de ventas',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontWeight: FontWeight.w600)),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      context.push('/gestionar-tienda', extra: _miTienda);
+                    },
+                    icon: const Icon(Icons.settings_outlined, size: 18),
+                    label: const Text('Gestionar'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      context.push('/vendedor/dashboard',
+                          extra: {'id': _miTienda!['id_tienda']});
+                    },
+                    icon: const Icon(Icons.analytics_outlined, size: 18),
+                    label: const Text('Analíticas'),
+                  ),
+                ),
               ],
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () {
-                  context.push('/vendedor/dashboard',
-                      extra: {'id': _miTienda!['id_tienda']});
-                },
-                icon: const Icon(Icons.analytics_outlined),
-                label: const Text('Ver analíticas completas'),
-              ),
             ),
           ],
         ),
@@ -335,7 +368,9 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
   Widget _buildAfiliadoCard(bool esOscuro) {
     final a = _miAfiliado!;
     return Card(
-      color: esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight,
+      color: esOscuro
+          ? AppColors.cardTransparentDark
+          : AppColors.cardTransparentLight,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -343,9 +378,16 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.handshake_outlined,
-                    color: AppColors.warm, size: 20),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.warm.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.handshake_outlined,
+                      color: AppColors.warm, size: 18),
+                ),
+                const SizedBox(width: 10),
                 Text('Mi programa de afiliados',
                     style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w600)),
@@ -356,11 +398,11 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
               children: [
                 Expanded(
                   child: _buildStatItem('Código', a['codigo'] ?? '-',
-                      Icons.confirmation_number),
+                      Icons.confirmation_number, AppColors.warm),
                 ),
                 Expanded(
-                  child: _buildStatItem(
-                      'Saldo', '${a['saldo_cup'] ?? 0} CUP', Icons.wallet),
+                  child: _buildStatItem('Saldo', '${a['saldo_cup'] ?? 0} CUP',
+                      Icons.wallet, AppColors.warm),
                 ),
               ],
             ),
@@ -383,7 +425,9 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
 
   Widget _buildAdminCard(bool esOscuro) {
     return Card(
-      color: esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight,
+      color: esOscuro
+          ? AppColors.cardTransparentDark
+          : AppColors.cardTransparentLight,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -391,9 +435,16 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.admin_panel_settings,
-                    color: Colors.deepPurple, size: 20),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.deepPurple.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.admin_panel_settings,
+                      color: Colors.deepPurple, size: 18),
+                ),
+                const SizedBox(width: 10),
                 Text('Panel de administración',
                     style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w600)),
@@ -421,13 +472,15 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
 
   Widget _buildCuentaVaciaCard(bool esOscuro) {
     return Card(
-      color: esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight,
+      color: esOscuro
+          ? AppColors.cardTransparentDark
+          : AppColors.cardTransparentLight,
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
-            const Icon(Icons.storefront_outlined, size: 48,
-                color: AppColors.inkSecundarioLight),
+            const Icon(Icons.storefront_outlined,
+                size: 48, color: AppColors.inkSecundarioLight),
             const SizedBox(height: 12),
             Text(
               'Aún no tienes una tienda, programa de afiliados ni eres admin',
@@ -452,11 +505,19 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
     );
   }
 
-  Widget _buildStatItem(String label, String value, IconData icon) {
+  Widget _buildStatItem(String label, String value, IconData icon,
+      [Color color = AppColors.primary]) {
     return Column(
       children: [
-        Icon(icon, size: 18, color: AppColors.primary),
-        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 18, color: color),
+        ),
+        const SizedBox(height: 6),
         Text(value,
             style: GoogleFonts.plusJakartaSans(
                 fontWeight: FontWeight.w700, fontSize: 16)),

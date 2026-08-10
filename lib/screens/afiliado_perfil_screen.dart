@@ -32,6 +32,8 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
   bool _cargando = true;
   bool _editando = false;
   bool _guardandoEdicion = false;
+  bool _verTodasComisiones = false;
+  bool _verTodosRetiros = false;
 
   final _nombreCtrl = TextEditingController();
   final _telefonoCtrl = TextEditingController();
@@ -516,50 +518,63 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
                             color: AppColors.inkSecundarioLight, fontSize: 13)),
                   );
                 }
+                final total = usos.length;
+                final mostrar =
+                    _verTodasComisiones ? usos : usos.take(5).toList();
                 return Column(
-                  children: usos.map((u) {
-                    final aprobado = u['estado'] == 'aprobado';
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            aprobado
-                                ? Icons.check_circle_rounded
-                                : Icons.schedule_rounded,
-                            color: aprobado ? Colors.green : Colors.orange,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(u['tiendas']?['nombre'] ?? 'Tienda',
-                                    style: GoogleFonts.plusJakartaSans(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 13.5)),
-                                Text(
-                                  aprobado
-                                      ? '+${(u['comision_cup_acreditada'] ?? 0)} CUP'
-                                      : 'Pendiente de aprobación',
-                                  style: GoogleFonts.plusJakartaSans(
-                                      fontSize: 12,
-                                      color: AppColors.inkSecundarioLight),
-                                ),
-                              ],
+                  children: [
+                    ...mostrar.map((u) {
+                      final aprobado = u['estado'] == 'aprobado';
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              aprobado
+                                  ? Icons.check_circle_rounded
+                                  : Icons.schedule_rounded,
+                              color: aprobado ? Colors.green : Colors.orange,
+                              size: 20,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(u['tiendas']?['nombre'] ?? 'Tienda',
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 13.5)),
+                                  Text(
+                                    aprobado
+                                        ? '+${(u['comision_cup_acreditada'] ?? 0)} CUP'
+                                        : 'Pendiente de aprobación',
+                                    style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 12,
+                                        color: AppColors.inkSecundarioLight),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    if (total > 5)
+                      TextButton(
+                        onPressed: () => setState(
+                            () => _verTodasComisiones = !_verTodasComisiones),
+                        child: Text(_verTodasComisiones
+                            ? 'Ver menos'
+                            : 'Ver todos ($total)'),
                       ),
-                    );
-                  }).toList(),
+                  ],
                 );
               },
             ),
@@ -598,55 +613,133 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
                             color: AppColors.inkSecundarioLight, fontSize: 13)),
                   );
                 }
+                final total = retiros.length;
+                final mostrar =
+                    _verTodosRetiros ? retiros : retiros.take(5).toList();
                 return Column(
-                  children: retiros.map((r) {
-                    final pagado = r['estado'] == 'pagado';
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            pagado
-                                ? Icons.check_circle_rounded
-                                : Icons.schedule_rounded,
-                            color: pagado ? Colors.green : Colors.orange,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              '${(r['monto_cup'] as num).toStringAsFixed(0)} CUP',
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontWeight: FontWeight.w600, fontSize: 13.5),
+                  children: [
+                    ...mostrar.map((r) {
+                      final pagado = r['estado'] == 'pagado';
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              pagado
+                                  ? Icons.check_circle_rounded
+                                  : Icons.schedule_rounded,
+                              color: pagado ? Colors.green : Colors.orange,
+                              size: 20,
                             ),
-                          ),
-                          Text(
-                            pagado ? 'Pagado' : 'Pendiente',
-                            style: GoogleFonts.plusJakartaSans(
-                                fontSize: 12,
-                                color: pagado
-                                    ? Colors.green.shade700
-                                    : Colors.orange.shade700,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ],
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '${(r['monto_cup'] as num).toStringAsFixed(0)} CUP',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13.5),
+                              ),
+                            ),
+                            Text(
+                              pagado ? 'Pagado' : 'Pendiente',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12,
+                                  color: pagado
+                                      ? Colors.green.shade700
+                                      : Colors.orange.shade700,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    if (total > 5)
+                      TextButton(
+                        onPressed: () => setState(
+                            () => _verTodosRetiros = !_verTodosRetiros),
+                        child: Text(_verTodosRetiros
+                            ? 'Ver menos'
+                            : 'Ver todos ($total)'),
                       ),
-                    );
-                  }).toList(),
+                  ],
                 );
               },
+            ),
+            const SizedBox(height: 24),
+
+            // ---------- Eliminar cuenta ----------
+            Card(
+              color: Colors.red.withOpacity(0.05),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.red,
+                  child: Icon(Icons.person_remove_outlined,
+                      color: Colors.white, size: 18),
+                ),
+                title: Text(
+                  'Eliminar cuenta de afiliado',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w600, color: Colors.red),
+                ),
+                subtitle: const Text(
+                    'Bloqueado si tienes un retiro pendiente de aprobación'),
+                onTap: _confirmarEliminarCuenta,
+              ),
             ),
             const SizedBox(height: 24),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _confirmarEliminarCuenta() async {
+    if (_afiliado == null) return;
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('¿Eliminar cuenta de afiliado?'),
+        content: const Text(
+          'Esta acción desactiva tu perfil de afiliado. Tu código, saldo '
+          'e historial se conservan -- si vuelves a registrarte con esta '
+          'misma cuenta de Google, recuperas todo tal como lo dejaste.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+
+    try {
+      await _tiendasService.darDeBajaAfiliado(_afiliado!['id_afiliado']);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cuenta de afiliado eliminada')),
+        );
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'.replaceFirst('Exception: ', ''))),
+        );
+      }
+    }
   }
 
   Widget _filaDato(IconData icon, String etiqueta, String valor) {

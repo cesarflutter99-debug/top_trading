@@ -20,55 +20,11 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
   bool _cargandoSolicitud = true;
   bool _procesandoGratis = false;
 
-  // ---- Código de afiliado (aplica 10% de descuento al elegir un
-  // plan de pago; la validación de "una vez por tienda" la hace el
-  // backend al crear la solicitud, acá solo se confirma que el código
-  // existe para poder mostrar el descuento). ----
-  final _codigoAfiliadoCtrl = TextEditingController();
-  Map<String, dynamic>? _afiliadoValidado;
-  bool _validandoCodigo = false;
-  String? _errorCodigo;
-
   @override
   void initState() {
     super.initState();
     _planes = _tiendasService.obtenerPlanesActivos();
     _cargarSolicitudPendiente();
-  }
-
-  @override
-  void dispose() {
-    _codigoAfiliadoCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _validarCodigoAfiliado() async {
-    final codigo = _codigoAfiliadoCtrl.text.trim().toUpperCase();
-    if (codigo.isEmpty) {
-      setState(() {
-        _afiliadoValidado = null;
-        _errorCodigo = null;
-      });
-      return;
-    }
-    setState(() {
-      _validandoCodigo = true;
-      _errorCodigo = null;
-      _afiliadoValidado = null;
-    });
-    try {
-      final afiliado = await _tiendasService.buscarAfiliadoPorCodigo(codigo);
-      if (!mounted) return;
-      if (afiliado == null) {
-        setState(() => _errorCodigo = 'Código no encontrado');
-      } else {
-        setState(() => _afiliadoValidado = afiliado);
-      }
-    } catch (e) {
-      if (mounted) setState(() => _errorCodigo = 'Error validando: $e');
-    } finally {
-      if (mounted) setState(() => _validandoCodigo = false);
-    }
   }
 
   Future<void> _cargarSolicitudPendiente() async {
@@ -93,10 +49,6 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
         tienda: widget.tienda,
         plan: plan,
         tiendasService: _tiendasService,
-        idAfiliado: _afiliadoValidado?['id_afiliado'] as String?,
-        codigoAfiliado: _afiliadoValidado != null
-            ? _codigoAfiliadoCtrl.text.trim().toUpperCase()
-            : null,
         // En cuanto se crea la solicitud (antes de que WhatsApp
         // siquiera se abra), refrescamos el banner de "en revisión" --
         // así el usuario ve el cambio de estado de inmediato, sin
@@ -130,6 +82,105 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
     } finally {
       if (mounted) setState(() => _procesandoGratis = false);
     }
+  }
+
+  void _abrirDetallePlan(
+    Map<String, dynamic> plan, {
+    required bool esActual,
+    required bool esGratis,
+    required bool yaUsoGratis,
+    required bool esElPlanSolicitado,
+    required bool haySolicitudPendiente,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(plan['nombre'] ?? '',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.bold, fontSize: 22)),
+              const SizedBox(height: 8),
+              Text(
+                esGratis
+                    ? 'Gratis'
+                    : '\$${plan['precio_usd']} USD',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary),
+              ),
+              const SizedBox(height: 4),
+              Text('Duración: ${plan['duracion_dias']} días',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14, color: AppColors.inkSecundarioLight)),
+              const SizedBox(height: 4),
+              Text('${plan['limite_productos']} productos permitidos',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14, color: AppColors.inkSecundarioLight)),
+              if ((plan['descripcion'] ?? '').toString().isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Text('Descripción',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.bold, fontSize: 14)),
+                const SizedBox(height: 6),
+                Text(plan['descripcion'],
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, height: 1.4)),
+              ],
+              const SizedBox(height: 24),
+              if (esActual)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Center(
+                      child: Text('Este es tu plan actual',
+                          style: TextStyle(color: Colors.green))),
+                )
+              else
+                SizedBox(
+                  width: double.infinity,
+                  child: esGratis
+                      ? OutlinedButton(
+                          onPressed: (_procesandoGratis ||
+                                  yaUsoGratis ||
+                                  haySolicitudPendiente)
+                              ? null
+                              : () {
+                                  Navigator.pop(sheetContext);
+                                  _activarGratis(plan);
+                                },
+                          child: const Text('Activar'),
+                        )
+                      : FilledButton(
+                          onPressed: haySolicitudPendiente
+                              ? null
+                              : () {
+                                  Navigator.pop(sheetContext);
+                                  _abrirModalPago(plan);
+                                },
+                          child: Text(esElPlanSolicitado
+                              ? 'Pendiente de revisión'
+                              : 'Activar'),
+                        ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -170,87 +221,6 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
                         'No puedes solicitar otro cambio mientras esta esté activa.',
                   ),
                   const SizedBox(height: 16),
-                ] else ...[
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('¿Tienes un código de afiliado?',
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontWeight: FontWeight.bold, fontSize: 14)),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Aplica 10% de descuento en cualquier plan de pago. '
-                            'Cada código solo puede usarse una vez por tienda.',
-                            style: GoogleFonts.plusJakartaSans(
-                                fontSize: 12,
-                                color: AppColors.inkSecundarioLight),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _codigoAfiliadoCtrl,
-                                  textCapitalization:
-                                      TextCapitalization.characters,
-                                  enabled: _afiliadoValidado == null,
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    labelText: 'Código de afiliado',
-                                    errorText: _errorCodigo,
-                                    border: const OutlineInputBorder(),
-                                    suffixIcon: _afiliadoValidado != null
-                                        ? const Icon(Icons.check_circle,
-                                            color: Colors.green)
-                                        : null,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              if (_afiliadoValidado != null)
-                                OutlinedButton(
-                                  onPressed: () {
-                                    setState(() {
-                                      _afiliadoValidado = null;
-                                      _codigoAfiliadoCtrl.clear();
-                                      _errorCodigo = null;
-                                    });
-                                  },
-                                  child: const Text('Quitar'),
-                                )
-                              else
-                                FilledButton(
-                                  onPressed: _validandoCodigo
-                                      ? null
-                                      : _validarCodigoAfiliado,
-                                  child: _validandoCodigo
-                                      ? const SizedBox(
-                                          height: 16,
-                                          width: 16,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2))
-                                      : const Text('Validar'),
-                                ),
-                            ],
-                          ),
-                          if (_afiliadoValidado != null) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              'Código válido de ${_afiliadoValidado!['nombre']} ✅',
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 12.5,
-                                  color: Colors.green.shade700,
-                                  fontWeight: FontWeight.w600),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
                 ],
                 ...planes.map((p) {
                   final esGratis = p['es_gratis'] as bool? ?? false;
@@ -265,9 +235,19 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
 
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => _abrirDetallePlan(
+                        p,
+                        esActual: esActual,
+                        esGratis: esGratis,
+                        yaUsoGratis: yaUsoGratis,
+                        esElPlanSolicitado: esElPlanSolicitado,
+                        haySolicitudPendiente: haySolicitudPendiente,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
@@ -363,6 +343,7 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
                                     ),
                             ),
                         ],
+                      ),
                       ),
                     ),
                   );

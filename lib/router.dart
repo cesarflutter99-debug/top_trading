@@ -6,7 +6,11 @@
 //   '/'                     WelcomeScreen (pantalla de entrada; el botón
 //                            "Continuar con Google" autentica directo
 //                            desde ahí -- ya no existe LoginScreen)
-//   '/home'                 HomeScreen (destino post-login)
+//   '/home'                 MainShellScreen (destino post-login -- shell
+//                            con menú inferior: Inicio/Mapa/Perfil)
+//   '/mapa'                 MapaTiendasScreen (también accesible como
+//                            pestaña del shell; ruta aparte para el
+//                            ítem del Drawer y deep links)
 //   '/tienda/:idTienda'     StoreScreen (?producto= para resaltar uno)
 //   '/carrito/:idTienda'    CartScreen
 //   '/crear-tienda'         OnboardingTiendaScreen ("Hacerte vendedor")
@@ -24,7 +28,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'core/supabase_client.dart';
 import 'screens/welcome_screen.dart';
-import 'screens/home_screen.dart';
+import 'screens/main_shell_screen.dart';
+import 'screens/mapa_tiendas_screen.dart';
 import 'screens/store_screen_flow.dart';
 import 'screens/cart_screen.dart';
 import 'screens/onboarding_tienda_screen.dart';
@@ -122,7 +127,15 @@ final GoRouter router = GoRouter(
     ),
     GoRoute(
       path: '/home',
-      builder: (context, state) => const HomeScreen(),
+      // FIX: antes esto abría HomeScreen directo. Ahora abre el shell
+      // con el menú inferior (Inicio/Mapa/Perfil) -- HomeScreen sigue
+      // siendo exactamente la misma pantalla, solo que ahora vive
+      // adentro del shell como la primera pestaña.
+      builder: (context, state) => const MainShellScreen(),
+    ),
+    GoRoute(
+      path: '/mapa',
+      builder: (context, state) => const MapaTiendasScreen(),
     ),
     GoRoute(
       path: '/tienda/:idTienda',

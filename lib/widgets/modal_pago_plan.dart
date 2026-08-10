@@ -62,6 +62,10 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
   Timer? _debounceTimer;
   // '', 'validando', 'valido', 'invalido', 'propio', 'usado'
   String _codigoEstado = '';
+  // El id real del afiliado encontrado por la validación -- sin esto
+  // no hay forma de acreditarle la comisión al aprobar (widget.idAfiliado
+  // ya casi nunca viene precargado, así que hay que capturarlo aquí).
+  String? _idAfiliadoEncontrado;
 
   bool get _tieneCupon =>
       widget.idAfiliado != null || _codigoEstado == 'valido';
@@ -80,19 +84,34 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
     _debounceTimer = Timer(const Duration(milliseconds: 800), () async {
       final codigo = _codigoAfiliado;
       if (codigo.isEmpty) {
-        if (mounted) setState(() => _codigoEstado = '');
+        if (mounted) {
+          setState(() {
+            _codigoEstado = '';
+            _idAfiliadoEncontrado = null;
+          });
+        }
         return;
       }
       if (mounted) setState(() => _codigoEstado = 'validando');
       try {
-        final estado =
+        final resultado =
             await widget.tiendasService.validarCodigoAfiliadoParaTienda(
           codigo: codigo,
           idTienda: widget.tienda['id_tienda'] as String?,
         );
-        if (mounted) setState(() => _codigoEstado = estado);
+        if (mounted) {
+          setState(() {
+            _codigoEstado = resultado['estado'] as String;
+            _idAfiliadoEncontrado = resultado['id_afiliado'] as String?;
+          });
+        }
       } catch (_) {
-        if (mounted) setState(() => _codigoEstado = 'invalido');
+        if (mounted) {
+          setState(() {
+            _codigoEstado = 'invalido';
+            _idAfiliadoEncontrado = null;
+          });
+        }
       }
     });
   }
@@ -149,14 +168,28 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
     try {
       final codigoAfiliado =
           _codigoAfiliado.isNotEmpty ? _codigoAfiliado : widget.codigoAfiliado;
-      await widget.tiendasService.crearSolicitudCambioPlan(
-        idTienda: widget.tienda['id_tienda'],
-        idPlanSolicitado: widget.plan['id_plan'],
-        planAnterior: widget.tienda['plan'] ?? 'basic',
-        idAfiliado: widget.idAfiliado,
-        comisionUsd: _tieneCupon ? _comisionUsd : null,
-        codigoAfiliado: codigoAfiliado,
-      );
+      final idAfiliado = _idAfiliadoEncontrado ?? widget.idAfiliado;
+
+      // FIX (solicitud duplicada): cuando este modal se abre desde el
+      // onboarding recién terminado (esPantallaCompleta == true), la
+      // tienda YA se creó con su plan y su codigo_afiliado guardados
+      // directo en crearTienda() -- ya aparece en "Tiendas Pendientes"
+      // con la tarjeta dorada si corresponde. Si además creáramos acá
+      // una solicitud_cambio_plan, el admin vería la MISMA tienda dos
+      // veces (una como activación, otra como "cambio de plan"), como
+      // si alguien ya activa estuviera pidiendo un upgrade. Por eso
+      // esto solo corre para tiendas que YA estaban activas y piden
+      // cambiar de plan (esPantallaCompleta == false).
+      if (!widget.esPantallaCompleta) {
+        await widget.tiendasService.crearSolicitudCambioPlan(
+          idTienda: widget.tienda['id_tienda'],
+          idPlanSolicitado: widget.plan['id_plan'],
+          planAnterior: widget.tienda['plan'] ?? 'basic',
+          idAfiliado: idAfiliado,
+          comisionUsd: _tieneCupon ? _comisionUsd : null,
+          codigoAfiliado: codigoAfiliado,
+        );
+      }
       widget.onSolicitudCreada?.call();
 
       final numero = await supabase

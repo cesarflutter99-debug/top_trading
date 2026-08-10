@@ -547,6 +547,8 @@ class _SolicitudesTabState extends State<_SolicitudesTab> {
   /// que trae la fila entera de tiendas), no hace falta ir a buscar
   /// nada extra a Supabase.
   void _mostrarDetalleActivacion(Map<String, dynamic> t) {
+    final tieneCupon = (t['codigo_afiliado'] as String?)?.isNotEmpty == true;
+    const dorado = Color(0xFFD4AF37);
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -560,8 +562,37 @@ class _SolicitudesTabState extends State<_SolicitudesTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _etiquetaTipo('ACTIVACIÓN', Icons.fiber_new_rounded, _kPrimary),
+              if (tieneCupon) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: dorado,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.card_giftcard_rounded,
+                          size: 13, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Código de afiliado · ${t['codigo_afiliado']}',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               _filaDetalle('Plan solicitado', t['plan'] ?? ''),
+              if (tieneCupon)
+                _filaDetalle('Comisión',
+                    '\$${((t['comision_usd'] as num?) ?? 0).toStringAsFixed(2)} USD'),
               _filaDetalle('Ubicación',
                   '${t['municipio'] ?? ''}, ${t['provincia'] ?? ''}'),
               _filaDetalle('WhatsApp', t['telefono_whatsapp'] ?? ''),
@@ -767,10 +798,16 @@ class _SolicitudesTabState extends State<_SolicitudesTab> {
   Widget _tarjetaActivacion(Map<String, dynamic> t) {
     final id = t['id_tienda'] as String;
     final procesando = _procesando.contains(id);
+    final tieneCupon = (t['codigo_afiliado'] as String?)?.isNotEmpty == true;
+    const dorado = Color(0xFFD4AF37);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: tieneCupon ? dorado.withOpacity(0.07) : null,
       shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(kCardRadius)),
+          borderRadius: BorderRadius.circular(kCardRadius),
+          side: tieneCupon
+              ? const BorderSide(color: dorado, width: 1.5)
+              : BorderSide.none),
       child: InkWell(
         borderRadius: BorderRadius.circular(kCardRadius),
         onTap: () => _mostrarDetalleActivacion(t),
@@ -780,6 +817,32 @@ class _SolicitudesTabState extends State<_SolicitudesTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _etiquetaTipo('ACTIVACIÓN', Icons.fiber_new_rounded, _kPrimary),
+              if (tieneCupon) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: dorado,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.card_giftcard_rounded,
+                          size: 13, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Solicitud a través de código · ${t['codigo_afiliado']}',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               Text(t['nombre'] ?? '',
                   style: GoogleFonts.plusJakartaSans(
@@ -1108,19 +1171,14 @@ class _TiendasYProductosTabState extends State<_TiendasYProductosTab> {
                 contentPadding: EdgeInsets.zero,
                 leading: CircleAvatar(
                   backgroundColor: _kPrimary.withOpacity(0.12),
-                  child:
-                      const Icon(Icons.visibility_outlined, color: _kPrimary),
+                  child: const Icon(Icons.storefront_rounded, color: _kPrimary),
                 ),
-                title: const Text('Ver como cliente'),
-                subtitle:
-                    const Text('Abre la tienda tal como la ve un comprador'),
+                title: const Text('Ver detalle de la tienda'),
+                subtitle: const Text(
+                    'Reseñas, ventas totales y productos más vendidos'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => StoreScreen(idTienda: id),
-                    ),
-                  );
+                  _mostrarDetalleTiendaCompleto(tienda);
                 },
               ),
               ListTile(
@@ -1166,6 +1224,159 @@ class _TiendasYProductosTabState extends State<_TiendasYProductosTab> {
     );
   }
 
+  void _mostrarDetalleTiendaCompleto(Map<String, dynamic> tienda) async {
+    final id = tienda['id_tienda'] as String;
+    final nombre = tienda['nombre'] ?? '';
+
+    showDialog(
+      context: context,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    Map<String, dynamic> ventas = {'total_pedidos': 0, 'monto_total': 0.0};
+    List<Map<String, dynamic>> topProductos = [];
+    try {
+      ventas = await widget.tiendasService.obtenerVentasTotalesTienda(id);
+      topProductos = await widget.tiendasService.obtenerTopProductosTienda(id);
+    } catch (_) {
+      // Si falla, el modal igual se muestra con los datos que sí
+      // tenemos (reseñas y datos básicos ya vienen en `tienda`).
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context); // cierra el loading
+
+    final estrellas =
+        ((tienda['promedio_estrellas'] as num?) ?? 0).toStringAsFixed(1);
+    final totalValoraciones = tienda['total_valoraciones'] ?? 0;
+    final creadoEn = tienda['creado_en'] != null
+        ? DateTime.tryParse(tienda['creado_en'])
+        : null;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(nombre,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w800, fontSize: 18)),
+                const SizedBox(height: 4),
+                Text(
+                  '${tienda['municipio'] ?? ''}, ${tienda['provincia'] ?? ''} · Plan ${tienda['plan'] ?? '-'}',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12.5, color: AppColors.inkSecundarioLight),
+                ),
+                if (creadoEn != null)
+                  Text(
+                    'Registrada: ${creadoEn.day}/${creadoEn.month}/${creadoEn.year}',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12.5, color: AppColors.inkSecundarioLight),
+                  ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _statTienda('$estrellas ⭐',
+                          '$totalValoraciones reseñas', Icons.reviews_outlined),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _statTienda('${ventas['total_pedidos']}',
+                          'Ventas totales', Icons.shopping_bag_outlined),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _statTienda(
+                          '\$${((ventas['monto_total'] as num?) ?? 0).toStringAsFixed(2)}',
+                          'Monto total',
+                          Icons.attach_money_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Text('Productos más vendidos',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.bold, fontSize: 14)),
+                const SizedBox(height: 8),
+                if (topProductos.isEmpty)
+                  Text('Todavía no tiene ventas registradas',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12.5, color: AppColors.inkSecundarioLight))
+                else
+                  ...topProductos.asMap().entries.map((e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('${e.key + 1}. ${e.value['nombre']}',
+                                style:
+                                    GoogleFonts.plusJakartaSans(fontSize: 13)),
+                            Text('${e.value['cantidad']} vendidos',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: _kPrimary)),
+                          ],
+                        ),
+                      )),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => StoreScreen(idTienda: id),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.visibility_outlined),
+                    label: const Text('Ver como cliente'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _statTienda(String valor, String etiqueta, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+      decoration: BoxDecoration(
+        color: _kPrimary.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 18, color: _kPrimary),
+          const SizedBox(height: 4),
+          Text(valor,
+              style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w800, fontSize: 13)),
+          const SizedBox(height: 2),
+          Text(etiqueta,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10, color: AppColors.inkSecundarioLight)),
+        ],
+      ),
+    );
+  }
+
   void _mostrarInfoVendedor(Map<String, dynamic> tienda) async {
     final ownerId = tienda['owner_id'] as String?;
     if (ownerId == null) return;
@@ -1176,10 +1387,56 @@ class _TiendasYProductosTabState extends State<_TiendasYProductosTab> {
     );
 
     Map<String, dynamic>? info;
+    Map<String, dynamic>? permisosAdmin;
+    Map<String, dynamic>? tiendaPropia;
+    Map<String, dynamic>? afiliado;
+    Map<String, dynamic>? ventasTienda;
+    List<Map<String, dynamic>> topProductos = [];
+    Map<String, dynamic>? afiliadoResumen;
+
     try {
       info = await widget.tiendasService.obtenerInfoUsuario(ownerId);
-    } catch (_) {
-      info = null;
+    } catch (e) {
+      debugPrint('Error obtenerInfoUsuario: $e');
+    }
+
+    try {
+      permisosAdmin = await widget.tiendasService.obtenerPermisosAdmin(ownerId);
+    } catch (e) {
+      debugPrint('Error obtenerPermisosAdmin: $e');
+    }
+
+    try {
+      tiendaPropia =
+          await widget.tiendasService.obtenerTiendaPorOwnerId(ownerId);
+    } catch (e) {
+      debugPrint('Error obtenerTiendaPorOwnerId: $e');
+    }
+
+    try {
+      afiliado = await widget.tiendasService.obtenerAfiliadoPorUserId(ownerId);
+    } catch (e) {
+      debugPrint('Error obtenerAfiliadoPorUserId: $e');
+    }
+
+    if (tiendaPropia != null) {
+      try {
+        final idT = tiendaPropia['id_tienda'] as String;
+        ventasTienda =
+            await widget.tiendasService.obtenerVentasTotalesTienda(idT);
+        topProductos =
+            await widget.tiendasService.obtenerTopProductosTienda(idT);
+      } catch (e) {
+        debugPrint('Error ventas/top productos: $e');
+      }
+    }
+    if (afiliado != null) {
+      try {
+        afiliadoResumen =
+            await widget.tiendasService.afiliadoDashboardResumen(ownerId);
+      } catch (e) {
+        debugPrint('Error afiliadoDashboardResumen: $e');
+      }
     }
 
     if (!mounted) return;
@@ -1198,18 +1455,25 @@ class _TiendasYProductosTabState extends State<_TiendasYProductosTab> {
     final email = info['email'] as String? ?? '-';
     final creadoEn =
         info['creado_en'] != null ? DateTime.tryParse(info['creado_en']) : null;
+    final esAdminYa = permisosAdmin != null;
+    const verde = AppColors.success;
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.92,
+        expand: false,
+        builder: (ctx, scrollController) => SafeArea(
+          child: ListView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(20),
             children: [
+              // ---------- Header: foto, nombre, email, fecha ----------
               Row(
                 children: [
                   CircleAvatar(
@@ -1235,30 +1499,208 @@ class _TiendasYProductosTabState extends State<_TiendasYProductosTab> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              if (creadoEn != null)
+              if (creadoEn != null) ...[
+                const SizedBox(height: 8),
                 Text(
                   'Cuenta creada: ${creadoEn.day}/${creadoEn.month}/${creadoEn.year}',
                   style: GoogleFonts.plusJakartaSans(
                       fontSize: 12.5, color: AppColors.inkSecundarioLight),
                 ),
-              const SizedBox(height: 20),
-              if (widget.esSuperadmin)
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _abrirModalPermisos(ownerId, nombreGoogle);
-                    },
-                    icon: const Icon(Icons.admin_panel_settings_outlined),
-                    label: const Text('Hacer Admin'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFD4AF37),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+              ],
+              const SizedBox(height: 14),
+              // ---------- Chips de rol ----------
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _chipRol('Admin', Icons.admin_panel_settings,
+                      Colors.deepPurple, esAdminYa),
+                  _chipRol('Vendedor', Icons.storefront_rounded, _kPrimary,
+                      tiendaPropia != null),
+                  _chipRol('Afiliado', Icons.handshake_outlined,
+                      const Color(0xFFD4AF37), afiliado != null),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // ---------- Acordeón: Vendedor ----------
+              if (tiendaPropia != null)
+                _acordeonRol(
+                  titulo: 'Vendedor · ${tiendaPropia['nombre'] ?? ''}',
+                  icono: Icons.storefront_rounded,
+                  color: verde,
+                  hijos: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _statVerde('Pedidos',
+                              '${ventasTienda?['total_pedidos'] ?? 0}', verde),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _statVerde(
+                              'Ventas',
+                              '\$${((ventasTienda?['monto_total'] as num?) ?? 0).toStringAsFixed(2)}',
+                              verde),
+                        ),
+                      ],
                     ),
-                  ),
+                    if (topProductos.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text('Más vendidos',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.inkSecundarioLight)),
+                      const SizedBox(height: 6),
+                      ...topProductos.map((p) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                    child: Text(p['nombre'] ?? '',
+                                        style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 13))),
+                                Text('${p['cantidad']} vendidos',
+                                    style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: verde)),
+                              ],
+                            ),
+                          )),
+                    ],
+                  ],
                 ),
+              if (tiendaPropia != null) const SizedBox(height: 10),
+
+              // ---------- Acordeón: Afiliado ----------
+              if (afiliado != null)
+                _acordeonRol(
+                  titulo: 'Afiliado · ${afiliado['codigo'] ?? ''}',
+                  icono: Icons.handshake_outlined,
+                  color: verde,
+                  hijos: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _statVerde(
+                              'Saldo',
+                              '${afiliadoResumen?['saldo_cup'] ?? 0} CUP',
+                              verde),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _statVerde(
+                              'Comisiones',
+                              '\$${afiliadoResumen?['comisiones_acumuladas'] ?? 0}',
+                              verde),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _statVerde(
+                              'Este mes',
+                              '\$${afiliadoResumen?['comisiones_mes'] ?? 0}',
+                              verde),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _statVerde(
+                              'Referidos',
+                              '${afiliadoResumen?['total_referidos'] ?? 0}',
+                              verde),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+
+              const SizedBox(height: 20),
+
+              // ---------- Acciones de admin ----------
+              // Estilo "glass": relleno translúcido + borde suave +
+              // esquinas redondeadas, mismo alto fijo (52) en los 3
+              // botones para que se vean de la misma familia.
+              if (widget.esSuperadmin) ...[
+                if (!esAdminYa)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: FilledButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _abrirModalPermisos(ownerId, nombreGoogle);
+                      },
+                      icon: const Icon(Icons.admin_panel_settings_outlined,
+                          size: 19),
+                      label: const Text('Hacer Admin'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFD4AF37),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                  )
+                else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 52,
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _abrirModalPermisos(ownerId, nombreGoogle,
+                                  permisosActuales: permisosAdmin);
+                            },
+                            icon: const Icon(Icons.tune_rounded,
+                                size: 18, color: _kPrimary),
+                            label: const Text('Gestionar permisos',
+                                style: TextStyle(
+                                    color: _kPrimary,
+                                    fontWeight: FontWeight.w600)),
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: _kPrimary.withOpacity(0.08),
+                              side: BorderSide(
+                                  color: _kPrimary.withOpacity(0.35)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16)),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: SizedBox(
+                          height: 52,
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _confirmarQuitarAdmin(ownerId, nombreGoogle);
+                            },
+                            icon: const Icon(Icons.person_remove_outlined,
+                                size: 18, color: Colors.red),
+                            label: const Text('Quitar admin',
+                                style: TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.w600)),
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: Colors.red.withOpacity(0.06),
+                              side: BorderSide(
+                                  color: Colors.red.withOpacity(0.35)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16)),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
             ],
           ),
         ),
@@ -1266,10 +1708,125 @@ class _TiendasYProductosTabState extends State<_TiendasYProductosTab> {
     );
   }
 
-  void _abrirModalPermisos(String userId, String nombre) {
-    bool todos = false;
+  Widget _chipRol(String label, IconData icon, Color color, bool activo) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: activo ? color.withOpacity(0.12) : Colors.grey.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: activo ? color.withOpacity(0.4) : Colors.grey.shade300),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: activo ? color : Colors.grey),
+          const SizedBox(width: 4),
+          Text(label,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: activo ? color : Colors.grey.shade600)),
+        ],
+      ),
+    );
+  }
+
+  Widget _acordeonRol({
+    required String titulo,
+    required IconData icono,
+    required Color color,
+    required List<Widget> hijos,
+  }) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: Container(
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.25)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          leading: Icon(icono, color: color, size: 20),
+          title: Text(titulo,
+              style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w700, fontSize: 13.5)),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          children: hijos,
+        ),
+      ),
+    );
+  }
+
+  Widget _statVerde(String label, String valor, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(valor,
+              style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w800, fontSize: 15, color: color)),
+          Text(label,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, color: AppColors.inkSecundarioLight)),
+        ],
+      ),
+    );
+  }
+
+  void _confirmarQuitarAdmin(String userId, String nombre) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('¿Quitar admin?'),
+        content: Text('$nombre perderá todos sus permisos de administrador.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              try {
+                await widget.tiendasService.eliminarAdmin(userId);
+                if (mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Admin eliminado')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Quitar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _abrirModalPermisos(String userId, String nombre,
+      {Map<String, dynamic>? permisosActuales}) {
+    final editando = permisosActuales != null;
+    // Si ya tenía 'todos': true, el switch general arranca activado;
+    // si no, se pre-marca cada permiso individual según lo que tenga.
+    bool todos = permisosActuales?['todos'] == true;
     final Map<String, bool> seleccion = {
-      for (final k in _permisosDisponibles.keys) k: false,
+      for (final k in _permisosDisponibles.keys)
+        k: permisosActuales?[k] == true,
     };
 
     showDialog(
@@ -1313,8 +1870,13 @@ class _TiendasYProductosTabState extends State<_TiendasYProductosTab> {
                     ? <String, dynamic>{'todos': true}
                     : Map<String, dynamic>.from(seleccion);
                 try {
-                  await widget.tiendasService
-                      .crearAdmin(userId: userId, permisos: permisos);
+                  if (editando) {
+                    await widget.tiendasService.actualizarPermisosAdmin(
+                        userId: userId, permisos: permisos);
+                  } else {
+                    await widget.tiendasService
+                        .crearAdmin(userId: userId, permisos: permisos);
+                  }
                   if (mounted) {
                     Navigator.pop(ctx);
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -2431,6 +2993,7 @@ class _AfiliadosTab extends StatefulWidget {
 
 class _AfiliadosTabState extends State<_AfiliadosTab> {
   late Future<List<Map<String, dynamic>>> _retirosPendientes;
+  late Future<List<Map<String, dynamic>>> _todosLosAfiliados;
   final _busquedaCtrl = TextEditingController();
   final Set<String> _procesando = {};
 
@@ -2448,6 +3011,7 @@ class _AfiliadosTabState extends State<_AfiliadosTab> {
 
   void _cargar() {
     _retirosPendientes = widget.tiendasService.obtenerRetirosPendientes();
+    _todosLosAfiliados = widget.tiendasService.obtenerTodosLosAfiliados();
   }
 
   void _notificarError(Object e) {
@@ -2810,6 +3374,94 @@ class _AfiliadosTabState extends State<_AfiliadosTab> {
                                 label: const Text('Marcar como Pagado'),
                               ),
                             ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+          const SizedBox(height: 28),
+          Text('Todos los afiliados',
+              style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.bold, fontSize: 15)),
+          const SizedBox(height: 10),
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: _todosLosAfiliados,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (snapshot.hasError) {
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text('Error: ${snapshot.error}',
+                      style: const TextStyle(color: Colors.red)),
+                );
+              }
+              final afiliados = snapshot.data ?? [];
+              if (afiliados.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                    child: Text('Todavía no hay afiliados registrados',
+                        style: GoogleFonts.plusJakartaSans(
+                            color: AppColors.inkSecundarioLight)),
+                  ),
+                );
+              }
+              return Column(
+                children: afiliados.map((a) {
+                  final activo = a['activo'] == true;
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(kCardRadius)),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(kCardRadius),
+                      onTap: () => _mostrarDetalleAfiliado(a),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: _kPrimary.withOpacity(0.1),
+                              child: Icon(
+                                  activo
+                                      ? Icons.person_rounded
+                                      : Icons.person_off_outlined,
+                                  color: _kPrimary,
+                                  size: 18),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(a['nombre'] ?? 'Afiliado',
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 14)),
+                                  Text('Código: ${a['codigo'] ?? '-'}',
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 12,
+                                          color: AppColors.inkSecundarioLight)),
+                                ],
+                              ),
+                            ),
+                            Text('${a['saldo_cup'] ?? 0} CUP',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13,
+                                    color: _kPrimary)),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.chevron_right_rounded,
+                                color: Colors.grey, size: 20),
                           ],
                         ),
                       ),

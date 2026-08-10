@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+import 'dart:async';
 import 'dart:math' as math;
 import 'gestionar_planes_screen.dart';
 import 'package:flutter/material.dart';
@@ -30,9 +32,17 @@ import '../services/notificaciones_service.dart';
 // ---------------------------------------------------------------------
 // Estos valores ahora viven en core/app_colors.dart (AppColors) para
 // que toda la app los comparta -- se dejan estos alias para no tener
-// que tocar las 35 líneas de este archivo que ya los usan.
-const _kCoral = AppColors.coral;
-const _kCoralDark = AppColors.coralDark;
+// que tocar las decenas de líneas de este archivo que ya los usan.
+//
+// FIX (paleta): _kCoral/_kCoralDark apuntaban a AppColors.coral (el
+// naranja), pero según el propio app_colors.dart ese naranja es el
+// "acento cálido VIP/premium/destacados", NO el color primario de
+// marca -- el primario real de toda la app es el azul sistema
+// (AppColors.primary). Por eso Home se veía "naranja feo" y
+// desalineado del resto de las pantallas: apuntaban al color
+// equivocado. _kGold sigue siendo el dorado exclusivo del sello VIP.
+const _kCoral = AppColors.primary;
+const _kCoralDark = AppColors.primaryDark;
 const _kCream = AppColors.crema;
 const _kInk = AppColors.ink;
 const _kCardRadius = kCardRadius;
@@ -69,6 +79,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<List<Map<String, dynamic>>>? _productosCercanos;
   Future<List<Map<String, dynamic>>>? _tiendasCercanas;
   String? _errorUbicacion;
+
+  // ---- Carrusel hero de tiendas premium (arriba del todo) ----
+  final PageController _heroController = PageController();
+  Timer? _heroAutoplayTimer;
+  int _heroPaginaActual = 0;
+  bool _heroAutoplayIniciado =
+      false; // evita reiniciar el Timer en cada rebuild del FutureBuilder
 
   Map<String, dynamic>? _miTienda;
   bool _esAdmin = false;
@@ -185,7 +202,37 @@ class _HomeScreenState extends State<HomeScreen> {
     _precioMinCtrl.dispose();
     _precioMaxCtrl.dispose();
     _busquedaCtrl.dispose();
+    _heroAutoplayTimer?.cancel();
+    _heroController.dispose();
     super.dispose();
+  }
+
+  // ---- Autoplay del carrusel hero: avanza de tienda cada 5s. Se
+  // pausa mientras el usuario tiene el dedo encima (ver
+  // NotificationListener<ScrollNotification> en _seccionFeaturedStoresHero)
+  // y se reanuda al soltar. ----
+  void _iniciarAutoplayHero(int cantidadTiendas) {
+    if (_heroAutoplayIniciado || cantidadTiendas <= 1) return;
+    _heroAutoplayIniciado = true;
+    _reanudarAutoplayHero(cantidadTiendas);
+  }
+
+  void _reanudarAutoplayHero(int cantidadTiendas) {
+    _heroAutoplayTimer?.cancel();
+    if (cantidadTiendas <= 1) return;
+    _heroAutoplayTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!_heroController.hasClients) return;
+      final siguiente = (_heroPaginaActual + 1) % cantidadTiendas;
+      _heroController.animateToPage(
+        siguiente,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOutCubic,
+      );
+    });
+  }
+
+  void _pausarAutoplayHero() {
+    _heroAutoplayTimer?.cancel();
   }
 
   Future<void> _cargarRol() async {
@@ -725,37 +772,120 @@ class _HomeScreenState extends State<HomeScreen> {
         drawer: Drawer(
           child: Builder(
             builder: (BuildContext innerContext) {
+              final user = supabase.auth.currentUser;
+              final avatarUrl = user?.userMetadata?['avatar_url'] as String?;
+              final nombre = (user?.userMetadata?['full_name'] as String?) ??
+                  (user?.userMetadata?['name'] as String?) ??
+                  user?.email?.split('@').first ??
+                  'Usuario';
+              final email = user?.email ?? '';
+
               return ListView(
                 padding: EdgeInsets.zero,
                 children: [
-                  DrawerHeader(
-                    decoration: const BoxDecoration(color: _kCoral),
-                    child: Center(
-                      child: Text('Menú',
-                          style: GoogleFonts.inter(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.w800)),
-                    ),
-                  ),
-
-                  ListTile(
-                    leading: const Icon(Icons.help_outline_rounded),
-                    title: const Text('Preguntas frecuentes'),
-                    onTap: () {
-                      Navigator.of(innerContext).pop();
-                      _abrirPreguntasFrecuentes();
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.person_outline_rounded),
-                    title: const Text('Mi Perfil'),
+                  // ---------- Header: foto + nombre + email de Google ----------
+                  // Tappable en vez de tener una fila "Mi Perfil" aparte --
+                  // el chevron en la esquina es la pista visual de que se
+                  // puede tocar para entrar al perfil.
+                  InkWell(
                     onTap: () {
                       Navigator.of(innerContext).pop();
                       context.push('/mi-perfil');
                     },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(20, 48, 20, 20),
+                      decoration: const BoxDecoration(color: _kCoral),
+                      child: Stack(
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                radius: 34,
+                                backgroundColor: Colors.white,
+                                backgroundImage:
+                                    (avatarUrl != null && avatarUrl.isNotEmpty)
+                                        ? NetworkImage(avatarUrl)
+                                        : null,
+                                child: (avatarUrl == null || avatarUrl.isEmpty)
+                                    ? Text(
+                                        nombre.isNotEmpty
+                                            ? nombre[0].toUpperCase()
+                                            : '?',
+                                        style: GoogleFonts.inter(
+                                            fontSize: 26,
+                                            fontWeight: FontWeight.w800,
+                                            color: _kCoral),
+                                      )
+                                    : null,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(nombre,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.inter(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800)),
+                              if (email.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(email,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                        color: Colors.white.withOpacity(0.85),
+                                        fontSize: 12.5)),
+                              ],
+                            ],
+                          ),
+                          Positioned(
+                            right: 0,
+                            bottom: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.18),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.chevron_right_rounded,
+                                  color: Colors.white, size: 18),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
+
                   if (!_cargandoRol) ...[
+                    ListTile(
+                      leading: const Icon(Icons.map_rounded,
+                          color: AppColors.primary),
+                      title: Row(
+                        children: [
+                          const Text('Mapa'),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text('NUEVO',
+                                style: GoogleFonts.inter(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white)),
+                          ),
+                        ],
+                      ),
+                      subtitle: const Text('Encuentra tiendas cerca de ti'),
+                      onTap: () {
+                        Navigator.of(innerContext).pop();
+                        context.push('/mapa');
+                      },
+                    ),
                     if (_esAdmin)
                       ListTile(
                         leading: const Icon(Icons.admin_panel_settings,
@@ -785,16 +915,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           context.push('/crear-tienda');
                         },
                       ),
-                    if (_esVendedor && !_esPremium)
-                      ListTile(
-                        leading: const Icon(Icons.workspace_premium_outlined,
-                            color: Color(0xFFB8860B)),
-                        title: const Text('Hacerte premium'),
-                        onTap: () {
-                          Navigator.of(innerContext).pop();
-                          _hacerVendedorPremium();
-                        },
-                      ),
                     if (_esAfiliado)
                       ListTile(
                         leading: const Icon(Icons.handshake_outlined,
@@ -815,8 +935,26 @@ class _HomeScreenState extends State<HomeScreen> {
                           context.push('/afiliados/registro');
                         },
                       ),
+                    if (_esVendedor && !_esPremium)
+                      ListTile(
+                        leading: const Icon(Icons.workspace_premium_outlined,
+                            color: Color(0xFFB8860B)),
+                        title: const Text('Hacerte premium'),
+                        onTap: () {
+                          Navigator.of(innerContext).pop();
+                          _hacerVendedorPremium();
+                        },
+                      ),
+                    const Divider(),
                   ],
-                  // Dentro de tu Drawer
+                  ListTile(
+                    leading: const Icon(Icons.help_outline_rounded),
+                    title: const Text('Preguntas frecuentes'),
+                    onTap: () {
+                      Navigator.of(innerContext).pop();
+                      _abrirPreguntasFrecuentes();
+                    },
+                  ),
                   ListTile(
                     leading: Icon(
                         // Cambia el icono dependiendo del estado
@@ -942,7 +1080,7 @@ class _HomeScreenState extends State<HomeScreen> {
           },
           child: ListView(
             children: [
-              _seccionFeaturedStores(),
+              _seccionFeaturedStoresHero(),
               _seccionTopSellers(),
               const SizedBox(height: 8),
               _feedProductosCercanos(),
@@ -953,7 +1091,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _seccionFeaturedStores() {
+  Widget _seccionFeaturedStoresHero() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -978,107 +1116,105 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-        SizedBox(
-          height: 184,
-          child: FutureBuilder<List<Map<String, dynamic>>>(
-            future: _premium,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              if (snapshot.hasError) {
-                debugPrint(
-                    'Error cargando carrusel premium: ${snapshot.error}');
-                return const Center(child: Text('No se pudo cargar'));
-              }
-              final tiendas = snapshot.data ?? [];
-              if (tiendas.isEmpty) {
-                return const Center(child: Text('Nada por aquí todavía'));
-              }
-              return ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                itemCount: tiendas.length,
-                itemBuilder: (context, i) {
-                  final t = tiendas[i];
-                  return GestureDetector(
-                    onTap: () => context.push('/tienda/${t['id_tienda']}'),
-                    child: Container(
-                      width: 280,
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(_kCardRadius),
-                        boxShadow: _kSoftShadow,
-                        image: DecorationImage(
-                          image: NetworkImage(t['logo_url'] ?? ''),
-                          fit: BoxFit.cover,
-                          onError: (_, __) {},
-                        ),
-                        color: Colors.grey.shade300,
-                      ),
-                      child: Stack(
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(_kCardRadius),
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.black.withOpacity(0.75)
-                                ],
-                              ),
-                            ),
-                            padding: const EdgeInsets.all(14),
-                            alignment: Alignment.bottomLeft,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(t['nombre'] ?? '',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.inter(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white)),
-                              ],
-                            ),
-                          ),
-                          Positioned(
-                            top: 12,
-                            left: 12,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                  color: _colorSuperficie,
-                                  borderRadius: BorderRadius.circular(20),
-                                  boxShadow: _kSoftShadow),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(Icons.star_rounded,
-                                      size: 14, color: _kGold),
-                                  const SizedBox(width: 4),
-                                  Text('TIENDA VIP',
-                                      style: GoogleFonts.inter(
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w800,
-                                          color: _kGold)),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
+        FutureBuilder<List<Map<String, dynamic>>>(
+          future: _premium,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Center(child: CircularProgressIndicator()),
               );
-            },
-          ),
+            }
+            if (snapshot.hasError) {
+              debugPrint('Error cargando carrusel premium: ${snapshot.error}');
+              return const AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Center(child: Text('No se pudo cargar')),
+              );
+            }
+            final tiendas = snapshot.data ?? [];
+            if (tiendas.isEmpty) {
+              return const AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Center(child: Text('Nada por aquí todavía')),
+              );
+            }
+
+            // Arranca el autoplay una sola vez que ya sabemos cuántas
+            // tiendas hay (después de este primer build, para no
+            // llamar setState/animateToPage en medio de un build).
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _iniciarAutoplayHero(tiendas.length);
+            });
+
+            return AspectRatio(
+              aspectRatio: 16 / 9,
+              child: NotificationListener<ScrollNotification>(
+                // Pausa el autoplay mientras el usuario arrastra a mano,
+                // y lo reanuda al soltar -- así no "pelean" el gesto del
+                // usuario y el avance automático.
+                onNotification: (notif) {
+                  if (notif is ScrollStartNotification &&
+                      notif.dragDetails != null) {
+                    _pausarAutoplayHero();
+                  } else if (notif is ScrollEndNotification) {
+                    _reanudarAutoplayHero(tiendas.length);
+                  }
+                  return false;
+                },
+                child: PageView.builder(
+                  controller: _heroController,
+                  itemCount: tiendas.length,
+                  onPageChanged: (i) => setState(() => _heroPaginaActual = i),
+                  itemBuilder: (context, i) {
+                    final t = tiendas[i];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: _HeroTiendaCard(
+                        tienda: t,
+                        tiendasService: _tiendasService,
+                        esActiva: i == _heroPaginaActual,
+                        onTap: () {
+                          // TODO: acá va el modal de preview (foto,
+                          // nombre, ubicación, estrellas + grilla de 3-4
+                          // productos tocables) -- por ahora, mientras
+                          // se construye ese paso, entra directo a la
+                          // tienda para poder seguir probando el
+                          // carrusel de punta a punta.
+                          context.push('/tienda/${t['id_tienda']}');
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        // ---------- Indicador de puntos (qué tienda está activa) ----------
+        FutureBuilder<List<Map<String, dynamic>>>(
+          future: _premium,
+          builder: (context, snapshot) {
+            final total = snapshot.data?.length ?? 0;
+            if (total <= 1) return const SizedBox.shrink();
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(total, (i) {
+                final activo = i == _heroPaginaActual;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width: activo ? 20 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: activo ? _kCoral : _kCoral.withOpacity(0.25),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                );
+              }),
+            );
+          },
         ),
       ],
     );
@@ -1493,8 +1629,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 3),
                     Row(
                       children: [
-                        const Icon(Icons.star_rounded,
-                            size: 14, color: _kCoral),
+                        const Icon(Icons.star_rounded, size: 14, color: _kGold),
                         const SizedBox(width: 3),
                         Text(
                           '${(t['promedio_estrellas'] as num).toStringAsFixed(1)}',
@@ -1636,6 +1771,241 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------
+// Tarjeta hero de una tienda premium para el carrusel de arriba de
+// Home. Mientras esta tarjeta está "activa" (es la página visible del
+// PageView), rota sola entre el logo de la tienda y las fotos de sus
+// últimos productos disponibles -- un mini-carrusel dentro del
+// carrusel grande, con crossfade. Se pausa cuando deja de ser la
+// tienda activa, para no seguir corriendo un Timer por cada tarjeta
+// fuera de pantalla.
+// ---------------------------------------------------------------------
+class _HeroTiendaCard extends StatefulWidget {
+  final Map<String, dynamic> tienda;
+  final TiendasService tiendasService;
+  final bool esActiva;
+  final VoidCallback onTap;
+
+  const _HeroTiendaCard({
+    required this.tienda,
+    required this.tiendasService,
+    required this.esActiva,
+    required this.onTap,
+  });
+
+  @override
+  State<_HeroTiendaCard> createState() => _HeroTiendaCardState();
+}
+
+class _HeroTiendaCardState extends State<_HeroTiendaCard> {
+  late final Future<List<Map<String, dynamic>>> _productosFuture;
+  Timer? _fotoTimer;
+  int _fotoIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _productosFuture = widget.tiendasService.obtenerProductosDestacadosDeTienda(
+      widget.tienda['id_tienda'] as String,
+    );
+    if (widget.esActiva) _iniciarRotacionFotos();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HeroTiendaCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.esActiva && !oldWidget.esActiva) {
+      _iniciarRotacionFotos();
+    } else if (!widget.esActiva && oldWidget.esActiva) {
+      _fotoTimer?.cancel();
+      if (mounted) setState(() => _fotoIndex = 0);
+    }
+  }
+
+  void _iniciarRotacionFotos() {
+    _fotoTimer?.cancel();
+    _fotoTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted) return;
+      setState(() => _fotoIndex++);
+    });
+  }
+
+  @override
+  void dispose() {
+    _fotoTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tienda;
+    final esOscuro = Theme.of(context).brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(_kCardRadius),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(_kCardRadius),
+            // ---- Estilo "vidrio flotante": borde suave translúcido +
+            // sombra grande y difusa (más pronunciada que _kSoftShadow,
+            // que es para tarjetas chicas), para que se sienta como si
+            // la tarjeta flotara sobre el fondo. ----
+            border: Border.all(
+              color: (esOscuro ? AppColors.borderDark : AppColors.borderLight)
+                  .withOpacity(0.6),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(esOscuro ? 0.45 : 0.20),
+                blurRadius: 32,
+                offset: const Offset(0, 16),
+              ),
+            ],
+            color: Colors.grey.shade300,
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // ---- Foto de fondo: rota entre logo y productos ----
+              FutureBuilder<List<Map<String, dynamic>>>(
+                future: _productosFuture,
+                builder: (context, snapshot) {
+                  final fotos = <String>[
+                    if ((t['logo_url'] as String?)?.isNotEmpty ?? false)
+                      t['logo_url'] as String,
+                    ...((snapshot.data ?? [])
+                        .map((p) => p['imagen_url'] as String?)
+                        .whereType<String>()
+                        .where((u) => u.isNotEmpty)),
+                  ];
+                  if (fotos.isEmpty) {
+                    return Container(color: Colors.grey.shade300);
+                  }
+                  final url = fotos[_fotoIndex % fotos.length];
+                  return AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 500),
+                    child: Image.network(
+                      url,
+                      key: ValueKey(url),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          Container(color: Colors.grey.shade300),
+                    ),
+                  );
+                },
+              ),
+              // ---- Degradado inferior + nombre/ubicación ----
+              Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: const [0.5, 1],
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.80),
+                    ],
+                  ),
+                ),
+                padding: const EdgeInsets.all(18),
+                alignment: Alignment.bottomLeft,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(t['nombre'] ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white)),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.place_rounded,
+                            size: 14, color: Colors.white70),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            '${t['municipio'] ?? ''}, ${t['provincia'] ?? ''}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                                fontSize: 13, color: Colors.white70),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              // ---- Sello VIP (vidrio esmerilado real sobre la foto) ----
+              Positioned(
+                top: 16,
+                left: 16,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.28),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: Colors.white.withOpacity(0.4), width: 1),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.star_rounded,
+                              size: 15, color: _kGold),
+                          const SizedBox(width: 4),
+                          Text('TIENDA VIP',
+                              style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // ---- "Ver tienda" affordance, esquina inferior derecha ----
+              Positioned(
+                right: 16,
+                bottom: 16,
+                child: ClipOval(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.25),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: Colors.white.withOpacity(0.4), width: 1),
+                      ),
+                      child: const Icon(Icons.arrow_forward_rounded,
+                          color: Colors.white, size: 18),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

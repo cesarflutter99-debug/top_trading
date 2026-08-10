@@ -53,6 +53,24 @@ class StorageService {
     return supabase.storage.from('tiendas').getPublicUrl(nombreArchivo);
   }
 
+  /// Sube la foto de portada de la tienda al bucket público "tiendas"
+  /// y devuelve la URL pública para guardar en tiendas.imagen_portada.
+  Future<String> subirPortadaTienda({
+    required File archivo,
+    required String idTienda,
+  }) async {
+    final nombreArchivo =
+        '$idTienda/portada_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    await supabase.storage.from('tiendas').upload(
+          nombreArchivo,
+          archivo,
+          fileOptions: FileOptions(upsert: true),
+        );
+
+    return supabase.storage.from('tiendas').getPublicUrl(nombreArchivo);
+  }
+
   /// Sube la foto del QR de pago (generado manualmente por el admin,
   /// ej. desde Transfermóvil/Enzona) al bucket público "planes" y
   /// devuelve la URL pública para guardar en planes.qr_url.
@@ -105,8 +123,7 @@ class StorageService {
         final archivos =
             await supabase.storage.from(bucket).list(path: idTienda);
         if (archivos.isNotEmpty) {
-          final rutas =
-              archivos.map((a) => '$idTienda/${a.name}').toList();
+          final rutas = archivos.map((a) => '$idTienda/${a.name}').toList();
           await supabase.storage.from(bucket).remove(rutas);
         }
       } catch (_) {

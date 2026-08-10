@@ -20,6 +20,8 @@ class _AfiliadoDashboardScreenState extends State<AfiliadoDashboardScreen> {
   List<Map<String, dynamic>>? _comisiones;
   List<Map<String, dynamic>>? _retiros;
   bool _cargando = true;
+  bool _verTodasComisiones = false;
+  bool _verTodosRetiros = false;
 
   @override
   void initState() {
@@ -202,32 +204,47 @@ class _AfiliadoDashboardScreenState extends State<AfiliadoDashboardScreen> {
 
   Widget _buildComisiones(bool esOscuro) {
     if (_comisiones == null || _comisiones!.isEmpty) {
-      return _emptyCard('Sin comisiones yet', esOscuro);
+      return _emptyCard('Sin comisiones aún', esOscuro);
     }
+    final total = _comisiones!.length;
+    final mostrar =
+        _verTodasComisiones ? _comisiones! : _comisiones!.take(5).toList();
     return Card(
       color: esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight,
-      child: ListView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _comisiones!.length,
-        itemBuilder: (context, i) {
-          final c = _comisiones![i];
-          return ListTile(
-            leading: Icon(Icons.auto_awesome,
-                size: 18, color: AppColors.warm),
-            title: Text(c['tienda_nombre'] ?? '',
-                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
-            subtitle: Text(
-              'Código: ${c['codigo_usado'] ?? ''} · ${c['estado'] ?? ''}',
-              style: GoogleFonts.plusJakartaSans(fontSize: 11),
+      child: Column(
+        children: [
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: mostrar.length,
+            itemBuilder: (context, i) {
+              final c = mostrar[i];
+              return ListTile(
+                leading: Icon(Icons.auto_awesome,
+                    size: 18, color: AppColors.warm),
+                title: Text(c['tienda_nombre'] ?? '',
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+                subtitle: Text(
+                  'Código: ${c['codigo_usado'] ?? ''} · ${c['estado'] ?? ''}',
+                  style: GoogleFonts.plusJakartaSans(fontSize: 11),
+                ),
+                trailing: Text(
+                  '\$${(c['comision_cup'] ?? 0)} CUP',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w700, color: AppColors.warm),
+                ),
+              );
+            },
+          ),
+          if (total > 5)
+            TextButton(
+              onPressed: () =>
+                  setState(() => _verTodasComisiones = !_verTodasComisiones),
+              child: Text(_verTodasComisiones
+                  ? 'Ver menos'
+                  : 'Ver todos ($total)'),
             ),
-            trailing: Text(
-              '\$${(c['comision_cup'] ?? 0)} CUP',
-              style: GoogleFonts.plusJakartaSans(
-                  fontWeight: FontWeight.w700, color: AppColors.warm),
-            ),
-          );
-        },
+        ],
       ),
     );
   }
@@ -236,42 +253,56 @@ class _AfiliadoDashboardScreenState extends State<AfiliadoDashboardScreen> {
     if (_retiros == null || _retiros!.isEmpty) {
       return _emptyCard('Sin retiros', esOscuro);
     }
+    final total = _retiros!.length;
+    final mostrar =
+        _verTodosRetiros ? _retiros! : _retiros!.take(5).toList();
     return Card(
       color: esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight,
-      child: ListView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _retiros!.length,
-        itemBuilder: (context, i) {
-          final r = _retiros![i];
-          return ListTile(
-            leading: Icon(
-              r['estado'] == 'pagado'
-                  ? Icons.check_circle_outline
-                  : Icons.pending_actions,
-              color: r['estado'] == 'pagado'
-                  ? AppColors.success
-                  : Colors.orange,
+      child: Column(
+        children: [
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: mostrar.length,
+            itemBuilder: (context, i) {
+              final r = mostrar[i];
+              return ListTile(
+                leading: Icon(
+                  r['estado'] == 'pagado'
+                      ? Icons.check_circle_outline
+                      : Icons.pending_actions,
+                  color: r['estado'] == 'pagado'
+                      ? AppColors.success
+                      : Colors.orange,
+                ),
+                title: Text(
+                  '${r['monto_cup'] ?? 0} CUP',
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  '${r['estado'] ?? ''} · ${_formatDate(r['created_at'])}',
+                  style: GoogleFonts.plusJakartaSans(fontSize: 11),
+                ),
+                trailing: r['estado'] == 'pagado'
+                    ? Text(
+                        'Pagado',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.success),
+                      )
+                    : null,
+              );
+            },
+          ),
+          if (total > 5)
+            TextButton(
+              onPressed: () =>
+                  setState(() => _verTodosRetiros = !_verTodosRetiros),
+              child:
+                  Text(_verTodosRetiros ? 'Ver menos' : 'Ver todos ($total)'),
             ),
-            title: Text(
-              '${r['monto_cup'] ?? 0} CUP',
-              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
-            ),
-            subtitle: Text(
-              '${r['estado'] ?? ''} · ${_formatDate(r['created_at'])}',
-              style: GoogleFonts.plusJakartaSans(fontSize: 11),
-            ),
-            trailing: r['estado'] == 'pagado'
-                ? Text(
-                    'Pagado',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.success),
-                  )
-                : null,
-          );
-        },
+        ],
       ),
     );
   }

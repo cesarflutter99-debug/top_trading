@@ -46,6 +46,10 @@ dependencies:
   # QR Code
   qr_flutter: ^4.1.0
 
+  # Mapa interactivo (OpenStreetMap, sin API key)
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+
   cupertino_icons: ^1.0.6
 
 dev_dependencies:
