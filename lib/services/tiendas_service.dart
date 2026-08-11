@@ -271,10 +271,55 @@ class TiendasService {
     final res = await supabase
         .from('tiendas')
         .select(
-            'id_tienda, nombre, logo_url, latitud, longitud, promedio_estrellas')
+            'id_tienda, nombre, logo_url, latitud, longitud, promedio_estrellas, plan, plan_expira_en')
         .eq('estado', 'active')
         .not('latitud', 'is', null)
         .not('longitud', 'is', null);
+    return List<Map<String, dynamic>>.from(res);
+  }
+
+  // ---------------------------------------------------------------------
+  // FAVORITOS (solo tiendas)
+  // ---------------------------------------------------------------------
+
+  Future<bool> esFavorito(String idTienda) async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return false;
+    final res = await supabase
+        .from('favoritos')
+        .select('id_tienda')
+        .eq('id_usuario', uid)
+        .eq('id_tienda', idTienda)
+        .maybeSingle();
+    return res != null;
+  }
+
+  Future<void> agregarFavorito(String idTienda) async {
+    await supabase.from('favoritos').insert({
+      'id_usuario': supabase.auth.currentUser!.id,
+      'id_tienda': idTienda,
+    });
+  }
+
+  Future<void> quitarFavorito(String idTienda) async {
+    await supabase
+        .from('favoritos')
+        .delete()
+        .eq('id_usuario', supabase.auth.currentUser!.id)
+        .eq('id_tienda', idTienda);
+  }
+
+  /// Tiendas favoritas del usuario actual, con sus datos para mostrar
+  /// en la pantalla de Favoritos (logo, nombre, valoración).
+  Future<List<Map<String, dynamic>>> obtenerMisFavoritos() async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return [];
+    final res = await supabase
+        .from('favoritos')
+        .select(
+            'id_tienda, fecha_guardado, tiendas(id_tienda, nombre, logo_url, promedio_estrellas, municipio, plan)')
+        .eq('id_usuario', uid)
+        .order('fecha_guardado', ascending: false);
     return List<Map<String, dynamic>>.from(res);
   }
 
@@ -596,36 +641,11 @@ class TiendasService {
     required String codigo,
     required String? idTienda,
   }) async {
-    final codigoNormalizado = codigo.trim().toUpperCase();
-
-    final afiliado = await supabase
-        .from('afiliados')
-        .select('id_afiliado, user_id')
-        .eq('codigo', codigoNormalizado)
-        .eq('activo', true)
-        .maybeSingle();
-
-    if (afiliado == null) {
-      return {'estado': 'invalido', 'id_afiliado': null};
-    }
-    final idAfiliado = afiliado['id_afiliado'] as String;
-
-    if (idTienda != null && idTienda.isNotEmpty) {
-      final tienda = await supabase
-          .from('tiendas')
-          .select('owner_id')
-          .eq('id_tienda', idTienda)
-          .maybeSingle();
-
-      if (tienda != null && tienda['owner_id'] == afiliado['user_id']) {
-        return {'estado': 'propio', 'id_afiliado': idAfiliado};
-      }
-      if (await _tiendaYaUsoCodigo(idTienda, codigoNormalizado)) {
-        return {'estado': 'usado', 'id_afiliado': idAfiliado};
-      }
-    }
-
-    return {'estado': 'valido', 'id_afiliado': idAfiliado};
+    final res = await supabase.rpc('validar_codigo_afiliado', params: {
+      'p_codigo': codigo.trim().toUpperCase(),
+      'p_id_tienda': idTienda,
+    });
+    return Map<String, dynamic>.from(res as Map);
   }
 
   /// Crea una solicitud de cambio de plan. Si viene con código de

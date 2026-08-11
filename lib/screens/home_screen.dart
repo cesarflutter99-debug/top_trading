@@ -858,34 +858,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   if (!_cargandoRol) ...[
-                    ListTile(
-                      leading: const Icon(Icons.map_rounded,
-                          color: AppColors.primary),
-                      title: Row(
-                        children: [
-                          const Text('Mapa'),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 7, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text('NUEVO',
-                                style: GoogleFonts.inter(
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w800,
-                                    color: Colors.white)),
-                          ),
-                        ],
-                      ),
-                      subtitle: const Text('Encuentra tiendas cerca de ti'),
-                      onTap: () {
-                        Navigator.of(innerContext).pop();
-                        context.push('/mapa');
-                      },
-                    ),
                     if (_esAdmin)
                       ListTile(
                         leading: const Icon(Icons.admin_panel_settings,
@@ -894,25 +866,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         onTap: () {
                           Navigator.of(innerContext).pop();
                           _abrirAdmin();
-                        },
-                      ),
-                    if (_esVendedor)
-                      ListTile(
-                        leading: const Icon(Icons.storefront_rounded),
-                        title: const Text('Mi Tienda'),
-                        subtitle: const Text('Gestionar productos y ventas'),
-                        onTap: () {
-                          Navigator.of(innerContext).pop();
-                          _abrirMiTienda();
-                        },
-                      )
-                    else
-                      ListTile(
-                        leading: const Icon(Icons.storefront),
-                        title: const Text('Hacerte Vendedor'),
-                        onTap: () {
-                          Navigator.of(innerContext).pop();
-                          context.push('/crear-tienda');
                         },
                       ),
                     if (_esAfiliado)
