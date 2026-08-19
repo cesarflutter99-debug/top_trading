@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/supabase_client.dart';
+import '../core/auth_guard.dart';
 import '../services/currency_service.dart';
 import '../services/tiendas_service.dart';
 import 'store_screen_flow.dart' show CartService;
@@ -83,6 +84,24 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Future<void> _completarPedido(_CarritoData data) async {
+    // Sesión requerida para comprar.
+    if (!await requireAuth(context)) return;
+    if (!mounted) return;
+
+    // Defensa extra: la tienda ya no debería dejar llegar hasta acá al
+    // propio dueño (se ocultó "Agregar" en StoreScreen), pero si de
+    // todas formas el carrito quedó con productos de su propia tienda
+    // (ej. cambió de cuenta con el carrito ya cargado), cortamos acá
+    // con un mensaje claro en vez del error crudo de Supabase.
+    final uid = supabase.auth.currentUser!.id;
+    if (data.tienda['owner_id'] == uid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('No puedes comprar en tu propia tienda')),
+      );
+      return;
+    }
+
     final telefono = data.tienda['telefono_whatsapp'];
     if (telefono == null) {
       ScaffoldMessenger.of(context).showSnackBar(

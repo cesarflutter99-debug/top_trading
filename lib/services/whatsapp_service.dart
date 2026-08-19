@@ -36,7 +36,7 @@ class WhatsappService {
     required String municipio,
   }) async {
     final mensaje = Uri.encodeComponent(
-      'Nueva tienda pendiente de aprobación en Top Trading:\n'
+      'Nueva tienda pendiente de aprobación en Al Lado:\n'
       '- Nombre: $nombreTienda\n'
       '- Municipio: $municipio\n'
       '- Plan solicitado: $plan\n'
@@ -60,7 +60,7 @@ class WhatsappService {
     required String codigo,
   }) async {
     final mensaje = Uri.encodeComponent(
-      'Nuevo afiliado registrado en Top Trading:\n'
+      'Nuevo afiliado registrado en Al Lado:\n'
       '- Nombre: $nombre\n'
       '- Teléfono: $telefonoAfiliado\n'
       '- Código: $codigo\n'

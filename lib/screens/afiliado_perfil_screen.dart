@@ -251,7 +251,7 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
     if (_afiliado == null) return;
     final codigo = _afiliado!['codigo'] ?? '';
     Share.share(
-      '¡Únete a Top Trading! 🛍️\n'
+      '¡Únete a Al Lado! 🛍️\n'
       'Usa mi código de afiliado "$codigo" al registrar tu tienda y obtén '
       '10% de descuento en tu primer plan.\n\n'
       'Descarga la app y regístrate ahora.',

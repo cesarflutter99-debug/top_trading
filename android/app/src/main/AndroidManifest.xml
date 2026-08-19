@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
     <application
-        android:label="top_trading"
+        android:label="Al Lado"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         

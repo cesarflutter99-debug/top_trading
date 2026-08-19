@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/app_colors.dart';
+import '../core/auth_guard.dart';
 import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
 import 'admin_dashboard_screen.dart';
@@ -28,7 +29,14 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
   @override
   void initState() {
     super.initState();
-    _cargarTodo();
+    if (supabase.auth.currentUser == null) {
+      // Invitado: ni intentamos pedir tienda/afiliado/admin (esos
+      // métodos asumen currentUser!.id y truenan) -- se corta acá y
+      // el build() muestra el CTA de login en su lugar.
+      _cargando = false;
+    } else {
+      _cargarTodo();
+    }
   }
 
   Future<void> _cargarTodo() async {
@@ -77,6 +85,49 @@ class _MiPerfilScreenState extends State<MiPerfilScreen> {
   @override
   Widget build(BuildContext context) {
     final esOscuro = Theme.of(context).brightness == Brightness.dark;
+
+    if (supabase.auth.currentUser == null) {
+      return Scaffold(
+        backgroundColor: AppColors.backgroundLight,
+        appBar: AppBar(
+          title: const Text('Mi Perfil'),
+          backgroundColor: AppColors.backgroundLight,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.person_outline_rounded,
+                    size: 56, color: AppColors.inkSecundarioLight),
+                const SizedBox(height: 16),
+                Text('Inicia sesión para ver tu perfil',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 8),
+                Text(
+                  'Accedé con Google para ver tu tienda, tus afiliados '
+                  'y gestionar tu cuenta.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12.5, color: AppColors.inkSecundarioLight),
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () => mostrarModalInicioSesion(context),
+                  child: const Text('Iniciar sesión'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       appBar: AppBar(

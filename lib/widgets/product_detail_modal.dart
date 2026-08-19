@@ -1,6 +1,6 @@
 // product_detail_modal.dart
 //
-// Modal único y reutilizable para "Top Trading".
+// Modal único y reutilizable para "Al Lado".
 // Se invoca igual desde cualquier pantalla (búsqueda general, vista de
 // tienda, ranking semanal, portada mensual, etc.):
 //
@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import '../core/supabase_client.dart';
+import '../core/auth_guard.dart';
 import '../services/currency_service.dart';
 
 /// Modelo mínimo combinando producto + tienda + distancia ya calculada
@@ -178,8 +179,11 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
   }
 
   Future<void> _toggleFavorito() async {
-    final uid = supabase.auth.currentUser?.id;
-    if (uid == null) return; // requiere auth, igual que las valoraciones
+    // Invitado (sin sesión): en vez de no hacer nada silenciosamente,
+    // lo mandamos a loguearse con Google -- misma regla para toda
+    // acción real en la app.
+    if (!await requireAuth(context)) return;
+    final uid = supabase.auth.currentUser!.id;
     if (_isFavorito) {
       await supabase
           .from('favoritos')
@@ -199,7 +203,7 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
   void _shareTienda() {
     final link = 'https://toptrading.app/tienda/${widget.data.idTienda}';
     Share.share(
-      'Mira la tienda "${widget.data.nombreTienda}" en Top Trading: $link',
+      'Mira la tienda "${widget.data.nombreTienda}" en Al Lado: $link',
     );
   }
 
@@ -226,6 +230,8 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
   Widget build(BuildContext context) {
     final d = widget.data;
     final hayStock = d.cantidadDisponible > 0;
+    final sinStock = !hayStock;
+    final bajoStock = hayStock && d.cantidadDisponible < 10;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -235,11 +241,44 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.network(
-                d.imagenUrl,
-                height: 200,
-                width: double.infinity,
-                fit: BoxFit.cover,
+              child: Stack(
+                children: [
+                  Opacity(
+                    opacity: sinStock ? 0.5 : 1,
+                    child: Image.network(
+                      d.imagenUrl,
+                      height: 200,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  if (sinStock || bajoStock)
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade600,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withOpacity(0.2),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1)),
+                          ],
+                        ),
+                        child: Text(
+                          sinStock ? 'Agotado' : '¡Se agota!',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
@@ -258,6 +297,16 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
             PriceTag(
                 montoUsd: d.precioUsd,
                 style: const TextStyle(fontSize: 18, color: Colors.green)),
+            if (bajoStock) ...[
+              const SizedBox(height: 4),
+              Text(
+                '¡Se agota! Quedan ${d.cantidadDisponible} unidades',
+                style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.red.shade600),
+              ),
+            ],
             if (d.descripcion != null && d.descripcion!.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(

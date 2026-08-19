@@ -16,6 +16,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
+import '../core/auth_guard.dart';
+import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
 
 class FavoritosScreen extends StatefulWidget {
@@ -55,6 +57,45 @@ class _FavoritosScreenState extends State<FavoritosScreen> {
   @override
   Widget build(BuildContext context) {
     final esOscuro = Theme.of(context).brightness == Brightness.dark;
+
+    // Invitado sin sesión: ni intentamos pedir obtenerMisFavoritos()
+    // (fallaría por RLS, uid null) -- mostramos un CTA claro para
+    // loguearse en vez de un error críptico.
+    if (supabase.auth.currentUser == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Favoritos')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.favorite_border_rounded,
+                    size: 56, color: AppColors.inkSecundarioLight),
+                const SizedBox(height: 16),
+                Text('Inicia sesión para ver tus favoritos',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 8),
+                Text(
+                  'Guarda tiendas favoritas iniciando sesión con Google.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12.5, color: AppColors.inkSecundarioLight),
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () => mostrarModalInicioSesion(context),
+                  child: const Text('Iniciar sesión'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Favoritos')),
       body: RefreshIndicator(

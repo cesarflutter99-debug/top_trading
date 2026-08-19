@@ -99,11 +99,28 @@ class _HomeScreenState extends State<HomeScreen> {
   double _radioKm = 10;
 
   bool _filtroPrecioActivo = false;
+  String? _categoriaSeleccionada;
   final _precioMinCtrl = TextEditingController(text: '0');
   final _precioMaxCtrl = TextEditingController();
 
   final _busquedaCtrl = TextEditingController();
   String _busqueda = '';
+
+  // Caché de datos completos de tienda (logo, rating, plan), usada como
+  // respaldo cuando el RPC de productos cercanos no trae esos campos
+  // embebidos en cada producto -- así el círculo de la tienda siempre
+  // muestra la foto real y el puntaje, en vez de quedarse en el ícono
+  // genérico. Cacheado por id_tienda para no repetir la consulta en
+  // cada rebuild/scroll.
+  final Map<String, Future<Map<String, dynamic>?>> _tiendaInfoCache = {};
+
+  Future<Map<String, dynamic>?> _tiendaInfo(String idTienda) {
+    return _tiendaInfoCache.putIfAbsent(
+      idTienda,
+      () =>
+          _tiendasService.obtenerTiendaPorId(idTienda).catchError((_) => null),
+    );
+  }
 
   bool get _esVendedor => _miTienda != null;
   bool get _esPremium =>
@@ -328,25 +345,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<bool> _onWillPop() async {
-    return await showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Salir'),
-            content: const Text('¿Desea salir de la aplicación?'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('No')),
-              TextButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Sí')),
-            ],
-          ),
-        ) ??
-        false;
-  }
-
   // FIX (logout no funcionaba): el ListTile llamaba a
   // _handleLogout(innerContext), y esta función hacía
   // Navigator.of(context).pop() (cerrar el drawer) usando ESE MISMO
@@ -426,6 +424,7 @@ class _HomeScreenState extends State<HomeScreen> {
     bool distActivaTemp = _filtroDistanciaActivo;
     double radioTemp = _radioKm;
     bool precioActivoTemp = _filtroPrecioActivo;
+    String? categoriaTemp = _categoriaSeleccionada;
 
     await showModalBottomSheet(
       context: context,
@@ -496,6 +495,31 @@ class _HomeScreenState extends State<HomeScreen> {
                       onChanged: (v) => setModalState(() => radioTemp = v),
                     ),
 
+                  // Filtro de categoría (aplica en Productos y Tiendas)
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String?>(
+                    value: categoriaTemp,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Categoría',
+                      prefixIcon: Icon(Icons.category_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Todas las categorías'),
+                      ),
+                      ...kCategoriasTienda.map(
+                        (c) => DropdownMenuItem<String?>(
+                          value: c,
+                          child: Text(c, overflow: TextOverflow.ellipsis),
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) => setModalState(() => categoriaTemp = v),
+                  ),
+
                   // Filtro de precio (solo en modo Productos)
                   if (modoTemp == _ModoCercanos.productos) ...[
                     const SizedBox(height: 8),
@@ -561,6 +585,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             setModalState(() {
                               distActivaTemp = false;
                               precioActivoTemp = false;
+                              categoriaTemp = null;
                               _precioMinCtrl.text = '0';
                               _precioMaxCtrl.clear();
                             });
@@ -578,6 +603,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     _filtroDistanciaActivo = distActivaTemp;
                                     _radioKm = radioTemp;
                                     _filtroPrecioActivo = precioActivoTemp;
+                                    _categoriaSeleccionada = categoriaTemp;
                                   });
                                   Navigator.of(ctx).pop();
                                   _cargarCercanas();
@@ -760,285 +786,299 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        final shouldExit = await _onWillPop();
-        if (shouldExit) SystemNavigator.pop();
-      },
-      child: Scaffold(
-        backgroundColor: _colorFondo,
-        drawer: Drawer(
-          child: Builder(
-            builder: (BuildContext innerContext) {
-              final user = supabase.auth.currentUser;
-              final avatarUrl = user?.userMetadata?['avatar_url'] as String?;
-              final nombre = (user?.userMetadata?['full_name'] as String?) ??
-                  (user?.userMetadata?['name'] as String?) ??
-                  user?.email?.split('@').first ??
-                  'Usuario';
-              final email = user?.email ?? '';
+    return Scaffold(
+      backgroundColor: _colorFondo,
+      extendBodyBehindAppBar: true,
+      drawer: Drawer(
+        child: Builder(
+          builder: (BuildContext innerContext) {
+            final user = supabase.auth.currentUser;
+            final avatarUrl = user?.userMetadata?['avatar_url'] as String?;
+            final nombre = (user?.userMetadata?['full_name'] as String?) ??
+                (user?.userMetadata?['name'] as String?) ??
+                user?.email?.split('@').first ??
+                'Usuario';
+            final email = user?.email ?? '';
 
-              return ListView(
-                padding: EdgeInsets.zero,
-                children: [
-                  // ---------- Header: foto + nombre + email de Google ----------
-                  // Tappable en vez de tener una fila "Mi Perfil" aparte --
-                  // el chevron en la esquina es la pista visual de que se
-                  // puede tocar para entrar al perfil.
-                  InkWell(
-                    onTap: () {
-                      Navigator.of(innerContext).pop();
-                      context.push('/mi-perfil');
-                    },
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.fromLTRB(20, 48, 20, 20),
-                      decoration: const BoxDecoration(color: _kCoral),
-                      child: Stack(
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              CircleAvatar(
-                                radius: 34,
-                                backgroundColor: Colors.white,
-                                backgroundImage:
-                                    (avatarUrl != null && avatarUrl.isNotEmpty)
-                                        ? NetworkImage(avatarUrl)
-                                        : null,
-                                child: (avatarUrl == null || avatarUrl.isEmpty)
-                                    ? Text(
-                                        nombre.isNotEmpty
-                                            ? nombre[0].toUpperCase()
-                                            : '?',
-                                        style: GoogleFonts.inter(
-                                            fontSize: 26,
-                                            fontWeight: FontWeight.w800,
-                                            color: _kCoral),
-                                      )
-                                    : null,
-                              ),
-                              const SizedBox(height: 12),
-                              Text(nombre,
+            return ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                // ---------- Header: foto + nombre + email de Google ----------
+                // Tappable en vez de tener una fila "Mi Perfil" aparte --
+                // el chevron en la esquina es la pista visual de que se
+                // puede tocar para entrar al perfil.
+                InkWell(
+                  onTap: () {
+                    Navigator.of(innerContext).pop();
+                    context.push('/mi-perfil');
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(20, 48, 20, 20),
+                    decoration: const BoxDecoration(color: _kCoral),
+                    child: Stack(
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            CircleAvatar(
+                              radius: 34,
+                              backgroundColor: Colors.white,
+                              backgroundImage:
+                                  (avatarUrl != null && avatarUrl.isNotEmpty)
+                                      ? NetworkImage(avatarUrl)
+                                      : null,
+                              child: (avatarUrl == null || avatarUrl.isEmpty)
+                                  ? Text(
+                                      nombre.isNotEmpty
+                                          ? nombre[0].toUpperCase()
+                                          : '?',
+                                      style: GoogleFonts.inter(
+                                          fontSize: 26,
+                                          fontWeight: FontWeight.w800,
+                                          color: _kCoral),
+                                    )
+                                  : null,
+                            ),
+                            const SizedBox(height: 12),
+                            Text(nombre,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.inter(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w800)),
+                            if (email.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(email,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: GoogleFonts.inter(
-                                      color: Colors.white,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w800)),
-                              if (email.isNotEmpty) ...[
-                                const SizedBox(height: 2),
-                                Text(email,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.inter(
-                                        color: Colors.white.withOpacity(0.85),
-                                        fontSize: 12.5)),
-                              ],
+                                      color: Colors.white.withOpacity(0.85),
+                                      fontSize: 12.5)),
                             ],
-                          ),
-                          Positioned(
-                            right: 0,
-                            bottom: 0,
-                            child: Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.18),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(Icons.chevron_right_rounded,
-                                  color: Colors.white, size: 18),
+                          ],
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.18),
+                              shape: BoxShape.circle,
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  if (!_cargandoRol) ...[
-                    if (_esAdmin)
-                      ListTile(
-                        leading: const Icon(Icons.admin_panel_settings,
-                            color: Colors.deepPurple),
-                        title: const Text('Panel de Admin'),
-                        onTap: () {
-                          Navigator.of(innerContext).pop();
-                          _abrirAdmin();
-                        },
-                      ),
-                    if (_esAfiliado)
-                      ListTile(
-                        leading: const Icon(Icons.handshake_outlined,
-                            color: Colors.teal),
-                        title: const Text('Mi perfil de afiliado'),
-                        subtitle: const Text('Saldo, comisiones y retiros'),
-                        onTap: () {
-                          Navigator.of(innerContext).pop();
-                          context.push('/afiliados/perfil');
-                        },
-                      )
-                    else
-                      ListTile(
-                        leading: const Icon(Icons.handshake_outlined),
-                        title: const Text('Programa de afiliados'),
-                        onTap: () {
-                          Navigator.of(innerContext).pop();
-                          context.push('/afiliados/registro');
-                        },
-                      ),
-                    if (_esVendedor && !_esPremium)
-                      ListTile(
-                        leading: const Icon(Icons.workspace_premium_outlined,
-                            color: Color(0xFFB8860B)),
-                        title: const Text('Hacerte premium'),
-                        onTap: () {
-                          Navigator.of(innerContext).pop();
-                          _hacerVendedorPremium();
-                        },
-                      ),
-                    const Divider(),
-                  ],
-                  ListTile(
-                    leading: const Icon(Icons.help_outline_rounded),
-                    title: const Text('Preguntas frecuentes'),
-                    onTap: () {
-                      Navigator.of(innerContext).pop();
-                      _abrirPreguntasFrecuentes();
-                    },
-                  ),
-                  ListTile(
-                    leading: Icon(
-                        // Cambia el icono dependiendo del estado
-                        Provider.of<ThemeProvider>(context).isDarkMode
-                            ? Icons.dark_mode
-                            : Icons.light_mode),
-                    title: Text(Provider.of<ThemeProvider>(context).isDarkMode
-                        ? "Modo Oscuro"
-                        : "Modo Claro"),
-                    trailing: Switch(
-                      value: Provider.of<ThemeProvider>(context).isDarkMode,
-                      onChanged: (value) {
-                        // Aquí se invoca el cambio de tema
-                        Provider.of<ThemeProvider>(context, listen: false)
-                            .toggleTheme();
-                      },
-                    ),
-                  ),
-                  const Divider(),
-                  ListTile(
-                    leading: const Icon(Icons.logout, color: Colors.red),
-                    title: const Text('Cerrar Sesión',
-                        style: TextStyle(color: Colors.red)),
-                    onTap: () {
-                      // Cierra el drawer con el context del drawer (válido
-                      // en este momento) y recién luego dispara la
-                      // lógica async, que usa el context/mounted del State.
-                      Navigator.of(innerContext).pop();
-                      _cerrarSesion();
-                    },
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-        appBar: AppBar(
-          titleSpacing: 0,
-          centerTitle: true,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          backgroundColor: _kCoral,
-          surfaceTintColor: Colors.transparent,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(26)),
-          ),
-          iconTheme: const IconThemeData(color: Colors.white),
-          actionsIconTheme: const IconThemeData(color: Colors.white),
-          title: Image.asset(
-            'assets/logo.png',
-            height: 40,
-            errorBuilder: (context, error, stackTrace) => Text(
-              'Al Lado',
-              style: GoogleFonts.inter(
-                fontWeight: FontWeight.w800,
-                fontSize: 18,
-                color: Colors.white,
-              ),
-            ),
-          ),
-          actions: [
-            AnimatedBuilder(
-              animation: NotificacionesService.instance,
-              builder: (context, _) {
-                final noLeidas = NotificacionesService.instance.noLeidas;
-                return Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.notifications_outlined),
-                      tooltip: 'Notificaciones',
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const NotificationsScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    if (noLeidas > 0)
-                      Positioned(
-                        right: 6,
-                        top: 6,
-                        child: Container(
-                          padding: const EdgeInsets.all(3),
-                          decoration: const BoxDecoration(
-                            color: Colors.red,
-                            shape: BoxShape.circle,
-                          ),
-                          constraints: const BoxConstraints(
-                            minWidth: 16,
-                            minHeight: 16,
-                          ),
-                          child: Text(
-                            noLeidas > 9 ? '9+' : '$noLeidas',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            child: const Icon(Icons.chevron_right_rounded,
+                                color: Colors.white, size: 18),
                           ),
                         ),
-                      ),
-                  ],
-                );
-              },
-            ),
-            const Padding(
-              padding: EdgeInsets.only(right: 12, left: 4),
-              child: Center(child: CurrencyToggle()),
-            ),
-          ],
-        ),
-        body: RefreshIndicator(
-          onRefresh: () async {
-            setState(() {
-              _premium = _tiendasService.obtenerCarruselPremium();
-              _trending = _tiendasService.obtenerCarruselTrending(limite: 10);
-            });
-            await _cargarCercanas();
-            await _cargarRol();
+                      ],
+                    ),
+                  ),
+                ),
+
+                if (!_cargandoRol) ...[
+                  if (_esAdmin)
+                    ListTile(
+                      leading: const Icon(Icons.admin_panel_settings,
+                          color: Colors.deepPurple),
+                      title: const Text('Panel de Admin'),
+                      onTap: () {
+                        Navigator.of(innerContext).pop();
+                        _abrirAdmin();
+                      },
+                    ),
+                  if (_esAfiliado)
+                    ListTile(
+                      leading: const Icon(Icons.handshake_outlined,
+                          color: Colors.teal),
+                      title: const Text('Mi perfil de afiliado'),
+                      subtitle: const Text('Saldo, comisiones y retiros'),
+                      onTap: () {
+                        Navigator.of(innerContext).pop();
+                        context.push('/afiliados/perfil');
+                      },
+                    )
+                  else
+                    ListTile(
+                      leading: const Icon(Icons.handshake_outlined),
+                      title: const Text('Programa de afiliados'),
+                      onTap: () {
+                        Navigator.of(innerContext).pop();
+                        context.push('/afiliados/registro');
+                      },
+                    ),
+                  if (_esVendedor && !_esPremium)
+                    ListTile(
+                      leading: const Icon(Icons.workspace_premium_outlined,
+                          color: Color(0xFFB8860B)),
+                      title: const Text('Hacerte premium'),
+                      onTap: () {
+                        Navigator.of(innerContext).pop();
+                        _hacerVendedorPremium();
+                      },
+                    ),
+                  const Divider(),
+                ],
+                ListTile(
+                  leading: const Icon(Icons.help_outline_rounded),
+                  title: const Text('Preguntas frecuentes'),
+                  onTap: () {
+                    Navigator.of(innerContext).pop();
+                    _abrirPreguntasFrecuentes();
+                  },
+                ),
+                ListTile(
+                  leading: Icon(
+                      // Cambia el icono dependiendo del estado
+                      Provider.of<ThemeProvider>(context).isDarkMode
+                          ? Icons.dark_mode
+                          : Icons.light_mode),
+                  title: Text(Provider.of<ThemeProvider>(context).isDarkMode
+                      ? "Modo Oscuro"
+                      : "Modo Claro"),
+                  trailing: Switch(
+                    value: Provider.of<ThemeProvider>(context).isDarkMode,
+                    onChanged: (value) {
+                      // Aquí se invoca el cambio de tema
+                      Provider.of<ThemeProvider>(context, listen: false)
+                          .toggleTheme();
+                    },
+                  ),
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.logout, color: Colors.red),
+                  title: const Text('Cerrar Sesión',
+                      style: TextStyle(color: Colors.red)),
+                  onTap: () {
+                    // Cierra el drawer con el context del drawer (válido
+                    // en este momento) y recién luego dispara la
+                    // lógica async, que usa el context/mounted del State.
+                    Navigator.of(innerContext).pop();
+                    _cerrarSesion();
+                  },
+                ),
+              ],
+            );
           },
-          child: ListView(
-            children: [
-              _seccionFeaturedStoresHero(),
-              _seccionTopSellers(),
-              const SizedBox(height: 8),
-              _feedProductosCercanos(),
-            ],
+        ),
+      ),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: ClipRRect(
+          borderRadius:
+              const BorderRadius.vertical(bottom: Radius.circular(26)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: AppBar(
+              titleSpacing: 0,
+              centerTitle: true,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              // FIX (vidrio flotante): antes era un color sólido
+              // (_kCoral). Ahora es translúcido -- deja ver el blur
+              // del BackdropFilter de arriba, que difumina lo que
+              // esté scrolleando detrás (el Scaffold tiene
+              // extendBodyBehindAppBar: true para que el contenido
+              // sí pase por detrás y haya algo que difuminar).
+              backgroundColor: _kCoral.withOpacity(0.85),
+              surfaceTintColor: Colors.transparent,
+              shape: const RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.vertical(bottom: Radius.circular(26)),
+              ),
+              iconTheme: const IconThemeData(color: Colors.white),
+              actionsIconTheme: const IconThemeData(color: Colors.white),
+              title: Image.asset(
+                'assets/logo.png',
+                height: 40,
+                errorBuilder: (context, error, stackTrace) => Text(
+                  'Al Lado',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              actions: [
+                AnimatedBuilder(
+                  animation: NotificacionesService.instance,
+                  builder: (context, _) {
+                    final noLeidas = NotificacionesService.instance.noLeidas;
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.notifications_outlined),
+                          tooltip: 'Notificaciones',
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const NotificationsScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                        if (noLeidas > 0)
+                          Positioned(
+                            right: 6,
+                            top: 6,
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                              ),
+                              constraints: const BoxConstraints(
+                                minWidth: 16,
+                                minHeight: 16,
+                              ),
+                              child: Text(
+                                noLeidas > 9 ? '9+' : '$noLeidas',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+                const Padding(
+                  padding: EdgeInsets.only(right: 12, left: 4),
+                  child: Center(child: CurrencyToggle()),
+                ),
+              ],
+            ),
           ),
+        ),
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          setState(() {
+            _premium = _tiendasService.obtenerCarruselPremium();
+            _trending = _tiendasService.obtenerCarruselTrending(limite: 10);
+          });
+          await _cargarCercanas();
+          await _cargarRol();
+        },
+        child: ListView(
+          padding: EdgeInsets.only(
+            top: MediaQuery.of(context).padding.top + kToolbarHeight,
+            bottom: MediaQuery.of(context).padding.bottom + 96,
+          ),
+          children: [
+            _seccionFeaturedStoresHero(),
+            _seccionTopSellers(),
+            const SizedBox(height: 8),
+            _feedProductosCercanos(),
+          ],
         ),
       ),
     );
@@ -1384,6 +1424,16 @@ class _HomeScreenState extends State<HomeScreen> {
             return nombre.contains(q) || tienda.contains(q);
           }).toList();
         }
+        // FIX: filtro de categoría -- si el resultado del RPC no trae
+        // 'categoria' (columna nueva, agregada después de que este RPC
+        // se escribiera), este filtro no va a poder aplicarse aunque
+        // el usuario elija una. Si eso pasa, hay que agregar la
+        // columna al SELECT de buscar_productos_cercanos en SQL.
+        if (_categoriaSeleccionada != null) {
+          productos = productos
+              .where((p) => p['categoria'] == _categoriaSeleccionada)
+              .toList();
+        }
         if (productos.isEmpty) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 24),
@@ -1397,23 +1447,205 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         }
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 0.68,
-          ),
-          itemCount: productos.length,
-          itemBuilder: (context, i) {
-            final p = productos[i];
-            return _tarjetaProducto(p, (p['distancia_km'] as num?)?.toDouble());
-          },
+        // ---- Agrupar por tienda (id_tienda), ordenar los grupos por
+        // la distancia mínima de cada uno -- así se respeta "más
+        // cerca primero" igual que antes, pero ahora a nivel de
+        // tienda en vez de producto suelto. ----
+        final grupos = <String, List<Map<String, dynamic>>>{};
+        for (final p in productos) {
+          final idT = (p['id_tienda'] ?? '').toString();
+          grupos.putIfAbsent(idT, () => []).add(p);
+        }
+        final entradas = grupos.entries.toList()
+          ..sort((a, b) {
+            final da = a.value
+                .map((p) => (p['distancia_km'] as num?)?.toDouble() ?? 999999)
+                .reduce(math.min);
+            final db = b.value
+                .map((p) => (p['distancia_km'] as num?)?.toDouble() ?? 999999)
+                .reduce(math.min);
+            return da.compareTo(db);
+          });
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: entradas.map((entrada) {
+            final idTienda = entrada.key;
+            final productosTienda = entrada.value;
+            final primero = productosTienda.first;
+            final nombreTienda = primero['nombre_tienda'] as String? ?? '';
+            // Riesgo avisado: si el RPC no trae estos dos campos en
+            // el producto, salen null y la UI cae a su fallback
+            // (ícono genérico, sin estrellas) sin romper nada.
+            final logoTienda = primero['logo_url'] as String?;
+            final estrellasTienda =
+                (primero['promedio_estrellas'] as num?)?.toDouble();
+            // Riesgo avisado también para 'plan': si el RPC no lo trae
+            // en el producto, esto simplemente nunca activa el borde
+            // dorado (no rompe nada).
+            final esPremium =
+                (primero['plan'] as String? ?? '').toLowerCase() == 'premium';
+            final distanciaMin = productosTienda
+                .map((p) => (p['distancia_km'] as num?)?.toDouble())
+                .whereType<double>()
+                .fold<double?>(
+                    null, (min, d) => min == null || d < min ? d : min);
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _headerGrupoTienda(
+                  idTienda: idTienda,
+                  nombreTiendaFallback: nombreTienda,
+                  logoFallback: logoTienda,
+                  estrellasFallback: estrellasTienda,
+                  esPremiumFallback: esPremium,
+                  distanciaMin: distanciaMin,
+                ),
+                SizedBox(
+                  height: 176,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: productosTienda.length,
+                    itemBuilder: (context, i) {
+                      final p = productosTienda[i];
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: SizedBox(
+                          width: 108,
+                          child: _tarjetaProducto(
+                              p, (p['distancia_km'] as num?)?.toDouble()),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          }).toList(),
         );
       },
+    );
+  }
+
+  /// Cabecera de cada grupo "tienda" dentro del feed de productos
+  /// cercanos: círculo con la foto real de la tienda (la misma que se
+  /// sube al crear/gestionar la tienda) y, justo debajo, el puntaje en
+  /// estrellas -- bien centrado bajo el círculo, en vez de al lado del
+  /// nombre. Usa _tiendaInfo() como respaldo: si el producto agrupado
+  /// no trajo logo_url/promedio_estrellas embebidos, se completan con
+  /// una consulta a la tienda real (cacheada por id_tienda).
+  Widget _headerGrupoTienda({
+    required String idTienda,
+    required String nombreTiendaFallback,
+    String? logoFallback,
+    double? estrellasFallback,
+    required bool esPremiumFallback,
+    required double? distanciaMin,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 12, 8),
+      child: GestureDetector(
+        onTap: () => context.push('/tienda/$idTienda'),
+        child: FutureBuilder<Map<String, dynamic>?>(
+          future: _tiendaInfo(idTienda),
+          builder: (context, snapshot) {
+            final tienda = snapshot.data;
+            final nombreTienda =
+                (tienda?['nombre'] as String?) ?? nombreTiendaFallback;
+            final logoTienda = (tienda?['logo_url'] as String?) ?? logoFallback;
+            final estrellasTienda =
+                (tienda?['promedio_estrellas'] as num?)?.toDouble() ??
+                    estrellasFallback;
+            final esPremium = tienda != null
+                ? (tienda['plan'] as String? ?? '').toLowerCase() == 'premium'
+                : esPremiumFallback;
+
+            return Row(
+              children: [
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: EdgeInsets.all(esPremium ? 2 : 0),
+                      decoration: esPremium
+                          ? BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: _kGold, width: 1.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: _kGold.withOpacity(0.45),
+                                  blurRadius: 8,
+                                  spreadRadius: 0.5,
+                                ),
+                              ],
+                            )
+                          : null,
+                      child: CircleAvatar(
+                        radius: 22,
+                        backgroundColor: _colorPlaceholder,
+                        backgroundImage:
+                            (logoTienda != null && logoTienda.isNotEmpty)
+                                ? NetworkImage(logoTienda)
+                                : null,
+                        child: (logoTienda == null || logoTienda.isEmpty)
+                            ? Icon(Icons.storefront_rounded,
+                                color: _colorTextoSecundario, size: 22)
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.star_rounded,
+                            size: 12, color: Color(0xFFD4AF37)),
+                        const SizedBox(width: 2),
+                        Text(
+                          estrellasTienda != null
+                              ? estrellasTienda.toStringAsFixed(1)
+                              : 'Nuevo',
+                          style: GoogleFonts.inter(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: _colorTextoSecundario),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(nombreTienda,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14.5,
+                              color: _colorTexto)),
+                      if (distanciaMin != null) ...[
+                        const SizedBox(height: 2),
+                        Text('${distanciaMin.toStringAsFixed(1)} km',
+                            style: GoogleFonts.inter(
+                                fontSize: 11.5, color: _colorTextoSecundario)),
+                      ],
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => context.push('/tienda/$idTienda'),
+                  child: const Text('Ver todo'),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -1439,6 +1671,13 @@ class _HomeScreenState extends State<HomeScreen> {
           tiendas = tiendas
               .where((t) =>
                   (t['nombre'] ?? '').toString().toLowerCase().contains(q))
+              .toList();
+        }
+        // Mismo aviso que en productos: depende de que el RPC
+        // buscar_tiendas_cercanas devuelva la columna 'categoria'.
+        if (_categoriaSeleccionada != null) {
+          tiendas = tiendas
+              .where((t) => t['categoria'] == _categoriaSeleccionada)
               .toList();
         }
         if (tiendas.isEmpty) {
@@ -1578,20 +1817,21 @@ class _HomeScreenState extends State<HomeScreen> {
                         fontSize: 13.5,
                         color: _colorTexto),
                   ),
-                  if (t['promedio_estrellas'] != null) ...[
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        const Icon(Icons.star_rounded, size: 14, color: _kGold),
-                        const SizedBox(width: 3),
-                        Text(
-                          '${(t['promedio_estrellas'] as num).toStringAsFixed(1)}',
-                          style: GoogleFonts.inter(
-                              fontSize: 11, color: _colorTextoSecundario),
-                        ),
-                      ],
-                    ),
-                  ],
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      const Icon(Icons.star_rounded, size: 14, color: _kGold),
+                      const SizedBox(width: 3),
+                      Text(
+                        t['promedio_estrellas'] != null
+                            ? (t['promedio_estrellas'] as num)
+                                .toStringAsFixed(1)
+                            : 'Nuevo',
+                        style: GoogleFonts.inter(
+                            fontSize: 11, color: _colorTextoSecundario),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -1609,15 +1849,30 @@ class _HomeScreenState extends State<HomeScreen> {
           distanciaKm: distanciaKm),
       child: Container(
         decoration: BoxDecoration(
-          color: _colorSuperficie,
-          borderRadius: BorderRadius.circular(_kCardRadius),
-          boxShadow: _kSoftShadow,
+          // Vidrio flotante: semitransparente en vez de superficie
+          // sólida, con borde sutil que le da el "cristal" -- más
+          // minimalista que antes, pensado para caber 3 por fila.
+          color: _colorSuperficie.withOpacity(_esOscuro ? 0.55 : 0.72),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: Colors.white.withOpacity(_esOscuro ? 0.08 : 0.5),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
+            SizedBox(
+              height: 88,
+              width: double.infinity,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -1627,34 +1882,26 @@ class _HomeScreenState extends State<HomeScreen> {
                     errorBuilder: (_, __, ___) => Container(
                       color: _colorPlaceholder,
                       child: Icon(Icons.image_not_supported_outlined,
-                          color: _colorTextoSecundario),
+                          size: 18, color: _colorTextoSecundario),
                     ),
                   ),
                   if (distanciaKm != null)
                     Positioned(
-                      top: 8,
-                      left: 8,
+                      top: 5,
+                      left: 5,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
+                            horizontal: 5, vertical: 2),
                         decoration: BoxDecoration(
-                          color: _kCoral,
+                          color: Colors.black.withOpacity(0.55),
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.location_on,
-                                size: 11, color: Colors.white),
-                            const SizedBox(width: 3),
-                            Text(
-                              '${distanciaKm.toStringAsFixed(1)} km',
-                              style: GoogleFonts.inter(
-                                  fontSize: 10.5,
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600),
-                            ),
-                          ],
+                        child: Text(
+                          '${distanciaKm.toStringAsFixed(1)}km',
+                          style: GoogleFonts.inter(
+                              fontSize: 8.5,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600),
                         ),
                       ),
                     ),
@@ -1662,7 +1909,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+              padding: const EdgeInsets.fromLTRB(7, 6, 7, 7),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1672,29 +1919,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.inter(
                         fontWeight: FontWeight.w700,
-                        fontSize: 13.5,
+                        fontSize: 11,
                         color: _colorTexto),
                   ),
-                  if ((p['nombre_tienda'] ?? '').toString().isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        Icon(Icons.storefront,
-                            size: 11, color: _colorTextoSecundario),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: Text(
-                            p['nombre_tienda'] ?? '',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.inter(
-                                fontSize: 11, color: _colorTextoSecundario),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -1702,13 +1930,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: PriceTag(
                           montoUsd: (p['precio_usd'] as num?)?.toDouble() ?? 0,
                           style: GoogleFonts.inter(
-                              fontSize: 13,
+                              fontSize: 11.5,
                               fontWeight: FontWeight.bold,
                               color: Colors.green.shade700),
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.all(6),
+                        padding: const EdgeInsets.all(3.5),
                         decoration: const BoxDecoration(
                           gradient: LinearGradient(
                             colors: [_kCoral, _kCoralDark],
@@ -1716,7 +1944,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(Icons.add_rounded,
-                            size: 16, color: Colors.white),
+                            size: 11, color: Colors.white),
                       ),
                     ],
                   ),
@@ -1930,6 +2158,48 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                                   fontSize: 11,
                                   fontWeight: FontWeight.w800,
                                   color: Colors.white)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // ---- Puntaje en estrella (vidrio esmerilado, esquina
+              // superior derecha -- simétrico al sello VIP de la
+              // izquierda). Si la tienda todavía no tiene reseñas,
+              // muestra "Nuevo" en vez de dejar el espacio vacío. ----
+              Positioned(
+                top: 16,
+                right: 16,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.28),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: Colors.white.withOpacity(0.4), width: 1),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.star_rounded,
+                              size: 15, color: _kGold),
+                          const SizedBox(width: 4),
+                          Text(
+                            t['promedio_estrellas'] != null
+                                ? (t['promedio_estrellas'] as num)
+                                    .toStringAsFixed(1)
+                                : 'Nuevo',
+                            style: GoogleFonts.inter(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white),
+                          ),
                         ],
                       ),
                     ),

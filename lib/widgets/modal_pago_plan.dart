@@ -156,30 +156,76 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
   }
 
   Future<void> _verificarPago() async {
+    // Código de afiliado a usar: el escrito en vivo en este modal, o el
+    // que vino precargado en el widget (si lo hay).
+    var codigoAfiliado =
+        _codigoAfiliado.isNotEmpty ? _codigoAfiliado : widget.codigoAfiliado;
+    var idAfiliado = _idAfiliadoEncontrado ?? widget.idAfiliado;
+
+    // FIX (comisión no acreditada): la validación del código es
+    // asíncrona con debounce de 800ms -- si el vendedor escribe el
+    // código y toca "Verificar Pago" antes de que termine, _codigoEstado
+    // queda en 'validando' y _idAfiliadoEncontrado en null, así que la
+    // solicitud se guardaba SIN id_afiliado ni comisión y al aprobar el
+    // admin nunca se le acreditaba nada al afiliado. Resolvemos la
+    // validación pendiente acá mismo antes de continuar.
+    if (codigoAfiliado != null &&
+        codigoAfiliado.isNotEmpty &&
+        idAfiliado == null) {
+      if (mounted) setState(() => _codigoEstado = 'validando');
+      try {
+        final resultado =
+            await widget.tiendasService.validarCodigoAfiliadoParaTienda(
+          codigo: codigoAfiliado,
+          idTienda: widget.tienda['id_tienda'] as String?,
+        );
+        if (mounted) {
+          setState(() {
+            _codigoEstado = resultado['estado'] as String? ?? '';
+            _idAfiliadoEncontrado = resultado['id_afiliado'] as String?;
+          });
+        }
+        idAfiliado = resultado['id_afiliado'] as String?;
+      } catch (_) {
+        if (mounted) setState(() => _codigoEstado = 'invalido');
+        idAfiliado = null;
+      }
+    }
+
     if (_codigoEstado == 'propio' ||
         _codigoEstado == 'usado' ||
         _codigoEstado == 'invalido') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_mensajeCodigo)),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_mensajeCodigo)),
+        );
+      }
       return;
     }
+    // Escribió un código pero no resultó válido: no seguimos (evita
+    // registrar solicitudes/tiendas sin comisión).
+    if (codigoAfiliado != null &&
+        codigoAfiliado.isNotEmpty &&
+        idAfiliado == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('El código de afiliado no es válido')),
+        );
+      }
+      return;
+    }
+
     setState(() => _procesando = true);
     try {
-      final codigoAfiliado =
-          _codigoAfiliado.isNotEmpty ? _codigoAfiliado : widget.codigoAfiliado;
-      final idAfiliado = _idAfiliadoEncontrado ?? widget.idAfiliado;
-
       // FIX (solicitud duplicada): cuando este modal se abre desde el
       // onboarding recién terminado (esPantallaCompleta == true), la
-      // tienda YA se creó con su plan y su codigo_afiliado guardados
-      // directo en crearTienda() -- ya aparece en "Tiendas Pendientes"
-      // con la tarjeta dorada si corresponde. Si además creáramos acá
-      // una solicitud_cambio_plan, el admin vería la MISMA tienda dos
-      // veces (una como activación, otra como "cambio de plan"), como
-      // si alguien ya activa estuviera pidiendo un upgrade. Por eso
-      // esto solo corre para tiendas que YA estaban activas y piden
-      // cambiar de plan (esPantallaCompleta == false).
+      // tienda YA se creó con su plan -- ya aparece en "Tiendas
+      // Pendientes". Si además creáramos acá una solicitud_cambio_plan,
+      // el admin vería la MISMA tienda dos veces (una como activación,
+      // otra como "cambio de plan"), como si alguien ya activa estuviera
+      // pidiendo un upgrade. Por eso esto solo corre para tiendas que YA
+      // estaban activas y piden cambiar de plan (esPantallaCompleta ==
+      // false).
       if (!widget.esPantallaCompleta) {
         await widget.tiendasService.crearSolicitudCambioPlan(
           idTienda: widget.tienda['id_tienda'],
@@ -189,6 +235,21 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
           comisionUsd: _tieneCupon ? _comisionUsd : null,
           codigoAfiliado: codigoAfiliado,
         );
+      } else if (codigoAfiliado != null &&
+          codigoAfiliado.isNotEmpty &&
+          idAfiliado != null) {
+        // FIX (comisión no acreditada en onboarding): la tienda nueva se
+        // crea SIEMPRE con codigo_afiliado null (crearTienda lo recibe
+        // hardcodeado en onboarding_tienda_screen.dart) y en este flujo
+        // a pantalla completa no se crea ninguna solicitud -- así que el
+        // código escrito aquí se perdía y, al aprobar la tienda,
+        // admin_aprobar_tienda no encontraba afiliado que acreditar.
+        // Guardamos el código en la tienda para que la comisión del 10%
+        // sí se acredite cuando el admin la apruebe.
+        await supabase
+            .from('tiendas')
+            .update({'codigo_afiliado': codigoAfiliado})
+            .eq('id_tienda', widget.tienda['id_tienda']);
       }
       widget.onSolicitudCreada?.call();
 

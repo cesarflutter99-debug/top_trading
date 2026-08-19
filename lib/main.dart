@@ -36,7 +36,7 @@ class TopTradingApp extends StatelessWidget {
     // conectado a la configuración de router.dart.
     final themeProvider = context.watch<ThemeProvider>();
     return MaterialApp.router(
-      title: 'Top Trading',
+      title: 'Al Lado',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(Brightness.light),
       darkTheme: _buildTheme(Brightness.dark),

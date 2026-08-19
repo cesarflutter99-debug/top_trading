@@ -2,6 +2,28 @@
 //
 // Configuración única de GoRouter para toda la app.
 //
+// FIX DE NAVEGACIÓN (2026-08): el flujo crear-tienda -> pago-plan ->
+// mi-tienda usaba context.go() en cada salto. go() reemplaza TODO el
+// stack de navegación (no apila, como push()) -- el resultado era que
+// al llegar al final del flujo no quedaba ningún historial dentro de
+// la app, y el botón/gesto "atrás" del sistema terminaba cerrando la
+// app en vez de navegar hacia atrás. Los cambios de esta vuelta:
+//   1. OnboardingTiendaScreen ahora debe hacer
+//      context.push('/pago-plan', extra: ...) en vez de
+//      context.go(...) -- así queda /crear-tienda debajo en el stack
+//      (ese cambio va en onboarding_tienda_screen.dart, un archivo
+//      aparte -- ver mensaje de chat).
+//   2. El botón "atrás" del AppBar de _PagoPlanScreen ahora usa
+//      context.pop() si hay algo para hacer pop, y solo cae a
+//      context.go('/home') como último recurso si no lo hay.
+//   3. Al completar el pago (onSolicitudCreada), en vez de aterrizar
+//      en una ruta suelta ('/vendedor/mi-tienda', sin shell ni
+//      PopScope), ahora se manda a '/home' -- el shell principal, que
+//      ya carga la tienda del usuario sola (MainShellScreen._cargarMiTienda)
+//      y sí maneja correctamente el botón atrás (ver PopScope en
+//      main_shell_screen.dart: te lleva a la pestaña Inicio, y recién
+//      ahí pregunta si quieres salir).
+//
 // Rutas registradas:
 //   '/'                     WelcomeScreen (pantalla de entrada; el botón
 //                            "Continuar con Google" autentica directo
@@ -110,7 +132,10 @@ final GoRouter router = GoRouter(
     final enWelcome = state.matchedLocation == '/';
 
     if (haySesion && enWelcome) return '/home';
-    if (!haySesion && !enWelcome) return '/';
+    final esRutaPublica = state.matchedLocation == '/home' ||
+        state.matchedLocation == '/mapa' ||
+        state.matchedLocation.startsWith('/tienda/');
+    if (!haySesion && !enWelcome && !esRutaPublica) return '/';
     return null;
   },
   routes: [
@@ -127,10 +152,6 @@ final GoRouter router = GoRouter(
     ),
     GoRoute(
       path: '/home',
-      // FIX: antes esto abría HomeScreen directo. Ahora abre el shell
-      // con el menú inferior (Inicio/Mapa/Perfil) -- HomeScreen sigue
-      // siendo exactamente la misma pantalla, solo que ahora vive
-      // adentro del shell como la primera pestaña.
       builder: (context, state) => const MainShellScreen(),
     ),
     GoRoute(
@@ -174,17 +195,6 @@ final GoRouter router = GoRouter(
         return PanelVendedorScreen(tienda: tienda);
       },
     ),
-    // -----------------------------------------------------------------
-    // Rutas usadas por notifications_screen.dart al tocar una
-    // notificación. A diferencia de las rutas de arriba, estas NO
-    // reciben la tienda por `extra` (la notificación solo trae
-    // id_tienda/id_pedido en su `data`, no el Map completo) -- así que
-    // cargan la tienda del usuario logueado con obtenerMiTienda() antes
-    // de mostrar la pantalla real. Esto asume que la notificación
-    // siempre es sobre la tienda del propio usuario (nunca de otro),
-    // lo cual es cierto para nuevo_pedido, pedido_por_expirar,
-    // tienda_aprobada, plan_por_vencer y solicitud_plan.
-    // -----------------------------------------------------------------
     GoRoute(
       path: '/vendedor/pedidos',
       builder: (context, state) => const _CargarMiTiendaYMostrar(
@@ -260,8 +270,6 @@ final GoRouter router = GoRouter(
 );
 
 /// Pantalla de pago del plan tras crear la tienda en el onboarding.
-/// Carga la tienda recién creada (por id) y el plan elegido (por código)
-/// y muestra ModalPagoPlan en un Scaffold a pantalla completa.
 class _PagoPlanScreen extends StatefulWidget {
   final Map<String, dynamic> extra;
   const _PagoPlanScreen({required this.extra});
@@ -291,6 +299,19 @@ class _PagoPlanScreenState extends State<_PagoPlanScreen> {
     });
   }
 
+  /// FIX: antes siempre context.go('/crear-tienda') -- resetea el
+  /// stack completo sin importar cómo se llegó acá. Ahora: si hay
+  /// algo para hacer pop (el caso normal, viniendo con push() desde
+  /// OnboardingTiendaScreen), vuelve ahí con pop(). Solo si no hay
+  /// nada en el stack cae a home como último recurso.
+  void _volverAtras(BuildContext context) {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/home');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -300,7 +321,7 @@ class _PagoPlanScreenState extends State<_PagoPlanScreen> {
         title: const Text('Pago del plan'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/crear-tienda'),
+          onPressed: () => _volverAtras(context),
         ),
       ),
       body: FutureBuilder<Map<String, dynamic>?>(
@@ -332,7 +353,12 @@ class _PagoPlanScreenState extends State<_PagoPlanScreen> {
                 plan: plan,
                 tiendasService: TiendasService(),
                 esPantallaCompleta: true,
-                onSolicitudCreada: () => context.go('/vendedor/mi-tienda'),
+                // FIX: antes context.go('/vendedor/mi-tienda') -- ruta
+                // suelta sin shell ni PopScope, "atrás" salía de la
+                // app. Ahora manda a '/home': el shell principal ya
+                // carga la tienda del usuario solo y resuelve bien el
+                // botón atrás.
+                onSolicitudCreada: () => context.go('/home'),
               );
             },
           );

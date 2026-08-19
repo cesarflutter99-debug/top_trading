@@ -182,6 +182,54 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     }
   }
 
+  /// Abre un bottom sheet con la lista de categorías (kCategoriasTienda)
+  /// para que el vendedor elija una. Devuelve la categoría elegida, o
+  /// null si el usuario cierra sin elegir. La categoría actual se
+  /// marca con un check para saber cuál está seleccionada.
+  Future<String?> _elegirCategoria(
+      BuildContext context, String? actual) async {
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Elige una categoría',
+                    style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w800, fontSize: 17)),
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.only(bottom: 8),
+                children: kCategoriasTienda.map((c) {
+                  final seleccionada = c == actual;
+                  return ListTile(
+                    title: Text(c),
+                    trailing: seleccionada
+                        ? Icon(Icons.check_rounded,
+                            color: Theme.of(context).colorScheme.primary)
+                        : null,
+                    onTap: () => Navigator.pop(ctx, c),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _abrirEdicion() {
     final nombreCtrl = TextEditingController(text: _tienda['nombre'] ?? '');
     final telefonoCtrl =
@@ -192,6 +240,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
         TextEditingController(text: _tienda['municipio'] ?? '');
     final descripcionCtrl =
         TextEditingController(text: _tienda['descripcion'] ?? '');
+    String? categoriaSeleccionada = _tienda['categoria'] as String?;
     bool guardando = false;
 
     showDialog(
@@ -241,6 +290,40 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                       hintText: 'Cuéntale a tus clientes qué vendes',
                       border: OutlineInputBorder()),
                 ),
+                const SizedBox(height: 4),
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () async {
+                    final elegida = await _elegirCategoria(
+                        context, categoriaSeleccionada);
+                    if (elegida != null) {
+                      setDialogState(() => categoriaSeleccionada = elegida);
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Categoría',
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            categoriaSeleccionada ?? 'Elige una categoría',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: categoriaSeleccionada == null
+                                  ? Colors.black45
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        const Icon(Icons.expand_more_rounded,
+                            size: 20, color: Colors.black45),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -262,6 +345,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                           provincia: provinciaCtrl.text.trim(),
                           municipio: municipioCtrl.text.trim(),
                           descripcion: descripcionCtrl.text.trim(),
+                          categoria: categoriaSeleccionada,
                         );
                         if (context.mounted) {
                           Navigator.pop(context);
@@ -321,18 +405,30 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => AgregarProductoScreen(
-                  idTienda: _tienda['id_tienda'] as String),
-            ),
-          );
-          await _recargarTodo();
-        },
-        icon: const Icon(Icons.add_a_photo_outlined),
-        label: const Text('Nuevo producto'),
+      floatingActionButton: Padding(
+        // La barra de navegación flotante de MainShellScreen vive en un
+        // Scaffold externo (extendBody: true); este Scaffold anidado no
+        // sabe que existe, así que sin este offset el FAB queda tapado
+        // detrás de ella. Offset = inset del sistema + alto real de la
+        // barra (58px de contenido) + 12px de aire.
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom + 70,
+        ),
+        child: FloatingActionButton.extended(
+          onPressed: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => AgregarProductoScreen(
+                  idTienda: _tienda['id_tienda'] as String,
+                  plan: _tienda['plan'] as String?,
+                ),
+              ),
+            );
+            await _recargarTodo();
+          },
+          icon: const Icon(Icons.add_a_photo_outlined),
+          label: const Text('Nuevo producto'),
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: _recargarTodo,

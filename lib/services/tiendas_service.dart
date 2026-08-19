@@ -1,6 +1,34 @@
 import 'dart:math';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import '../core/supabase_client.dart';
 import '../widgets/analytics_widgets.dart' show RangoAnalitica;
+
+/// Categorías fijas de tienda -- usadas en el onboarding (crear
+/// tienda), en "Gestionar Tienda" (editar categoría) y como filtro en
+/// Home (feed de cercanos, modo Productos y Tiendas). Si se agrega o
+/// renombra una categoría acá, hay que revisar también el filtro del
+/// modal en home_screen.dart (usa estos mismos valores para comparar
+/// contra la columna 'categoria' que devuelven los RPC de búsqueda).
+const List<String> kCategoriasTienda = [
+  'Ropa y Accesorios',
+  'Calzado',
+  'Móviles y Laptops',
+  'Electrodomésticos',
+  'Hogar y Muebles',
+  'Alimentos y Bebidas',
+  'Belleza y Cuidado Personal',
+  'Salud y Farmacia',
+  'Deportes y Fitness',
+  'Ocio y Videojuegos',
+  'Juguetes y Niños',
+  'Mascotas',
+  'Vehículos y Repuestos',
+  'Transporte y Motor (vehículos completos)',
+  'Ferretería y Construcción',
+  'Energía, Electricidad y Solar',
+  'Otros',
+  'Variada',
+];
 
 /// Encapsula todas las llamadas RPC/consultas relacionadas con tiendas,
 /// productos y pedidos definidas en schema_top_trading.sql
@@ -44,16 +72,22 @@ class TiendasService {
     required String nombre,
     required double precioUsd,
     required String imagenUrl,
+    String? imagenUrl2,
+    String? imagenUrl3,
     String? descripcion,
     int cantidadDisponible = 1,
+    String? categoria,
   }) async {
     await supabase.from('productos').insert({
       'id_tienda': idTienda,
       'nombre': nombre,
       'precio_usd': precioUsd,
       'imagen_url': imagenUrl,
+      if (imagenUrl2 != null) 'imagen_url_2': imagenUrl2,
+      if (imagenUrl3 != null) 'imagen_url_3': imagenUrl3,
       'descripcion': descripcion,
       'cantidad_disponible': cantidadDisponible,
+      if (categoria != null) 'categoria': categoria,
     });
   }
 
@@ -73,6 +107,7 @@ class TiendasService {
     String? imagenUrl,
     String? descripcion,
     int? cantidadDisponible,
+    String? categoria,
   }) async {
     final data = <String, dynamic>{};
     if (nombre != null) data['nombre'] = nombre;
@@ -82,6 +117,7 @@ class TiendasService {
     if (cantidadDisponible != null) {
       data['cantidad_disponible'] = cantidadDisponible;
     }
+    if (categoria != null) data['categoria'] = categoria;
     if (data.isNotEmpty) {
       await supabase
           .from('productos')
@@ -193,17 +229,61 @@ class TiendasService {
   }
 
   /// El vendedor marca el pedido como completado (dispara +15 pts).
+  /// También descuenta el stock vendido de cada producto -- antes esto
+  /// no pasaba en ningún lado del flujo, así que el stock nunca bajaba
+  /// aunque se vendiera. Devuelve la lista de productos que quedaron
+  /// en 0 o por debajo de 10 unidades, para poder avisar al vendedor.
   ///
   /// FIX: antes solo se actualizaba 'estado', pero contarVentasDelMes()
   /// filtra por 'fecha_completado' >= inicio de mes. Sin poner esta
   /// fecha aquí mismo, el contador de "Vendidos este mes" siempre
   /// devolvía 0 (a menos que existiera un trigger en la base de datos
   /// que la llenara automáticamente, lo cual no está garantizado).
-  Future<void> marcarPedidoCompletado(String idPedido) async {
+  Future<List<Map<String, dynamic>>> marcarPedidoCompletado(
+      String idPedido) async {
+    final pedido = await supabase
+        .from('pedidos')
+        .select('detalle')
+        .eq('id_pedido', idPedido)
+        .single();
+
     await supabase.from('pedidos').update({
       'estado': 'completado',
       'fecha_completado': DateTime.now().toIso8601String(),
     }).eq('id_pedido', idPedido);
+
+    final detalle = (pedido['detalle'] as List?) ?? [];
+    final productosBajoStock = <Map<String, dynamic>>[];
+
+    for (final item in detalle) {
+      final idProducto = item['id_producto'] as String?;
+      final cantidadVendida = (item['cantidad'] as num?)?.toInt() ?? 0;
+      if (idProducto == null || cantidadVendida <= 0) continue;
+
+      final producto = await supabase
+          .from('productos')
+          .select('cantidad_disponible, nombre')
+          .eq('id_producto', idProducto)
+          .maybeSingle();
+      if (producto == null) continue;
+
+      final actual = (producto['cantidad_disponible'] as num?)?.toInt() ?? 0;
+      final nuevo = actual - cantidadVendida;
+      final nuevoClamp = nuevo < 0 ? 0 : nuevo;
+
+      await supabase.from('productos').update(
+          {'cantidad_disponible': nuevoClamp}).eq('id_producto', idProducto);
+
+      if (nuevoClamp < 10) {
+        productosBajoStock.add({
+          'id_producto': idProducto,
+          'nombre': producto['nombre'],
+          'cantidad_disponible': nuevoClamp,
+        });
+      }
+    }
+
+    return productosBajoStock;
   }
 
   /// Valora el pedido (dispara puntos por estrellas)
@@ -461,6 +541,7 @@ class TiendasService {
     required String provincia,
     required String municipio,
     String? descripcion,
+    String? categoria,
   }) async {
     await supabase.from('tiendas').update({
       'nombre': nombre,
@@ -468,6 +549,7 @@ class TiendasService {
       'provincia': provincia,
       'municipio': municipio,
       if (descripcion != null) 'descripcion': descripcion,
+      if (categoria != null) 'categoria': categoria,
     }).eq('id_tienda', idTienda);
   }
 
@@ -1045,7 +1127,9 @@ class TiendasService {
     required double lon,
     required String plan,
     String? codigoAfiliado,
+    String? categoria,
   }) async {
+    final uid = supabase.auth.currentUser!.id;
     final codigo = codigoAfiliado?.trim().toUpperCase();
     if (codigo != null && codigo.isNotEmpty) {
       final afiliado = await supabase
@@ -1057,11 +1141,22 @@ class TiendasService {
       if (afiliado == null) {
         throw Exception('Código de afiliado no válido');
       }
+      // FIX: un código de afiliado solo puede usarse UNA vez por
+      // cuenta (sin importar en qué tienda), incluso si esta tienda se
+      // borra y crea otra. fn_puede_usar_codigo_afiliado consulta
+      // cuentas_beneficios, que es permanente por diseño.
+      final puedeUsarlo = await supabase.rpc(
+        'fn_puede_usar_codigo_afiliado',
+        params: {'p_user_id': uid, 'p_codigo': codigo},
+      );
+      if (puedeUsarlo != true) {
+        throw Exception('Ya usaste este código de afiliado antes con esta cuenta');
+      }
     }
     final res = await supabase
         .from('tiendas')
         .insert({
-          'owner_id': supabase.auth.currentUser!.id,
+          'owner_id': uid,
           'nombre': nombre,
           'telefono_whatsapp': telefonoWhatsapp,
           'provincia': provincia,
@@ -1070,11 +1165,101 @@ class TiendasService {
           'longitud': lon,
           'plan': plan,
           if (codigo != null && codigo.isNotEmpty) 'codigo_afiliado': codigo,
+          if (categoria != null) 'categoria': categoria,
           // estado queda 'pending' por defecto (definido en el esquema)
         })
         .select('id_tienda')
         .single();
+
+    if (codigo != null && codigo.isNotEmpty) {
+      await supabase.rpc(
+        'fn_registrar_uso_codigo_afiliado',
+        params: {'p_user_id': uid, 'p_codigo': codigo},
+      );
+    }
+
     return res['id_tienda'] as String;
+  }
+
+  // ---------------------------------------------------------------------
+  // PLAN GRATIS -- 14 días, una sola vez por cuenta (ver
+  // cuentas_beneficios en SQL). A diferencia de crearTienda() de arriba,
+  // esta activa la tienda de inmediato (sin pasar por 'pending' ni
+  // esperar aprobación de admin), porque no hay pago que verificar.
+  // ---------------------------------------------------------------------
+
+  /// Consulta si esta cuenta todavía puede reclamar el plan gratis.
+  /// Usado en el Paso 4 del stepper para deshabilitar esa opción en la
+  /// UI si ya la usó antes (con esta tienda o con una anterior ya
+  /// borrada -- el control es por cuenta, no por tienda).
+  Future<bool> puedeUsarPlanGratis() async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return false;
+    final res = await supabase.rpc(
+      'fn_puede_usar_plan_gratis',
+      params: {'p_user_id': uid},
+    );
+    return res == true;
+  }
+
+  /// Consulta si esta cuenta ya usó un código de afiliado específico
+  /// (sin importar en qué tienda). Usado para dar feedback temprano en
+  /// el formulario, antes de intentar crear la tienda.
+  Future<bool> puedeUsarCodigoAfiliado(String codigo) async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return false;
+    final res = await supabase.rpc(
+      'fn_puede_usar_codigo_afiliado',
+      params: {'p_user_id': uid, 'p_codigo': codigo.trim().toUpperCase()},
+    );
+    return res == true;
+  }
+
+  /// Crea la tienda con plan gratis y la activa de inmediato (visible
+  /// ya en el marketplace, sin esperar aprobación ni pago).
+  /// plan_expira_en queda en 14 días desde ahora; a partir de ahí
+  /// revisar_vencimientos() (ya existente, corre cada hora) se encarga
+  /// de notificar 5 y 3 días antes de vencer, y la Edge Function
+  /// eliminar-tiendas-vencidas se encarga de borrar todo si nadie
+  /// activó un plan de pago a tiempo.
+  ///
+  /// Lanza Exception si esta cuenta ya usó el plan gratis antes, o si
+  /// el código de afiliado (si se pasó uno) ya fue usado por esta
+  /// cuenta, o no existe -- toda la validación real ocurre del lado
+  /// del servidor (crear_tienda_plan_gratis es SECURITY DEFINER), así
+  /// que aunque se intente saltar la UI, no se puede abusar del plan
+  /// gratis ni reusar códigos de afiliado.
+  Future<String> crearTiendaConPlanGratis({
+    required String nombre,
+    required String telefonoWhatsapp,
+    required String provincia,
+    required String municipio,
+    required double lat,
+    required double lon,
+    required String categoria,
+    String? descripcion,
+    String? codigoAfiliado,
+  }) async {
+    final codigo = codigoAfiliado?.trim().toUpperCase();
+    try {
+      final idTienda = await supabase.rpc('crear_tienda_plan_gratis', params: {
+        'p_nombre': nombre,
+        'p_telefono_whatsapp': telefonoWhatsapp,
+        'p_provincia': provincia,
+        'p_municipio': municipio,
+        'p_lat': lat,
+        'p_lon': lon,
+        'p_categoria': categoria,
+        'p_descripcion': descripcion,
+        'p_codigo_afiliado': (codigo != null && codigo.isNotEmpty) ? codigo : null,
+      });
+      return idTienda as String;
+    } on PostgrestException catch (e) {
+      // El RPC lanza excepciones con mensaje amigable (ej. "Ya usaste
+      // tu plan gratuito...") -- se propagan tal cual para que la UI
+      // las muestre directo, sin traducir códigos de error.
+      throw Exception(e.message);
+    }
   }
 
   /// Crea una tienda usando el esquema de planes por id_plan/id_afiliado
@@ -1339,21 +1524,45 @@ class TiendasService {
   // ANALYTICS - AFILIADO
   // ---------------------------------------------------------------------
 
+  /// Busca el id_afiliado real (clave primaria de 'afiliados') a partir
+  /// del user_id de auth. Las tres funciones de abajo reciben `uid`
+  /// (el id del usuario logueado) para no romper las pantallas que ya
+  /// las llaman así, pero el RPC necesita el id_afiliado real -- son
+  /// IDs distintos. Sin esta traducción, el RPC nunca encontraba la
+  /// fila y el resumen/comisiones salían siempre vacíos.
+  Future<String?> _idAfiliadoDeUid(String uid) async {
+    final afiliado = await supabase
+        .from('afiliados')
+        .select('id_afiliado')
+        .eq('user_id', uid)
+        .maybeSingle();
+    return afiliado?['id_afiliado'] as String?;
+  }
+
   Future<Map<String, dynamic>> afiliadoDashboardResumen(String uid) async {
-    final res = await supabase
-        .rpc('afiliado_dashboard_resumen', params: {'p_id_afiliado': uid});
-    return Map<String, dynamic>.from(res.first);
+    final idAfiliado = await _idAfiliadoDeUid(uid);
+    if (idAfiliado == null) return {};
+    final res = await supabase.rpc('afiliado_dashboard_resumen',
+        params: {'p_id_afiliado': idAfiliado});
+    if (res is List) {
+      return res.isNotEmpty ? Map<String, dynamic>.from(res.first) : {};
+    }
+    return Map<String, dynamic>.from(res as Map);
   }
 
   Future<List<Map<String, dynamic>>> afiliadoComisiones(String uid) async {
+    final idAfiliado = await _idAfiliadoDeUid(uid);
+    if (idAfiliado == null) return [];
     final res = await supabase
-        .rpc('afiliado_comisiones', params: {'p_id_afiliado': uid});
+        .rpc('afiliado_comisiones', params: {'p_id_afiliado': idAfiliado});
     return List<Map<String, dynamic>>.from(res);
   }
 
   Future<List<Map<String, dynamic>>> afiliadoRetiros(String uid) async {
-    final res =
-        await supabase.rpc('afiliado_retiros', params: {'p_id_afiliado': uid});
+    final idAfiliado = await _idAfiliadoDeUid(uid);
+    if (idAfiliado == null) return [];
+    final res = await supabase
+        .rpc('afiliado_retiros', params: {'p_id_afiliado': idAfiliado});
     return List<Map<String, dynamic>>.from(res);
   }
 

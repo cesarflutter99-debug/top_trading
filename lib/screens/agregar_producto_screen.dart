@@ -7,8 +7,9 @@ import '../services/tiendas_service.dart';
 
 class AgregarProductoScreen extends StatefulWidget {
   final String idTienda;
+  final String? plan;
 
-  const AgregarProductoScreen({super.key, required this.idTienda});
+  const AgregarProductoScreen({super.key, required this.idTienda, this.plan});
 
   @override
   State<AgregarProductoScreen> createState() => _AgregarProductoScreenState();
@@ -23,9 +24,14 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   final _precioCtrl = TextEditingController();
   final _descripcionCtrl = TextEditingController();
   final _cantidadCtrl = TextEditingController(text: '1');
+  String? _categoriaSeleccionada;
 
   File? _fotoSeleccionada;
+  File? _foto2;
+  File? _foto3;
   bool _subiendo = false;
+
+  bool get _esPremium => widget.plan == 'premium';
 
   @override
   void dispose() {
@@ -43,6 +49,20 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     }
   }
 
+  Future<void> _elegirFoto2() async {
+    final foto = await _storageService.elegirFoto();
+    if (foto != null) {
+      setState(() => _foto2 = foto);
+    }
+  }
+
+  Future<void> _elegirFoto3() async {
+    final foto = await _storageService.elegirFoto();
+    if (foto != null) {
+      setState(() => _foto3 = foto);
+    }
+  }
+
   Future<void> _guardarProducto() async {
     if (_fotoSeleccionada == null) {
       _mostrarError('Debes seleccionar una foto del producto');
@@ -53,11 +73,27 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     setState(() => _subiendo = true);
 
     try {
-      // 1. Subir la foto a Storage
+      // 1. Subir la foto principal a Storage
       final url = await _storageService.subirFotoProducto(
         archivo: _fotoSeleccionada!,
         idTienda: widget.idTienda,
       );
+
+      // 1b. Fotos extra: solo tiendas premium pueden subir hasta 3.
+      String? url2;
+      String? url3;
+      if (_esPremium && _foto2 != null) {
+        url2 = await _storageService.subirFotoProducto(
+          archivo: _foto2!,
+          idTienda: widget.idTienda,
+        );
+      }
+      if (_esPremium && _foto3 != null) {
+        url3 = await _storageService.subirFotoProducto(
+          archivo: _foto3!,
+          idTienda: widget.idTienda,
+        );
+      }
 
       // 2. Insertar el producto (el backend valida el límite del plan)
       await _tiendasService.crearProducto(
@@ -65,10 +101,13 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
         nombre: _nombreCtrl.text.trim(),
         precioUsd: double.parse(_precioCtrl.text.trim()),
         imagenUrl: url,
+        imagenUrl2: url2,
+        imagenUrl3: url3,
         descripcion: _descripcionCtrl.text.trim().isEmpty
             ? null
             : _descripcionCtrl.text.trim(),
         cantidadDisponible: int.parse(_cantidadCtrl.text.trim()),
+        categoria: _categoriaSeleccionada,
       );
 
       if (mounted) {
@@ -98,6 +137,36 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   void _mostrarError(String mensaje) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(mensaje), backgroundColor: Colors.red),
+    );
+  }
+
+  Widget _selectorFotoChica(
+      {required File? foto, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 100,
+        decoration: BoxDecoration(
+          color: AppColors.primary.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(kCardRadius),
+          border: Border.all(
+            color: AppColors.primary.withOpacity(0.25),
+            width: 1.4,
+          ),
+        ),
+        child: foto == null
+            ? Center(
+                child: Icon(Icons.add_a_photo_outlined,
+                    size: 26, color: AppColors.primary),
+              )
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(kCardRadius),
+                child: Image.file(foto,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity),
+              ),
+      ),
     );
   }
 
@@ -170,6 +239,33 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
             ),
             const SizedBox(height: 20),
 
+            if (_esPremium) ...[
+              Text('Fotos extra (opcional, hasta 2 más)',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                      color: AppColors.ink)),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _selectorFotoChica(
+                      foto: _foto2,
+                      onTap: _elegirFoto2,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _selectorFotoChica(
+                      foto: _foto3,
+                      onTap: _elegirFoto3,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+            ],
+
             Text('Información básica',
                 style: GoogleFonts.plusJakartaSans(
                     fontWeight: FontWeight.w800,
@@ -235,6 +331,27 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+
+            DropdownButtonFormField<String>(
+              value: _categoriaSeleccionada,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Categoría',
+              ),
+              items: kCategoriasTienda
+                  .map((c) => DropdownMenuItem(
+                        value: c,
+                        child: Text(
+                          c,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ))
+                  .toList(),
+              onChanged: (v) => setState(() => _categoriaSeleccionada = v),
+              validator: (v) => v == null ? 'Selecciona una categoría' : null,
             ),
             const SizedBox(height: 28),
 

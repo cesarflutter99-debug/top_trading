@@ -77,11 +77,24 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen>
 
     setState(() => _procesando.add(idPedido));
     try {
-      await _tiendasService.marcarPedidoCompletado(idPedido);
+      final productosBajoStock =
+          await _tiendasService.marcarPedidoCompletado(idPedido);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Venta confirmada ✅ +15 puntos')),
         );
+        if (productosBajoStock.isNotEmpty) {
+          final nombres = productosBajoStock
+              .map((p) => '${p['nombre']} (${p['cantidad_disponible']})')
+              .join(', ');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.red.shade600,
+              content: Text('⚠️ Stock bajo: $nombres'),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
         setState(_cargar);
       }
     } catch (e) {

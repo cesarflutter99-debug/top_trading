@@ -30,6 +30,7 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
   late final TextEditingController _provinciaCtrl;
   late final TextEditingController _municipioCtrl;
   late final TextEditingController _descripcionCtrl;
+  String? _categoriaSeleccionada;
 
   bool _procesando = false;
   bool _subiendoLogo = false;
@@ -47,6 +48,7 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
     _municipioCtrl = TextEditingController(text: _tienda['municipio'] ?? '');
     _descripcionCtrl =
         TextEditingController(text: _tienda['descripcion'] ?? '');
+    _categoriaSeleccionada = _tienda['categoria'] as String?;
   }
 
   @override
@@ -118,6 +120,7 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
         provincia: _provinciaCtrl.text.trim(),
         municipio: _municipioCtrl.text.trim(),
         descripcion: _descripcionCtrl.text.trim(),
+        categoria: _categoriaSeleccionada,
       );
       if (mounted) {
         setState(() {
@@ -126,6 +129,7 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
           _tienda['provincia'] = _provinciaCtrl.text.trim();
           _tienda['municipio'] = _municipioCtrl.text.trim();
           _tienda['descripcion'] = _descripcionCtrl.text.trim();
+          _tienda['categoria'] = _categoriaSeleccionada;
           _editandoDatos = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
@@ -469,6 +473,25 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
                   maxLines: 3,
                   decoration: const InputDecoration(labelText: 'Descripción'),
                 ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _categoriaSeleccionada,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Categoría'),
+                  items: kCategoriasTienda
+                      .map((c) => DropdownMenuItem(
+                            value: c,
+                            child: Text(
+                              c,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setState(() => _categoriaSeleccionada = v),
+                  validator: (v) =>
+                      v == null ? 'Selecciona una categoría' : null,
+                ),
               ] else ...[
                 _filaDato(Icons.storefront_outlined, _tienda['nombre'] ?? ''),
                 _filaDato(
@@ -477,6 +500,8 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
                     '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}'),
                 if ((_tienda['descripcion'] ?? '').toString().isNotEmpty)
                   _filaDato(Icons.notes_outlined, _tienda['descripcion']),
+                if ((_tienda['categoria'] ?? '').toString().isNotEmpty)
+                  _filaDato(Icons.category_outlined, _tienda['categoria']),
               ],
             ],
           ),

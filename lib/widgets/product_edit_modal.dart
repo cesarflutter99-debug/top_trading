@@ -37,6 +37,7 @@ class _ProductEditModalState extends State<ProductEditModal> {
 
   String? _imagenUrlActual; // la que ya tenía el producto
   File? _imagenNueva; // la que el vendedor acaba de elegir (aún sin subir)
+  String? _categoriaSeleccionada;
 
   bool _guardando = false;
   bool _subiendoImagen = false;
@@ -56,6 +57,7 @@ class _ProductEditModalState extends State<ProductEditModal> {
     _cantidadCtrl = TextEditingController(
         text: (p['cantidad_disponible'] as num?)?.toString() ?? '0');
     _imagenUrlActual = p['imagen_url'] as String?;
+    _categoriaSeleccionada = p['categoria'] as String?;
   }
 
   @override
@@ -101,6 +103,7 @@ class _ProductEditModalState extends State<ProductEditModal> {
         precioUsd: double.parse(_precioCtrl.text.trim()),
         imagenUrl: nuevaUrl, // null si no cambió -> no se toca ese campo
         cantidadDisponible: int.parse(_cantidadCtrl.text.trim()),
+        categoria: _categoriaSeleccionada,
         // esVisible ya no se envía: la visibilidad es automática
         // según si el plan de la tienda está activo, no manual.
       );
@@ -288,6 +291,27 @@ class _ProductEditModalState extends State<ProductEditModal> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 12),
+
+                DropdownButtonFormField<String>(
+                  value: _categoriaSeleccionada,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Categoría'),
+                  items: kCategoriasTienda
+                      .map((c) => DropdownMenuItem(
+                            value: c,
+                            child: Text(
+                              c,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (v) =>
+                      setState(() => _categoriaSeleccionada = v),
+                  validator: (v) =>
+                      v == null ? 'Selecciona una categoría' : null,
                 ),
 
                 if (_error != null) ...[

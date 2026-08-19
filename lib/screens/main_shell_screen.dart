@@ -9,12 +9,33 @@
 // el usuario ya tiene tienda registrada): mientras carga muestra un
 // spinner, y una vez resuelto muestra PanelVendedorScreen si ya es
 // vendedor, o una tarjeta invitando a registrarse si no.
+//
+// NAVEGACIÓN "ATRÁS" (FIX): antes el diálogo de "¿Desea salir de la
+// aplicación?" vivía dentro de HomeScreen (con su propio PopScope). El
+// problema es que HomeScreen es una de las pestañas de un IndexedStack
+// acá abajo -- un IndexedStack mantiene TODAS las pestañas montadas en
+// todo momento (solo oculta las que no se ven). Eso significaba que el
+// PopScope de HomeScreen seguía "vivo" sin importar en qué pestaña
+// estuviera el usuario, así que presionar atrás en Favoritos, Mi Tienda
+// o Perfil disparaba igual el diálogo de salir, en vez de comportarse
+// como una navegación normal.
+//
+// Ahora el PopScope vive acá, en el dueño real de las pestañas:
+//   - Si el usuario NO está en la pestaña "Inicio" (índice 0), atrás lo
+//     regresa a Inicio en vez de preguntar si quiere salir.
+//   - Si ya está en "Inicio", ahí sí se muestra el diálogo de salida.
+// Las pantallas que se abren con Navigator.push (Gestionar Tienda,
+// Admin, etc.) no se ven afectadas -- siguen cerrándose normalmente con
+// atrás, ya que son rutas apiladas de verdad, no pestañas del shell.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
+import '../core/auth_guard.dart';
+import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
 import 'home_screen.dart';
 import 'mapa_tiendas_screen.dart';
@@ -56,6 +77,52 @@ class _MainShellScreenState extends State<MainShellScreen> {
     }
   }
 
+  /// Cambia de pestaña. Favoritos (2), Mi Tienda (3) y Perfil (4)
+  /// requieren sesión: un invitado que toque una de esas ve el modal
+  /// "Debes iniciar sesión" en vez de la pestaña (que solo mostraría el
+  /// estado de invitado / lo mandaría de vuelta a la Welcome).
+  Future<void> _irA(int indice) async {
+    final requiereSesion = indice == 2 || indice == 3 || indice == 4;
+    if (!requiereSesion || supabase.auth.currentUser != null) {
+      setState(() => _indice = indice);
+      return;
+    }
+    await mostrarModalInicioSesion(context);
+  }
+
+  /// Diálogo de confirmación de salida -- solo se muestra cuando el
+  /// usuario ya está en la pestaña "Inicio" (índice 0) y presiona atrás.
+  Future<bool> _confirmarSalir() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Salir'),
+            content: const Text('¿Desea salir de la aplicación?'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('No')),
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Sí')),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  /// Maneja el botón/gesto "atrás" del sistema para todo el shell:
+  ///   1. Si no está en "Inicio", vuelve a "Inicio".
+  ///   2. Si ya está en "Inicio", pregunta si quiere salir de la app.
+  Future<void> _manejarAtras() async {
+    if (_indice != 0) {
+      setState(() => _indice = 0);
+      return;
+    }
+    final salir = await _confirmarSalir();
+    if (salir) SystemNavigator.pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final esOscuro = Theme.of(context).brightness == Brightness.dark;
@@ -72,87 +139,90 @@ class _MainShellScreenState extends State<MainShellScreen> {
       const MiPerfilScreen(),
     ];
 
-    return Scaffold(
-      extendBody: true,
-      body: IndexedStack(index: _indice, children: paginas),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(32),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Container(
-              decoration: BoxDecoration(
-                color:
-                    (esOscuro ? Colors.black : Colors.white).withOpacity(0.92),
-                borderRadius: BorderRadius.circular(32),
-                border: Border.all(
-                  color: (esOscuro ? Colors.white : Colors.black)
-                      .withOpacity(0.06),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _manejarAtras();
+      },
+      child: Scaffold(
+        extendBody: true,
+        body: IndexedStack(index: _indice, children: paginas),
+        bottomNavigationBar: SafeArea(
+          minimum: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(32),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: (esOscuro ? Colors.black : Colors.white)
+                      .withOpacity(0.68),
+                  borderRadius: BorderRadius.circular(32),
+                  border: Border.all(
+                    color: (esOscuro ? Colors.white : Colors.black)
+                        .withOpacity(0.06),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(esOscuro ? 0.4 : 0.12),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(esOscuro ? 0.4 : 0.12),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  // ---- Mapa (izquierda) ----
-                  Expanded(
-                    child: _ItemNav(
-                      activo: _indice == 1,
-                      iconoInactivo: Icons.map_outlined,
-                      iconoActivo: Icons.map_rounded,
-                      label: 'Mapa',
-                      onTap: () => setState(() => _indice = 1),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    Expanded(
+                      child: _ItemNav(
+                        activo: _indice == 1,
+                        iconoInactivo: Icons.map_outlined,
+                        iconoActivo: Icons.map_rounded,
+                        label: 'Mapa',
+                        onTap: () => setState(() => _indice = 1),
+                      ),
                     ),
-                  ),
-                  // ---- Favoritos ----
-                  Expanded(
-                    child: _ItemNav(
-                      activo: _indice == 2,
-                      iconoInactivo: Icons.favorite_border_rounded,
-                      iconoActivo: Icons.favorite_rounded,
-                      label: 'Favoritos',
-                      onTap: () => setState(() => _indice = 2),
+                    Expanded(
+                      child: _ItemNav(
+                        activo: _indice == 2,
+                        iconoInactivo: Icons.favorite_border_rounded,
+                        iconoActivo: Icons.favorite_rounded,
+                        label: 'Favoritos',
+                        onTap: () => _irA(2),
+                      ),
                     ),
-                  ),
-                  // ---- Inicio: siempre al centro, con icono de casita ----
-                  Expanded(
-                    child: _ItemNav(
-                      activo: _indice == 0,
-                      iconoInactivo: Icons.home_outlined,
-                      iconoActivo: Icons.home_rounded,
-                      label: 'Inicio',
-                      onTap: () => setState(() => _indice = 0),
+                    Expanded(
+                      child: _ItemNav(
+                        activo: _indice == 0,
+                        iconoInactivo: Icons.home_outlined,
+                        iconoActivo: Icons.home_rounded,
+                        label: 'Inicio',
+                        onTap: () => setState(() => _indice = 0),
+                      ),
                     ),
-                  ),
-                  // ---- Mi Tienda ----
-                  Expanded(
-                    child: _ItemNav(
-                      activo: _indice == 3,
-                      iconoInactivo: Icons.storefront_outlined,
-                      iconoActivo: Icons.storefront_rounded,
-                      label: 'Mi Tienda',
-                      onTap: () => setState(() => _indice = 3),
+                    Expanded(
+                      child: _ItemNav(
+                        activo: _indice == 3,
+                        iconoInactivo: Icons.storefront_outlined,
+                        iconoActivo: Icons.storefront_rounded,
+                        label: 'Mi Tienda',
+                        onTap: () => _irA(3),
+                      ),
                     ),
-                  ),
-                  // ---- Perfil ----
-                  Expanded(
-                    child: _ItemNav(
-                      activo: _indice == 4,
-                      iconoInactivo: Icons.person_outline_rounded,
-                      iconoActivo: Icons.person_rounded,
-                      label: 'Perfil',
-                      onTap: () => setState(() => _indice = 4),
+                    Expanded(
+                      child: _ItemNav(
+                        activo: _indice == 4,
+                        iconoInactivo: Icons.person_outline_rounded,
+                        iconoActivo: Icons.person_rounded,
+                        label: 'Perfil',
+                        onTap: () => _irA(4),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -186,51 +256,38 @@ class _ItemNav extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-        child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TweenAnimationBuilder<double>(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              tween: Tween(begin: activo ? 0.0 : 1.0, end: activo ? 1.0 : 0.0),
-              builder: (context, t, child) {
-                return Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.primary.withOpacity(0.14 * t),
-                  ),
-                  child: Transform.scale(
-                    scale: 1.0 + (0.15 * t),
-                    child: Icon(
-                      activo ? iconoActivo : iconoInactivo,
-                      size: 21,
-                      color: Color.lerp(
-                          AppColors.inkSecundarioLight, AppColors.primary, t),
-                    ),
-                  ),
-                );
-              },
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: activo
+                    ? AppColors.primary.withOpacity(0.14)
+                    : Colors.transparent,
+              ),
+              child: Icon(
+                activo ? iconoActivo : iconoInactivo,
+                size: 22,
+                color:
+                    activo ? AppColors.primary : AppColors.inkSecundarioLight,
+              ),
             ),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              child: activo
-                  ? Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        label,
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    )
-                  : const SizedBox(height: 0),
-            ),
+            if (activo)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  label,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -272,6 +329,8 @@ class _CTAHacerseVendedor extends StatelessWidget {
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: () async {
+                  if (!await requireAuth(context)) return;
+                  if (!context.mounted) return;
                   await context.push('/crear-tienda');
                   onCreada();
                 },

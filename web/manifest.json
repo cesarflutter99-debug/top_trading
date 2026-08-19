@@ -1,11 +1,11 @@
 {
-    "name": "top_trading",
-    "short_name": "top_trading",
+    "name": "Al Lado",
+    "short_name": "Al Lado",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Mercado geolocalizado de La Habana.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
