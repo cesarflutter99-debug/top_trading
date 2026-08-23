@@ -322,37 +322,72 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
 
   @override
   Widget build(BuildContext context) {
+    final esOscuro = Theme.of(context).brightness == Brightness.dark;
+    final colorSecundario = AppColors.inkSecundarioLight;
+    final colorSuperficie =
+        esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight;
+    final colorBorde =
+        (esOscuro ? AppColors.borderDark : AppColors.borderLight).withOpacity(0.6);
+    final fillCampo = esOscuro ? Colors.white.withOpacity(0.06) : const Color(0xFFF3F4F6);
+
     // FIX: sin este padding, el modal (al vivir dentro de un
     // showModalBottomSheet y no de un Scaffold) no se ajusta cuando
     // aparece el teclado -- el campo de "Código de afiliado" y su
     // mensaje de válido/inválido, que están al final del formulario,
     // quedaban tapados por el teclado y parecía que no pasaba nada al
     // escribir.
+    //
+    // FIX visual (2026-08): se agregó modo oscuro real (antes había
+    // colores claros hardcodeados que quedaban ilegibles o invisibles
+    // en tema oscuro: fondo de input #F3F4F6, Colors.black45, etc.) y
+    // se compactaron los espacios verticales para que el contenido
+    // entre con menos scroll. El padding inferior ahora suma
+    // explícitamente el inset real del sistema (gestos/botones de
+    // navegación nativos), además del SafeArea, para que "Verificar
+    // Pago" y el campo de afiliado nunca queden tapados por la barra
+    // de navegación del teléfono.
     return AnimatedPadding(
       duration: const Duration(milliseconds: 100),
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SafeArea(
+        top: false,
         child: SingleChildScrollView(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).padding.bottom + 16,
+          ),
           child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // ---------- Handle visual (solo aporta si es bottom sheet) ----------
+                if (!widget.esPantallaCompleta)
+                  Center(
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.withOpacity(0.4),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
                 Text('Pagar plan ${widget.plan['nombre']}',
                     style: GoogleFonts.inter(
-                        fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
+                        fontSize: 19, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
                 if (_tieneCupon) ...[
                   Row(
                     children: [
                       Text(
                         '\$${_precioOriginal.toStringAsFixed(2)} USD',
                         style: GoogleFonts.inter(
-                          fontSize: 14,
-                          color: Colors.black45,
+                          fontSize: 13.5,
+                          color: colorSecundario,
                           decoration: TextDecoration.lineThrough,
                         ),
                       ),
@@ -361,92 +396,129 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.12),
+                          color: Colors.green.withOpacity(esOscuro ? 0.22 : 0.12),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text('-10% cupón',
                             style: GoogleFonts.inter(
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.green.shade700)),
+                                color: esOscuro
+                                    ? Colors.green.shade300
+                                    : Colors.green.shade700)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 2),
                   Text('\$${_precioFinal.toStringAsFixed(2)} USD',
                       style: GoogleFonts.inter(
-                          fontSize: 20,
+                          fontSize: 19,
                           fontWeight: FontWeight.bold,
-                          color: Colors.green)),
+                          color: esOscuro ? Colors.green.shade300 : Colors.green)),
                   const SizedBox(height: 4),
                   Text('Usaste un código de afiliado ✅',
                       style: GoogleFonts.inter(
-                          fontSize: 12.5,
-                          color: Colors.green.shade700,
+                          fontSize: 12,
+                          color: esOscuro ? Colors.green.shade300 : Colors.green.shade700,
                           fontWeight: FontWeight.w600)),
                 ] else
                   Text('\$${_precioFinal.toStringAsFixed(2)} USD',
-                      style:
-                          GoogleFonts.inter(fontSize: 16, color: Colors.green)),
-                const SizedBox(height: 20),
+                      style: GoogleFonts.inter(
+                          fontSize: 16,
+                          color: esOscuro ? Colors.green.shade300 : Colors.green)),
+                const SizedBox(height: 16),
+
+                // ---------- QR: tarjeta blanca fija -- el QR necesita
+                // fondo blanco sólido para seguir siendo escaneable sin
+                // importar el tema del teléfono ----------
                 Center(
-                  child: () {
-                    final qrUrl = widget.plan['qr_url'] as String?;
-                    if (qrUrl != null && qrUrl.isNotEmpty) {
-                      return ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          qrUrl,
-                          width: 180,
-                          height: 180,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => QrImageView(
-                            data: _contenidoQr,
-                            size: 180,
-                            backgroundColor: Colors.white,
-                          ),
-                          loadingBuilder: (context, child, progress) {
-                            if (progress == null) return child;
-                            return const SizedBox(
-                              width: 180,
-                              height: 180,
-                              child: Center(child: CircularProgressIndicator()),
-                            );
-                          },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: colorBorde),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(esOscuro ? 0.35 : 0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
                         ),
+                      ],
+                    ),
+                    child: () {
+                      final qrUrl = widget.plan['qr_url'] as String?;
+                      if (qrUrl != null && qrUrl.isNotEmpty) {
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            qrUrl,
+                            width: 156,
+                            height: 156,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => QrImageView(
+                              data: _contenidoQr,
+                              size: 156,
+                              backgroundColor: Colors.white,
+                            ),
+                            loadingBuilder: (context, child, progress) {
+                              if (progress == null) return child;
+                              return const SizedBox(
+                                width: 156,
+                                height: 156,
+                                child: Center(child: CircularProgressIndicator()),
+                              );
+                            },
+                          ),
+                        );
+                      }
+                      return QrImageView(
+                        data: _contenidoQr,
+                        size: 156,
+                        backgroundColor: Colors.white,
                       );
-                    }
-                    return QrImageView(
-                      data: _contenidoQr,
-                      size: 180,
-                      backgroundColor: Colors.white,
-                    );
-                  }(),
+                    }(),
+                  ),
                 ),
-                const SizedBox(height: 20),
-                _filaDato('Tarjeta',
-                    widget.plan['numero_tarjeta'] ?? 'No configurada'),
-                const SizedBox(height: 8),
-                _filaDato('Teléfono',
-                    widget.plan['numero_telefono_pago'] ?? 'No configurado'),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
+
+                // ---------- Datos de pago -- tarjeta de vidrio ----------
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: colorSuperficie,
+                    borderRadius: BorderRadius.circular(kCardRadius),
+                    border: Border.all(color: colorBorde),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _filaDato('Tarjeta',
+                          widget.plan['numero_tarjeta'] ?? 'No configurada'),
+                      const SizedBox(height: 8),
+                      _filaDato('Teléfono',
+                          widget.plan['numero_telefono_pago'] ?? 'No configurado'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
 
                 // ---------- Explicación paso a paso ----------
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.06),
+                    color: AppColors.primary.withOpacity(esOscuro ? 0.10 : 0.06),
                     borderRadius: BorderRadius.circular(kCardRadius),
-                    border:
-                        Border.all(color: AppColors.primary.withOpacity(0.2)),
+                    border: Border.all(
+                        color: AppColors.primary.withOpacity(esOscuro ? 0.3 : 0.2)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('Cómo verificar tu pago',
                           style: GoogleFonts.inter(
-                              fontWeight: FontWeight.bold, fontSize: 14)),
-                      const SizedBox(height: 10),
+                              fontWeight: FontWeight.bold, fontSize: 13.5)),
+                      const SizedBox(height: 8),
                       _pasoNumerado(1,
                           'Abre Transfermóvil y transfiere \$${_precioFinal.toStringAsFixed(2)} USD a la tarjeta o número mostrados arriba.'),
                       _pasoNumerado(2,
@@ -456,11 +528,12 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                       _pasoNumerado(4,
                           'Adjunta la captura de pantalla en ese chat de WhatsApp y envíala.'),
                       _pasoNumerado(5,
-                          'El administrador revisará tu comprobante y activará tu plan.'),
+                          'El administrador revisará tu comprobante y activará tu plan.',
+                          ultimo: true),
                     ],
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
 
                 SizedBox(
                   width: double.infinity,
@@ -469,6 +542,8 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       backgroundColor: const Color(0xFF25D366),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                     child: _procesando
                         ? const SizedBox(
@@ -480,10 +555,9 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                         : const Text('Verificar Pago'),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
 
                 if (widget.mostrarCodigoAfiliado) ...[
-                  // ---------- Código de afiliado (abajo) ----------
                   TextField(
                     controller: _codigoAfiliadoCtrl,
                     textCapitalization: TextCapitalization.characters,
@@ -493,9 +567,12 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                       hintText: 'Ingresa tu código si lo tienes',
                       prefixIcon: const Icon(Icons.confirmation_number_outlined,
                           size: 20),
-                      border: const OutlineInputBorder(),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
                       filled: true,
-                      fillColor: const Color(0xFFF3F4F6),
+                      fillColor: fillCampo,
                       suffixIcon: _codigoEstado == 'validando'
                           ? const Padding(
                               padding: EdgeInsets.only(right: 8),
@@ -529,6 +606,7 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                             fontWeight: FontWeight.w600)),
                   ],
                 ],
+                const SizedBox(height: 12),
               ],
             ),
           ),
@@ -541,15 +619,15 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
     return Row(
       children: [
         Text('$etiqueta: ',
-            style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-        Expanded(child: SelectableText(valor)),
+            style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13.5)),
+        Expanded(child: SelectableText(valor, style: GoogleFonts.inter(fontSize: 13.5))),
       ],
     );
   }
 
-  Widget _pasoNumerado(int numero, String texto) {
+  Widget _pasoNumerado(int numero, String texto, {bool ultimo = false}) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.only(bottom: ultimo ? 0 : 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -561,7 +639,7 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
           ),
           const SizedBox(width: 8),
           Expanded(
-              child: Text(texto, style: GoogleFonts.inter(fontSize: 12.5))),
+              child: Text(texto, style: GoogleFonts.inter(fontSize: 12))),
         ],
       ),
     );

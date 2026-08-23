@@ -1,14 +1,22 @@
 // afiliado_perfil_screen.dart
 //
-// Pantalla profesional del afiliado (reemplaza el "diálogo simple" que
-// vivía dentro de afiliado_registro_screen.dart cuando ya existía un
-// registro). Muestra foto de Google, saldo, código para compartir,
-// histórico de comisiones y retiros, edición de teléfono/tarjeta, y el
-// flujo de solicitar retiro con las reglas de negocio:
-//   - mínimo 1000 CUP por solicitud
-//   - máximo 10,000 CUP acumulados por día (sumando lo ya solicitado)
-//   - no puede exceder el saldo actual
-//   - abre WhatsApp con el mensaje al admin al confirmar
+// REDISEÑO (2026-08):
+//   - Estética alineada al resto de la app (mi_perfil_screen.dart /
+//     panel_vendedor_screen.dart): tarjetas "vidrio flotante", colores
+//     adaptativos a modo oscuro, header con gradiente + avatar.
+//   - NUEVO: sección "Tiendas referidas" -- se arma deduplicando el
+//     historial de comisiones (_comisiones) por id_tienda, mostrando
+//     hasta 5 con un botón "Ver todas" que abre
+//     AfiliadoTiendasReferidasScreen con el listado completo. Antes
+//     esta información solo vivía mezclada dentro de "Historial de
+//     comisiones", sin agrupar por tienda.
+//   - FIX eliminar cuenta: antes se asumía éxito con solo no atrapar
+//     una excepción. Ahora, después de llamar a darDeBajaAfiliado(),
+//     se vuelve a pedir obtenerMiAfiliado() para CONFIRMAR que
+//     realmente desapareció -- si sigue existiendo, se avisa
+//     explícitamente en vez de cerrar la pantalla como si hubiese
+//     funcionado. Esto expone el bug real (que vive en
+//     tiendas_service.dart / backend) en vez de ocultarlo.
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -17,6 +25,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
+import '../services/afiliado_state_service.dart';
+import 'afiliado_tiendas_referidas_screen.dart';
 
 class AfiliadoPerfilScreen extends StatefulWidget {
   const AfiliadoPerfilScreen({super.key});
@@ -32,7 +42,7 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
   bool _cargando = true;
   bool _editando = false;
   bool _guardandoEdicion = false;
-  bool _verTodasComisiones = false;
+  bool _eliminandoCuenta = false;
   bool _verTodosRetiros = false;
 
   final _nombreCtrl = TextEditingController();
@@ -41,6 +51,18 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
 
   late Future<List<Map<String, dynamic>>> _comisiones;
   late Future<List<Map<String, dynamic>>> _retiros;
+
+  bool get _esOscuro => Theme.of(context).brightness == Brightness.dark;
+  Color get _colorTexto => _esOscuro ? const Color(0xFFF5F5F4) : AppColors.ink;
+  Color get _colorTextoSecundario =>
+      _esOscuro ? AppColors.inkSecundarioDark : AppColors.inkSecundarioLight;
+  Color get _colorFondo => Theme.of(context).scaffoldBackgroundColor;
+  Color get _colorSuperficie => _esOscuro
+      ? AppColors.cardTransparentDark
+      : AppColors.cardTransparentLight;
+  Color get _colorBorde =>
+      (_esOscuro ? AppColors.borderDark : AppColors.borderLight)
+          .withOpacity(0.6);
 
   @override
   void initState() {
@@ -96,6 +118,10 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
         setState(() => _editando = false);
         await _cargar();
       }
+      // FIX (persistencia): propaga el cambio al estado global para
+      // que Home / Mi Perfil, que también muestran datos del
+      // afiliado, se enteren sin tener que volver a entrar a la app.
+      await AfiliadoStateService.instance.refrescar();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -258,10 +284,38 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
     );
   }
 
+  /// Agrupa el historial de comisiones (_comisiones) por tienda para
+  /// armar la lista de "Tiendas referidas" -- una fila por tienda,
+  /// no una por cada uso/comisión.
+  List<Map<String, dynamic>> _agruparPorTienda(
+      List<Map<String, dynamic>> usos) {
+    final Map<String, Map<String, dynamic>> agrupado = {};
+    for (final u in usos) {
+      final tienda = u['tiendas'] as Map<String, dynamic>? ?? {};
+      final id = (tienda['id_tienda'] ?? u['id_tienda'] ?? tienda['nombre'])
+          ?.toString();
+      if (id == null) continue;
+      final acumuladoPrevio =
+          (agrupado[id]?['comision_acumulada'] as num?) ?? 0;
+      final estaAprobado = u['estado'] == 'aprobado';
+      agrupado[id] = {
+        'id_tienda': id,
+        'nombre': tienda['nombre'] ?? 'Tienda',
+        'logo_url': tienda['logo_url'],
+        'comision_acumulada': acumuladoPrevio +
+            (estaAprobado ? (u['comision_cup_acreditada'] ?? 0) : 0),
+        'estado': u['estado'],
+        'creado_en': u['creado_en'],
+      };
+    }
+    return agrupado.values.toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_cargando) {
       return Scaffold(
+        backgroundColor: _colorFondo,
         appBar: AppBar(title: const Text('Mi Perfil de Afiliado')),
         body: const Center(child: CircularProgressIndicator()),
       );
@@ -269,10 +323,9 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
 
     if (_afiliado == null) {
       return Scaffold(
+        backgroundColor: _colorFondo,
         appBar: AppBar(title: const Text('Mi Perfil de Afiliado')),
-        body: const Center(
-          child: Text('Todavía no eres afiliado.'),
-        ),
+        body: const Center(child: Text('Todavía no eres afiliado.')),
       );
     }
 
@@ -280,421 +333,420 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
     final puedeRetirar = saldo >= 1000;
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: _colorFondo,
       appBar: AppBar(
         title: const Text('Mi Perfil de Afiliado'),
-        backgroundColor: AppColors.backgroundLight,
+        backgroundColor: _colorFondo,
+        foregroundColor: _colorTexto,
         elevation: 0,
+        scrolledUnderElevation: 0,
       ),
       body: RefreshIndicator(
         onRefresh: _cargar,
         child: ListView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           children: [
-            // ---------- Encabezado: foto + nombre + código ----------
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [AppColors.primary, AppColors.primaryDark],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(kCardRadius),
-              ),
-              child: Column(
-                children: [
-                  CircleAvatar(
-                    radius: 40,
-                    backgroundColor: Colors.white,
-                    backgroundImage:
-                        _fotoGoogle != null ? NetworkImage(_fotoGoogle!) : null,
-                    child: _fotoGoogle == null
-                        ? const Icon(Icons.person,
-                            size: 40, color: AppColors.primary)
-                        : null,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(_afiliado!['nombre'] ?? '',
-                      style: GoogleFonts.plusJakartaSans(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 18)),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.18),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'Código: ${_afiliado!['codigo']}',
-                      style: GoogleFonts.plusJakartaSans(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 2,
-                          fontSize: 13),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => _compartirCodigo(),
-                    icon: const Icon(Icons.share_outlined,
-                        size: 16, color: Colors.white),
-                    label: Text('Compartir',
-                        style:
-                            GoogleFonts.plusJakartaSans(color: Colors.white)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.white70),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // ---------- Saldo + botón de retiro ----------
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(kCardRadius),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.04), blurRadius: 10)
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Saldo actual',
-                      style: GoogleFonts.plusJakartaSans(
-                          color: AppColors.inkSecundarioLight, fontSize: 13)),
-                  const SizedBox(height: 4),
-                  Text('${saldo.toStringAsFixed(0)} CUP',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 30,
-                          color: AppColors.ink)),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: puedeRetirar ? _abrirModalRetiro : null,
-                      icon: const Icon(Icons.account_balance_wallet_outlined),
-                      label: Text(puedeRetirar
-                          ? 'Solicitar Retiro'
-                          : 'Necesitas mínimo 1000 CUP'),
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        backgroundColor: puedeRetirar
-                            ? AppColors.primary
-                            : Colors.grey.shade300,
-                        foregroundColor:
-                            puedeRetirar ? Colors.white : Colors.grey.shade600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Reglas: mínimo 1000 CUP por solicitud · máximo 10,000 CUP '
-                    'acumulados por día · el pago se coordina por WhatsApp.',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11.5, color: AppColors.inkSecundarioLight),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // ---------- Datos de contacto/pago (editable) ----------
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(kCardRadius),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.04), blurRadius: 10)
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Datos de contacto',
-                          style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
-                      TextButton.icon(
-                        onPressed: () => setState(() => _editando = !_editando),
-                        icon: Icon(
-                            _editando ? Icons.close : Icons.edit_outlined,
-                            size: 16),
-                        label: Text(_editando ? 'Cancelar' : 'Editar'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (_editando) ...[
-                    TextField(
-                      controller: _nombreCtrl,
-                      decoration: const InputDecoration(labelText: 'Nombre'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _telefonoCtrl,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                          labelText: 'Teléfono (WhatsApp)'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _tarjetaCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration:
-                          const InputDecoration(labelText: 'Número de tarjeta'),
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: _guardandoEdicion ? null : _guardarEdicion,
-                        child: _guardandoEdicion
-                            ? const SizedBox(
-                                height: 18,
-                                width: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
-                            : const Text('Guardar cambios'),
-                      ),
-                    ),
-                  ] else ...[
-                    _filaDato(Icons.phone_outlined, 'Teléfono',
-                        _afiliado!['telefono'] ?? '-'),
-                    const SizedBox(height: 10),
-                    _filaDato(Icons.credit_card_outlined, 'Tarjeta',
-                        _afiliado!['numero_tarjeta'] ?? '-'),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // ---------- Histórico: comisiones ----------
-            Text('Historial de comisiones',
-                style: GoogleFonts.plusJakartaSans(
-                    fontWeight: FontWeight.bold, fontSize: 16)),
+            _buildHeader(),
+            const SizedBox(height: 14),
+            _buildSaldoCard(saldo, puedeRetirar),
+            const SizedBox(height: 14),
+            _buildDatosContacto(),
+            const SizedBox(height: 20),
+            _buildSectionTitle('Tiendas referidas', Icons.storefront_rounded),
             const SizedBox(height: 10),
-            FutureBuilder<List<Map<String, dynamic>>>(
-              future: _comisiones,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text(
-                      'Error al cargar comisiones',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12, color: Colors.red),
-                    ),
-                  );
-                }
-                if (!snapshot.hasData) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
-                final usos = snapshot.data!;
-                if (usos.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text('Aún no tienes comisiones registradas.',
-                        style: GoogleFonts.plusJakartaSans(
-                            color: AppColors.inkSecundarioLight, fontSize: 13)),
-                  );
-                }
-                final total = usos.length;
-                final mostrar =
-                    _verTodasComisiones ? usos : usos.take(5).toList();
-                return Column(
-                  children: [
-                    ...mostrar.map((u) {
-                      final aprobado = u['estado'] == 'aprobado';
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              aprobado
-                                  ? Icons.check_circle_rounded
-                                  : Icons.schedule_rounded,
-                              color: aprobado ? Colors.green : Colors.orange,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(u['tiendas']?['nombre'] ?? 'Tienda',
-                                      style: GoogleFonts.plusJakartaSans(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13.5)),
-                                  Text(
-                                    aprobado
-                                        ? '+${(u['comision_cup_acreditada'] ?? 0)} CUP'
-                                        : 'Pendiente de aprobación',
-                                    style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 12,
-                                        color: AppColors.inkSecundarioLight),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    if (total > 5)
-                      TextButton(
-                        onPressed: () => setState(
-                            () => _verTodasComisiones = !_verTodasComisiones),
-                        child: Text(_verTodasComisiones
-                            ? 'Ver menos'
-                            : 'Ver todos ($total)'),
-                      ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-
-            // ---------- Histórico: retiros ----------
-            Text('Historial de retiros',
-                style: GoogleFonts.plusJakartaSans(
-                    fontWeight: FontWeight.bold, fontSize: 16)),
+            _buildTiendasReferidas(),
+            const SizedBox(height: 20),
+            _buildSectionTitle(
+                'Historial de retiros', Icons.account_balance_wallet_rounded),
             const SizedBox(height: 10),
-            FutureBuilder<List<Map<String, dynamic>>>(
-              future: _retiros,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text(
-                      'Error al cargar retiros',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12, color: Colors.red),
-                    ),
-                  );
-                }
-                if (!snapshot.hasData) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
-                final retiros = snapshot.data!;
-                if (retiros.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text('Aún no has solicitado retiros.',
-                        style: GoogleFonts.plusJakartaSans(
-                            color: AppColors.inkSecundarioLight, fontSize: 13)),
-                  );
-                }
-                final total = retiros.length;
-                final mostrar =
-                    _verTodosRetiros ? retiros : retiros.take(5).toList();
-                return Column(
-                  children: [
-                    ...mostrar.map((r) {
-                      final pagado = r['estado'] == 'pagado';
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              pagado
-                                  ? Icons.check_circle_rounded
-                                  : Icons.schedule_rounded,
-                              color: pagado ? Colors.green : Colors.orange,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                '${(r['monto_cup'] as num).toStringAsFixed(0)} CUP',
-                                style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13.5),
-                              ),
-                            ),
-                            Text(
-                              pagado ? 'Pagado' : 'Pendiente',
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 12,
-                                  color: pagado
-                                      ? Colors.green.shade700
-                                      : Colors.orange.shade700,
-                                  fontWeight: FontWeight.w600),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    if (total > 5)
-                      TextButton(
-                        onPressed: () => setState(
-                            () => _verTodosRetiros = !_verTodosRetiros),
-                        child: Text(_verTodosRetiros
-                            ? 'Ver menos'
-                            : 'Ver todos ($total)'),
-                      ),
-                  ],
-                );
-              },
-            ),
+            _buildRetiros(),
             const SizedBox(height: 24),
-
-            // ---------- Eliminar cuenta ----------
-            Card(
-              color: Colors.red.withOpacity(0.05),
-              child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.red,
-                  child: Icon(Icons.person_remove_outlined,
-                      color: Colors.white, size: 18),
-                ),
-                title: Text(
-                  'Eliminar cuenta de afiliado',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontWeight: FontWeight.w600, color: Colors.red),
-                ),
-                subtitle: const Text(
-                    'Bloqueado si tienes un retiro pendiente de aprobación'),
-                onTap: _confirmarEliminarCuenta,
-              ),
-            ),
+            _buildEliminarCuenta(),
             const SizedBox(height: 24),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.primary, AppColors.primaryDark],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(kCardRadius),
+      ),
+      child: Column(
+        children: [
+          CircleAvatar(
+            radius: 40,
+            backgroundColor: Colors.white,
+            backgroundImage:
+                _fotoGoogle != null ? NetworkImage(_fotoGoogle!) : null,
+            child: _fotoGoogle == null
+                ? const Icon(Icons.person, size: 40, color: AppColors.primary)
+                : null,
+          ),
+          const SizedBox(height: 12),
+          Text(_afiliado!['nombre'] ?? '',
+              style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18)),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'Código: ${_afiliado!['codigo']}',
+              style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
+                  fontSize: 13),
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _compartirCodigo,
+            icon: const Icon(Icons.share_outlined,
+                size: 16, color: Colors.white),
+            label: Text('Compartir',
+                style: GoogleFonts.plusJakartaSans(color: Colors.white)),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.white70),
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSaldoCard(double saldo, bool puedeRetirar) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _colorSuperficie,
+        borderRadius: BorderRadius.circular(kCardRadius),
+        border: Border.all(color: _colorBorde),
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Saldo actual',
+              style: GoogleFonts.plusJakartaSans(
+                  color: _colorTextoSecundario, fontSize: 13)),
+          const SizedBox(height: 4),
+          Text('${saldo.toStringAsFixed(0)} CUP',
+              style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 28,
+                  color: _colorTexto)),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: puedeRetirar ? _abrirModalRetiro : null,
+              icon: const Icon(Icons.account_balance_wallet_outlined),
+              label: Text(
+                  puedeRetirar ? 'Solicitar retiro' : 'Necesitas mínimo 1000 CUP'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Mínimo 1000 CUP · máximo 10,000 CUP por día · el pago se '
+            'coordina por WhatsApp.',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 11, color: _colorTextoSecundario),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDatosContacto() {
+    return Container(
+      decoration: BoxDecoration(
+        color: _colorSuperficie,
+        borderRadius: BorderRadius.circular(kCardRadius),
+        border: Border.all(color: _colorBorde),
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Datos de contacto',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14.5,
+                      color: _colorTexto)),
+              TextButton.icon(
+                onPressed: () => setState(() => _editando = !_editando),
+                icon: Icon(_editando ? Icons.close : Icons.edit_outlined,
+                    size: 16),
+                label: Text(_editando ? 'Cancelar' : 'Editar'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (_editando) ...[
+            TextField(
+              controller: _nombreCtrl,
+              decoration: const InputDecoration(labelText: 'Nombre'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _telefonoCtrl,
+              keyboardType: TextInputType.phone,
+              decoration:
+                  const InputDecoration(labelText: 'Teléfono (WhatsApp)'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _tarjetaCtrl,
+              keyboardType: TextInputType.number,
+              decoration:
+                  const InputDecoration(labelText: 'Número de tarjeta'),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _guardandoEdicion ? null : _guardarEdicion,
+                child: _guardandoEdicion
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Text('Guardar cambios'),
+              ),
+            ),
+          ] else ...[
+            _filaDato(Icons.phone_outlined, 'Teléfono',
+                _afiliado!['telefono'] ?? '-'),
+            const SizedBox(height: 10),
+            _filaDato(Icons.credit_card_outlined, 'Tarjeta',
+                _afiliado!['numero_tarjeta'] ?? '-'),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: _colorTextoSecundario),
+        const SizedBox(width: 8),
+        Text(title,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 15, fontWeight: FontWeight.w800, color: _colorTexto)),
+      ],
+    );
+  }
+
+  Widget _buildTiendasReferidas() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _comisiones,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _tarjetaVacia('No se pudieron cargar tus tiendas referidas.');
+        }
+        if (!snapshot.hasData) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final tiendas = _agruparPorTienda(snapshot.data!);
+        if (tiendas.isEmpty) {
+          return _tarjetaVacia(
+              'Todavía nadie usó tu código. Comparte tu código para empezar '
+              'a sumar tiendas referidas.');
+        }
+        final mostrar = tiendas.take(5).toList();
+        return Container(
+          decoration: BoxDecoration(
+            color: _colorSuperficie,
+            borderRadius: BorderRadius.circular(kCardRadius),
+            border: Border.all(color: _colorBorde),
+          ),
+          child: Column(
+            children: [
+              ...mostrar.map((t) => _filaTiendaReferida(t)),
+              if (tiendas.length > 5)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: TextButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => AfiliadoTiendasReferidasScreen(
+                            tiendas: tiendas,
+                          ),
+                        ),
+                      );
+                    },
+                    child: Text('Ver todas (${tiendas.length})'),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _filaTiendaReferida(Map<String, dynamic> t) {
+    final logo = t['logo_url'] as String?;
+    final comision = (t['comision_acumulada'] as num?) ?? 0;
+    final aprobado = t['estado'] == 'aprobado';
+    return ListTile(
+      leading: CircleAvatar(
+        radius: 20,
+        backgroundColor: AppColors.warm.withOpacity(0.1),
+        backgroundImage:
+            (logo != null && logo.isNotEmpty) ? NetworkImage(logo) : null,
+        child: (logo == null || logo.isEmpty)
+            ? const Icon(Icons.storefront_rounded, color: AppColors.warm)
+            : null,
+      ),
+      title: Text(t['nombre'] ?? 'Tienda',
+          style: GoogleFonts.plusJakartaSans(
+              fontWeight: FontWeight.w600, fontSize: 13.5, color: _colorTexto)),
+      subtitle: Text(
+        aprobado ? 'Comisión aprobada' : 'Pendiente de aprobación',
+        style: GoogleFonts.plusJakartaSans(
+            fontSize: 11.5,
+            color: aprobado ? AppColors.success : Colors.orange),
+      ),
+      trailing: Text(
+        '+${comision.toStringAsFixed(0)} CUP',
+        style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.w700, color: AppColors.warm, fontSize: 13),
+      ),
+    );
+  }
+
+  Widget _buildRetiros() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _retiros,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _tarjetaVacia('No se pudieron cargar tus retiros.');
+        }
+        if (!snapshot.hasData) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final retiros = snapshot.data!;
+        if (retiros.isEmpty) {
+          return _tarjetaVacia('Aún no has solicitado retiros.');
+        }
+        final total = retiros.length;
+        final mostrar = _verTodosRetiros ? retiros : retiros.take(5).toList();
+        return Container(
+          decoration: BoxDecoration(
+            color: _colorSuperficie,
+            borderRadius: BorderRadius.circular(kCardRadius),
+            border: Border.all(color: _colorBorde),
+          ),
+          child: Column(
+            children: [
+              ...mostrar.map((r) {
+                final pagado = r['estado'] == 'pagado';
+                return ListTile(
+                  leading: Icon(
+                    pagado
+                        ? Icons.check_circle_rounded
+                        : Icons.schedule_rounded,
+                    color: pagado ? AppColors.success : Colors.orange,
+                  ),
+                  title: Text(
+                    '${(r['monto_cup'] as num).toStringAsFixed(0)} CUP',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w600, color: _colorTexto),
+                  ),
+                  trailing: Text(
+                    pagado ? 'Pagado' : 'Pendiente',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: pagado ? AppColors.success : Colors.orange),
+                  ),
+                );
+              }),
+              if (total > 5)
+                TextButton(
+                  onPressed: () =>
+                      setState(() => _verTodosRetiros = !_verTodosRetiros),
+                  child:
+                      Text(_verTodosRetiros ? 'Ver menos' : 'Ver todos ($total)'),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _tarjetaVacia(String texto) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _colorSuperficie,
+        borderRadius: BorderRadius.circular(kCardRadius),
+        border: Border.all(color: _colorBorde),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Center(
+        child: Text(texto,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.plusJakartaSans(
+                color: _colorTextoSecundario, fontSize: 13)),
+      ),
+    );
+  }
+
+  Widget _buildEliminarCuenta() {
+    return Card(
+      color: Colors.red.withOpacity(_esOscuro ? 0.10 : 0.05),
+      child: ListTile(
+        leading: _eliminandoCuenta
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : const CircleAvatar(
+                backgroundColor: Colors.red,
+                child: Icon(Icons.person_remove_outlined,
+                    color: Colors.white, size: 18),
+              ),
+        title: Text(
+          'Eliminar cuenta de afiliado',
+          style: GoogleFonts.plusJakartaSans(
+              fontWeight: FontWeight.w600, color: Colors.red),
+        ),
+        subtitle: const Text(
+            'Bloqueado si tienes un retiro pendiente de aprobación'),
+        onTap: _eliminandoCuenta ? null : _confirmarEliminarCuenta,
       ),
     );
   }
@@ -725,16 +777,46 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
     );
     if (confirmar != true) return;
 
+    setState(() => _eliminandoCuenta = true);
     try {
-      await _tiendasService.darDeBajaAfiliado(_afiliado!['id_afiliado']);
-      if (mounted) {
+      final idAfiliado = _afiliado!['id_afiliado'];
+      await _tiendasService.darDeBajaAfiliado(idAfiliado);
+
+      // FIX: no confiamos en que la llamada anterior no haya lanzado
+      // una excepción -- volvemos a preguntar si el afiliado sigue
+      // existiendo. Si sigue ahí, algo en el backend (RLS, un WHERE
+      // que no matchea, la regla de "retiro pendiente") está
+      // bloqueando la baja sin avisar, y hay que decirlo claro.
+      final sigueExistiendo = await _tiendasService.obtenerMiAfiliado();
+      if (!mounted) return;
+
+      if (sigueExistiendo != null) {
+        setState(() => _eliminandoCuenta = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Cuenta de afiliado eliminada')),
+          const SnackBar(
+            content: Text(
+              'No se pudo eliminar tu cuenta de afiliado. Es posible que '
+              'tengas un retiro pendiente de aprobación -- espera a que se '
+              'resuelva e inténtalo de nuevo.',
+            ),
+            duration: Duration(seconds: 5),
+          ),
         );
-        Navigator.of(context).pop();
+        return;
       }
+
+      // FIX (persistencia): limpia el estado global YA, en el mismo
+      // frame -- sin esto, Home/Mi Perfil seguían mostrando el chip
+      // "Afiliado" y el acceso al perfil hasta reiniciar la app.
+      AfiliadoStateService.instance.limpiar();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cuenta de afiliado eliminada')),
+      );
+      Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
+        setState(() => _eliminandoCuenta = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('$e'.replaceFirst('Exception: ', ''))),
         );
@@ -745,11 +827,14 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
   Widget _filaDato(IconData icon, String etiqueta, String valor) {
     return Row(
       children: [
-        Icon(icon, size: 18, color: AppColors.inkSecundarioLight),
+        Icon(icon, size: 18, color: _colorTextoSecundario),
         const SizedBox(width: 10),
         Text('$etiqueta: ',
-            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
-        Expanded(child: Text(valor, style: GoogleFonts.plusJakartaSans())),
+            style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w600, color: _colorTexto)),
+        Expanded(
+            child: Text(valor,
+                style: GoogleFonts.plusJakartaSans(color: _colorTexto))),
       ],
     );
   }

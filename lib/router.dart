@@ -63,10 +63,11 @@ import 'screens/valorar_pedido_screen.dart';
 import 'screens/afiliado_registro_screen.dart';
 import 'screens/afiliado_dashboard_screen.dart';
 import 'screens/afiliado_perfil_screen.dart';
-import 'screens/admin_dashboard_screen.dart';
 import 'screens/comprador_dashboard_screen.dart';
 import 'screens/mi_perfil_screen.dart';
 import 'screens/vendedor_dashboard_screen.dart';
+import 'screens/notifications_screen.dart';
+import 'screens/mis_pedidos_screen.dart';
 import 'widgets/modal_pago_plan.dart';
 import 'services/tiendas_service.dart';
 
@@ -84,7 +85,14 @@ enum _DestinoVendedor { ventas, miTienda, planes }
 /// sesión, no el Map completo de la tienda.
 class _CargarMiTiendaYMostrar extends StatelessWidget {
   final _DestinoVendedor destino;
-  const _CargarMiTiendaYMostrar({required this.destino});
+  // FIX: cuando la notificación es de stock bajo/agotado, viene con
+  // este id -- se lo pasamos a PanelVendedorScreen para que abra el
+  // modal de edición de ESE producto automáticamente.
+  final String? idProductoParaEditar;
+  const _CargarMiTiendaYMostrar({
+    required this.destino,
+    this.idProductoParaEditar,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -115,7 +123,10 @@ class _CargarMiTiendaYMostrar extends StatelessWidget {
           case _DestinoVendedor.ventas:
             return GestionarVentasScreen(tienda: tienda);
           case _DestinoVendedor.miTienda:
-            return PanelVendedorScreen(tienda: tienda);
+            return PanelVendedorScreen(
+              tienda: tienda,
+              idProductoParaEditar: idProductoParaEditar,
+            );
           case _DestinoVendedor.planes:
             return GestionarPlanesScreen(tienda: tienda);
         }
@@ -203,8 +214,9 @@ final GoRouter router = GoRouter(
     ),
     GoRoute(
       path: '/vendedor/mi-tienda',
-      builder: (context, state) => const _CargarMiTiendaYMostrar(
+      builder: (context, state) => _CargarMiTiendaYMostrar(
         destino: _DestinoVendedor.miTienda,
+        idProductoParaEditar: state.uri.queryParameters['producto'],
       ),
     ),
     GoRoute(
@@ -233,6 +245,15 @@ final GoRouter router = GoRouter(
       builder: (context, state) => const MiPerfilScreen(),
     ),
     GoRoute(
+      // FIX: esta ruta faltaba por completo -- antes NotificationsScreen
+      // se abría con Navigator.push() directo (sin pasar por go_router),
+      // por eso nunca se había notado que no estaba registrada. Al
+      // unificar la campanita para que use context.push('/notificaciones')
+      // como el resto de la app, apareció el "Página no encontrada".
+      path: '/notificaciones',
+      builder: (context, state) => const NotificationsScreen(),
+    ),
+    GoRoute(
       path: '/vendedor/dashboard',
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>?;
@@ -241,12 +262,15 @@ final GoRouter router = GoRouter(
       },
     ),
     GoRoute(
-      path: '/admin/dashboard',
-      builder: (context, state) => const AdminDashboardScreen(),
-    ),
-    GoRoute(
       path: '/comprador/dashboard',
       builder: (context, state) => const CompradorDashboardScreen(),
+    ),
+    GoRoute(
+      // Tarea 1: pantalla "Mis Pedidos por Tienda" del comprador --
+      // agrupa por tienda, cuenta regresiva de 72h y cancelación
+      // manual (ver mis_pedidos_screen.dart).
+      path: '/mis-pedidos',
+      builder: (context, state) => const MisPedidosScreen(),
     ),
     GoRoute(
       path: '/afiliado/dashboard',

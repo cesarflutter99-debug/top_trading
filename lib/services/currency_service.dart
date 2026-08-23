@@ -1,17 +1,24 @@
 // currency_service.dart
 //
 // Un único toggle global USD/CUP que se comparte entre TODAS las
-// pantallas (modal de producto, tienda, carrito), igual que pediste.
-// El vendedor siempre publica en USD (regla de negocio); esto solo
-// afecta cómo se muestra el precio al comprador.
+// pantallas (modal de producto, tienda, carrito). El vendedor siempre
+// publica en USD (regla de negocio); esto solo afecta cómo se muestra
+// el precio al comprador.
+//
+// La tasa CUP/USD se lee de la tabla `tasas_cambio` de Supabase (la
+// misma que llena la Edge Function cada 12h consultando a ElToque) --
+// nunca se llama a ElToque directamente desde el cliente.
 
 import 'package:flutter/material.dart';
+import 'tasa_cambio_service.dart';
 
 enum Moneda { usd, cup }
 
 class CurrencyService extends ChangeNotifier {
   static final CurrencyService instance = CurrencyService._();
   CurrencyService._();
+
+  final _tasaCambioService = TasaCambioService();
 
   Moneda _moneda = Moneda.usd;
   double? _tasaCupPorUsd;
@@ -28,15 +35,14 @@ class CurrencyService extends ChangeNotifier {
     }
   }
 
-  /// Consulta la API externa de tasa de cambio (referencial del día,
-  /// según el ERS). Cachea el valor para no pedirlo en cada widget.
-  /// TODO: reemplazar la URL por el endpoint real que vayan a usar
-  /// (ej. eltoque.com u otra fuente de tasa informal cubana).
+  /// Lee la tasa USD -> CUP desde la tabla `tasas_cambio` de Supabase
+  /// (llenada por la Edge Function cada 12h desde ElToque). Si todavía
+  /// no hay datos guardados o falla la consulta, usa 320 como valor de
+  /// respaldo para no dejar la UI sin número.
   Future<void> _cargarTasa() async {
     try {
-      // final res = await http.get(Uri.parse('https://TU_API_DE_TASA/hoy'));
-      // _tasaCupPorUsd = jsonDecode(res.body)['usd_to_cup'];
-      _tasaCupPorUsd ??= 320; // valor de respaldo si la API falla
+      final valor = await _tasaCambioService.obtenerValorUsdCup();
+      _tasaCupPorUsd = valor ?? (_tasaCupPorUsd ?? 320);
       _tasaActualizada = DateTime.now();
       notifyListeners();
     } catch (_) {
@@ -56,9 +62,7 @@ class CurrencyService extends ChangeNotifier {
 
 /// Segmented control pequeño para poner en cualquier AppBar o header.
 /// Mismo widget en modal, tienda y carrito -> mismo look siempre.
-/// Ahora sigue el tema activo (antes usaba grey.shade200/blanco fijos,
-/// por eso se veía mal -- una caja gris clara flotando -- en modo
-/// oscuro).
+/// Sigue el tema activo (claro/oscuro).
 class CurrencyToggle extends StatelessWidget {
   const CurrencyToggle({super.key});
 
@@ -137,8 +141,6 @@ class CurrencyToggle extends StatelessWidget {
 
 /// Precio formateado que se re-pinta solo cuando cambia el toggle o la
 /// tasa. Úsalo en vez de escribir "$X USD" a mano en cualquier pantalla.
-/// El verde se ajusta según el modo (uno más claro en oscuro) para
-/// mantener buen contraste en ambos casos.
 class PriceTag extends StatelessWidget {
   final double montoUsd;
   final TextStyle? style;

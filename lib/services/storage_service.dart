@@ -91,6 +91,45 @@ class StorageService {
     return supabase.storage.from('planes').getPublicUrl(nombreArchivo);
   }
 
+  /// Sube la foto de perfil personal del usuario (no la de su tienda)
+  /// al bucket público "perfiles" y devuelve la URL pública. Se guarda
+  /// en auth.users (user_metadata) desde mi_perfil_screen.dart, no en
+  /// ninguna tabla -- por eso no hace falta una columna nueva en SQL.
+  /// Requiere crear el bucket "perfiles" (público) en Supabase Storage.
+  Future<String> subirFotoPerfil({
+    required File archivo,
+    required String uid,
+  }) async {
+    final nombreArchivo =
+        '$uid/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    await supabase.storage.from('perfiles').upload(
+          nombreArchivo,
+          archivo,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return supabase.storage.from('perfiles').getPublicUrl(nombreArchivo);
+  }
+
+  /// Sube la foto de portada del perfil personal (fondo del header de
+  /// "Mi Perfil"). Mismo bucket "perfiles" que subirFotoPerfil().
+  Future<String> subirPortadaPerfil({
+    required File archivo,
+    required String uid,
+  }) async {
+    final nombreArchivo =
+        '$uid/portada_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    await supabase.storage.from('perfiles').upload(
+          nombreArchivo,
+          archivo,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return supabase.storage.from('perfiles').getPublicUrl(nombreArchivo);
+  }
+
   /// Sube la foto opcional que el comprador adjunta al valorar un
   /// pedido, al bucket público "valoraciones", y devuelve la URL para
   /// guardar en valoraciones.foto_url.

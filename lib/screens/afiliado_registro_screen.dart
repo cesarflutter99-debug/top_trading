@@ -19,6 +19,7 @@ import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
 import '../services/whatsapp_service.dart';
+import '../services/afiliado_state_service.dart';
 
 class AfiliadoRegistroScreen extends StatefulWidget {
   const AfiliadoRegistroScreen({super.key});
@@ -78,6 +79,15 @@ class _AfiliadoRegistroScreenState extends State<AfiliadoRegistroScreen> {
         telefono: _telefonoCtrl.text.trim(),
         numeroTarjeta: _tarjetaCtrl.text.trim(),
       );
+
+      // FIX (persistencia): antes esta pantalla y el resto de la app
+      // (Home, Mi Perfil) cada una cacheaba su propia copia de
+      // "mi afiliado" -- así que recién registrado, el drawer de Home
+      // seguía mostrando "Programa de afiliados" (como si no lo
+      // fueras) hasta cerrar y reabrir la app. Ahora se refresca el
+      // estado global compartido para que todas las pantallas que lo
+      // escuchan se enteren en el mismo frame.
+      await AfiliadoStateService.instance.refrescar();
 
       // Avisamos al admin por WhatsApp con el código, si hay un
       // número activo configurado. Si no hay, el registro ya quedó

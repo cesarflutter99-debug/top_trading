@@ -1,11 +1,20 @@
 // store_screen_flow.dart
 //
-// Rediseño según referencia visual: banner + avatar superpuesto,
-// stats (rating / cerca / ventas), botón "Cómo llegar", catálogo con
-// orden seleccionable, y barra inferior "Ver Carrito" con total en
-// vivo. Cantidad de cada producto arranca en 0 -- el botón "Añadir"
-// está deshabilitado hasta que el usuario elige una cantidad > 0,
-// evitando que se sumen productos sin querer mientras se explora.
+// REDISEÑO (2026-08):
+//   - FIX principal: la portada mostraba `logo_url` (pensado para un
+//     círculo chico) estirado como banner ancho -- se veía deformado/
+//     pixelado. Ahora usa `imagen_portada` (la que ya sube
+//     gestionar_tienda_screen.dart) como banner real, y el logo va
+//     superpuesto en círculo abajo-izquierda, mismo patrón visual que
+//     GestionarTiendaScreen._buildPortadaYLogo.
+//   - Header más compacto: menos capas de sombra, info agrupada en una
+//     sola tarjeta (nombre + badges + ubicación + descripción + stats +
+//     acciones) en vez de bloques sueltos.
+//   - Tarjetas de producto más chicas y simples: sin BackdropFilter
+//     (pesado y "ruidoso" visualmente), un botón circular de "agregar
+//     rápido" (+1) sobre la foto en vez del selector +/- completo
+//     dentro de la tarjeta -- para elegir más de 1 se abre el detalle
+//     (ya existía ese modal, ahora es el único camino, más simple).
 
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
@@ -26,7 +35,6 @@ class CartService extends ChangeNotifier {
   static final CartService instance = CartService._();
   CartService._();
 
-  // idProducto -> {idTienda, cantidad}
   final Map<String, Map<String, dynamic>> _items = {};
   DateTime? _createdAt;
 
@@ -38,8 +46,6 @@ class CartService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Fija la cantidad exacta de un item (usado en CartScreen al editar
-  /// con +/-). Si llega a 0, el producto se quita del carrito.
   void setCantidad(String idProducto, String idTienda, int cantidad) {
     if (cantidad <= 0) {
       _items.remove(idProducto);
@@ -54,9 +60,6 @@ class CartService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Vacía todos los items de una tienda puntual (se usa al completar
-  /// la compra: ese pedido ya quedó registrado, no debe seguir en el
-  /// carrito).
   void limpiarTienda(String idTienda) {
     _items.removeWhere((_, v) => v['idTienda'] == idTienda);
     notifyListeners();
@@ -202,26 +205,21 @@ class _StoreScreenState extends State<StoreScreen> {
     });
   }
 
-  void _agregarAlCarrito(Map<String, dynamic> producto) {
-    final cantidad = _cantidad(producto['id_producto']);
-    if (cantidad <= 0) return;
-    CartService.instance
-        .add(producto['id_producto'], widget.idTienda, cantidad);
+  /// Agregado rápido: suma 1 unidad directamente desde la tarjeta, sin
+  /// pasar por el detalle. Si el usuario quiere más de 1, abre el
+  /// detalle (_abrirDetalleProducto) donde sí hay selector completo.
+  void _agregarRapido(Map<String, dynamic> producto) {
+    final disponible = (producto['cantidad_disponible'] as num? ?? 0).toInt();
+    if (disponible <= 0) return;
+    CartService.instance.add(producto['id_producto'], widget.idTienda, 1);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Agregado: ${cantidad}x ${producto['nombre']}'),
+        content: Text('Agregado: ${producto['nombre']}'),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
-        // La barra "Ver Carrito" queda fija en bottom:16 y ocupa unos
-        // ~64px de alto -- este margen levanta el SnackBar por encima
-        // de ella en vez de superponerse (siempre va a estar visible
-        // en este punto, ya que acabamos de agregar un producto).
         margin: const EdgeInsets.only(bottom: 90, left: 16, right: 16),
       ),
     );
-    // Reseteamos el selector de ESE producto a 0, listo para la
-    // siguiente decisión del usuario -- ya quedó guardado en el carrito.
-    setState(() => _cantidadSeleccionada[producto['id_producto']] = 0);
   }
 
   void _abrirDetalleProducto(Map<String, dynamic> producto) {
@@ -262,16 +260,27 @@ class _StoreScreenState extends State<StoreScreen> {
             (b['precio_usd'] as num).compareTo(a['precio_usd'] as num));
         break;
       case _OrdenCatalogo.relevancia:
-        break; // orden natural que devuelve la query
+        break;
     }
     return lista;
   }
+
+  bool get _esOscuro => Theme.of(context).brightness == Brightness.dark;
+  Color get _colorTexto => _esOscuro ? const Color(0xFFF5F5F4) : AppColors.ink;
+  Color get _colorTextoSecundario =>
+      _esOscuro ? AppColors.inkSecundarioDark : AppColors.inkSecundarioLight;
+  Color get _colorSuperficie =>
+      _esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight;
+  Color get _colorBorde =>
+      (_esOscuro ? AppColors.borderDark : AppColors.borderLight)
+          .withOpacity(0.6);
 
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
 
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: AnimatedBuilder(
         animation: CartService.instance,
         builder: (context, _) {
@@ -283,7 +292,7 @@ class _StoreScreenState extends State<StoreScreen> {
                 slivers: [
                   SliverAppBar(
                     pinned: true,
-                    backgroundColor: AppColors.backgroundLight,
+                    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
                     elevation: 0,
                     scrolledUnderElevation: 1,
                     surfaceTintColor: Colors.transparent,
@@ -304,110 +313,6 @@ class _StoreScreenState extends State<StoreScreen> {
                       ),
                     ],
                   ),
-                  // ---------- Tarjeta de foto flotante ----------
-                  // Ya no es un banner borde a borde: es una tarjeta
-                  // independiente con margen, esquinas redondeadas y
-                  // sombra propia -- el efecto "flotando" real, en vez
-                  // de intentar fundir una foto edge-to-edge con el
-                  // fondo con un degradado parche.
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: Container(
-                        height: 220,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(28),
-                          boxShadow: [
-                            // Sombra de contacto: cercana y definida,
-                            // simula dónde "tocaría" la tarjeta si
-                            // estuviera apoyada.
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.10),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                            // Sombra ambiental: amplia, muy difusa y con
-                            // spread negativo (más chica que la caja) --
-                            // es lo que realmente vende el efecto
-                            // "flotando", en vez de un cuadro plano con
-                            // borde oscuro.
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.12),
-                              blurRadius: 32,
-                              offset: const Offset(0, 18),
-                              spreadRadius: -6,
-                            ),
-                            // Toque de color de marca, muy sutil -- evita
-                            // que la sombra se vea gris/genérica y la
-                            // ata visualmente a la paleta de la app.
-                            BoxShadow(
-                              color: AppColors.primary.withOpacity(0.10),
-                              blurRadius: 40,
-                              offset: const Offset(0, 22),
-                              spreadRadius: -10,
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(28),
-                          child: FutureBuilder<Map<String, dynamic>>(
-                            future: _tiendaFuture,
-                            builder: (context, snapshot) {
-                              final t = snapshot.data;
-                              final fotoPerfil = t?['logo_url'] as String?;
-                              return Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  (fotoPerfil != null && fotoPerfil.isNotEmpty)
-                                      ? Image.network(
-                                          fotoPerfil,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) =>
-                                              const _PortadaIlustracion(),
-                                        )
-                                      : const _PortadaIlustracion(),
-                                  // Brillo superior sutil -- simula luz
-                                  // tocando la tarjeta, refuerza la
-                                  // sensación de superficie elevada.
-                                  const DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                        colors: [
-                                          Color(0x26FFFFFF),
-                                          Colors.transparent,
-                                        ],
-                                        stops: [0, 0.25],
-                                      ),
-                                    ),
-                                  ),
-                                  // Degradado decorativo inferior -- le da
-                                  // profundidad a la tarjeta incluso sin
-                                  // texto encima (ya no hace falta para
-                                  // legibilidad, el nombre vive abajo).
-                                  const DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                        colors: [
-                                          Colors.transparent,
-                                          Colors.transparent,
-                                          Color(0x3D000000),
-                                        ],
-                                        stops: [0, 0.6, 1],
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
                   SliverToBoxAdapter(
                     child: FutureBuilder<Map<String, dynamic>>(
                       future: _tiendaFuture,
@@ -419,200 +324,30 @@ class _StoreScreenState extends State<StoreScreen> {
                           );
                         }
                         final t = snapshot.data!;
-                        final esVip = (t['plan'] as String? ?? '') == 'premium';
-                        return Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Wrap(
-                                      crossAxisAlignment:
-                                          WrapCrossAlignment.center,
-                                      spacing: 6,
-                                      runSpacing: 4,
-                                      children: [
-                                        Text(
-                                          t['nombre'] ?? '',
-                                          style: const TextStyle(
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        if (t['estado'] == 'active')
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 8, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: Colors.green.shade50,
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(Icons.verified,
-                                                    size: 14,
-                                                    color:
-                                                        Colors.green.shade700),
-                                                const SizedBox(width: 3),
-                                                Text('Verificada',
-                                                    style: TextStyle(
-                                                        fontSize: 11,
-                                                        color: Colors
-                                                            .green.shade700)),
-                                              ],
-                                            ),
-                                          ),
-                                        // VIP se movió acá, junto al
-                                        // nombre -- ya no compite con
-                                        // la foto de portada.
-                                        if (esVip)
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 10, vertical: 5),
-                                            decoration: BoxDecoration(
-                                              gradient: const LinearGradient(
-                                                begin: Alignment.topLeft,
-                                                end: Alignment.bottomRight,
-                                                colors: [
-                                                  Color(0xFFF7D774),
-                                                  Color(0xFFD4A017),
-                                                ],
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: const Color(0xFFD4A017)
-                                                      .withOpacity(0.35),
-                                                  blurRadius: 8,
-                                                  offset: const Offset(0, 2),
-                                                ),
-                                              ],
-                                            ),
-                                            child: const Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(Icons.star_rounded,
-                                                    size: 12,
-                                                    color: Colors.white),
-                                                SizedBox(width: 4),
-                                                Text('TIENDA VIP',
-                                                    style: TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: 10.5,
-                                                        fontWeight:
-                                                            FontWeight.w800)),
-                                              ],
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                  // Favorito -- se movió acá desde el
-                                  // banner, junto al nombre.
-                                  if (!_cargandoFavorito)
-                                    IconButton(
-                                      icon: Icon(
-                                        _esFavorita
-                                            ? Icons.favorite_rounded
-                                            : Icons.favorite_border_rounded,
-                                        color: _esFavorita
-                                            ? Colors.redAccent
-                                            : AppColors.inkSecundarioLight,
-                                      ),
-                                      onPressed: _toggleFavorito,
-                                    ),
-                                ],
-                              ),
-                              if (t['municipio'] != null)
-                                Text(
-                                  '${t['municipio']}, ${t['provincia'] ?? ''}',
-                                  style: TextStyle(
-                                      color: Colors.grey.shade600,
-                                      fontSize: 13),
-                                ),
-                              if ((t['descripcion'] ?? '')
-                                  .toString()
-                                  .isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                Text(
-                                  t['descripcion'],
-                                  style: const TextStyle(
-                                      color: AppColors.ink,
-                                      fontSize: 14,
-                                      height: 1.4),
-                                ),
-                              ],
-                              const SizedBox(height: 12),
-                              const Divider(height: 1),
-                              const SizedBox(height: 12),
-
-                              // Stats: rating / distancia-cerca / ventas
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: _statTile(
-                                      valor: t['promedio_estrellas'] != null
-                                          ? (t['promedio_estrellas'] as num)
-                                              .toStringAsFixed(1)
-                                          : '-',
-                                      etiqueta: 'Puntaje',
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: _statTile(
-                                      valor: widget.distanciaKm != null
-                                          ? '${widget.distanciaKm!.toStringAsFixed(1)}km'
-                                          : 'Cerca',
-                                      etiqueta: widget.distanciaKm != null
-                                          ? 'Distancia'
-                                          : '',
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: FutureBuilder<int>(
-                                      future: _ventasFuture,
-                                      builder: (context, snapshot) => _statTile(
-                                        valor: snapshot.hasData
-                                            ? '${snapshot.data}+'
-                                            : '-',
-                                        etiqueta: 'Ventas (mes)',
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: () => _comoLlegar(
-                                    (t['latitud'] as num?)?.toDouble(),
-                                    (t['longitud'] as num?)?.toDouble(),
-                                  ),
-                                  icon: const Icon(Icons.directions_rounded,
-                                      size: 18),
-                                  label: const Text('Cómo llegar'),
-                                ),
-                              ),
-                            ],
-                          ),
+                        return Column(
+                          children: [
+                            _buildPortadaYLogo(t, primary),
+                            const SizedBox(height: 44),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                              child: _buildTarjetaInfo(t, primary),
+                            ),
+                          ],
                         );
                       },
                     ),
                   ),
                   SliverToBoxAdapter(
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('Catálogo',
+                          Text('Catálogo',
                               style: TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 16)),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: _colorTexto)),
                           DropdownButton<_OrdenCatalogo>(
                             value: _orden,
                             underline: const SizedBox(),
@@ -649,6 +384,19 @@ class _StoreScreenState extends State<StoreScreen> {
                         );
                       }
                       final productos = _ordenar(snapshot.data!);
+                      if (productos.isEmpty) {
+                        return SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.all(32),
+                            child: Center(
+                              child: Text('Esta tienda no tiene productos '
+                                  'todavía',
+                                  style: TextStyle(
+                                      color: _colorTextoSecundario)),
+                            ),
+                          ),
+                        );
+                      }
                       return SliverPadding(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
                         sliver: SliverGrid(
@@ -657,31 +405,25 @@ class _StoreScreenState extends State<StoreScreen> {
                             crossAxisCount: 2,
                             mainAxisSpacing: 12,
                             crossAxisSpacing: 12,
-                            childAspectRatio: 0.56,
+                            childAspectRatio: 0.72,
                           ),
                           delegate: SliverChildBuilderDelegate(
                             (context, i) {
                               final p = productos[i];
                               final esDestacado = p['id_producto'] ==
                                   widget.productoDestacadoId;
-                              final idProducto = p['id_producto'] as String;
-                              final disponible =
-                                  (p['cantidad_disponible'] as num? ?? 0)
-                                      .toInt();
                               return Container(
                                 key: esDestacado ? _destacadoKey : null,
-                                child: _ProductoCardCuadrada(
+                                child: _ProductoCardChica(
                                   producto: p,
                                   destacado: esDestacado,
                                   primary: primary,
+                                  colorSuperficie: _colorSuperficie,
+                                  colorBorde: _colorBorde,
+                                  colorTexto: _colorTexto,
+                                  colorTextoSecundario: _colorTextoSecundario,
                                   onTap: () => _abrirDetalleProducto(p),
-                                  cantidadSeleccionada: _cantidad(idProducto),
-                                  onQuitar: () => _cambiarCantidad(
-                                      idProducto, -1, disponible),
-                                  onAgregarUno: () => _cambiarCantidad(
-                                      idProducto, 1, disponible),
-                                  onAgregarAlCarrito: () =>
-                                      _agregarAlCarrito(p),
+                                  onAgregarRapido: () => _agregarRapido(p),
                                 ),
                               );
                             },
@@ -693,8 +435,6 @@ class _StoreScreenState extends State<StoreScreen> {
                   ),
                 ],
               ),
-
-              // Barra inferior "Ver Carrito"
               if (totalItemsTienda > 0)
                 Positioned(
                   left: 16,
@@ -706,8 +446,8 @@ class _StoreScreenState extends State<StoreScreen> {
                       double total = 0;
                       if (snapshot.hasData) {
                         for (final p in snapshot.data!) {
-                          final cant =
-                              CartService.instance.cantidadDe(p['id_producto']);
+                          final cant = CartService.instance
+                              .cantidadDe(p['id_producto']);
                           total += cant * (p['precio_usd'] as num).toDouble();
                         }
                       }
@@ -716,7 +456,10 @@ class _StoreScreenState extends State<StoreScreen> {
                         child: FilledButton(
                           style: FilledButton.styleFrom(
                             padding: const EdgeInsets.all(16),
-                            backgroundColor: Colors.black,
+                            backgroundColor: primary,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16)),
+                            elevation: 4,
                           ),
                           onPressed: () async {
                             if (!await requireAuth(context)) return;
@@ -727,6 +470,8 @@ class _StoreScreenState extends State<StoreScreen> {
                             animation: CurrencyService.instance,
                             builder: (context, _) => Text(
                               'Ver Carrito (${CurrencyService.instance.formatear(total)})',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w700),
                             ),
                           ),
                         ),
@@ -741,63 +486,318 @@ class _StoreScreenState extends State<StoreScreen> {
     );
   }
 
+  // -----------------------------------------------------------------
+  // PORTADA + LOGO -- mismo patrón visual que GestionarTiendaScreen:
+  // portada real (imagen_portada) con esquinas redondeadas y sombra
+  // "flotante" sutil, logo circular superpuesto abajo-izquierda. Ya
+  // NO se usa el logo estirado como banner.
+  // -----------------------------------------------------------------
+  Widget _buildPortadaYLogo(Map<String, dynamic> t, Color primary) {
+    final portada = t['imagen_portada'] as String?;
+    final logo = t['logo_url'] as String?;
+    final placeholder = _esOscuro ? const Color(0xFF2A2A2A) : Colors.grey.shade200;
+    final anilloLogo = _esOscuro ? AppColors.surfaceDark : Colors.white;
+
+    return SizedBox(
+      height: 200,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            child: Container(
+              height: 160,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(_esOscuro ? 0.35 : 0.10),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (portada != null && portada.isNotEmpty)
+                      Image.network(portada,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              const _PortadaIlustracion())
+                    else
+                      const _PortadaIlustracion(),
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.30),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 32,
+            bottom: 0,
+            child: Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: anilloLogo, width: 3.5),
+                color: placeholder,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.18),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: (logo != null && logo.isNotEmpty)
+                    ? Image.network(logo,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            Icon(Icons.storefront_rounded, color: primary))
+                    : Icon(Icons.storefront_rounded, color: primary, size: 30),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // -----------------------------------------------------------------
+  // TARJETA DE INFO -- agrupa nombre, badges, ubicación, descripción,
+  // stats y acciones en un solo bloque (antes eran varias secciones
+  // sueltas apiladas).
+  // -----------------------------------------------------------------
+  Widget _buildTarjetaInfo(Map<String, dynamic> t, Color primary) {
+    final esVip = (t['plan'] as String? ?? '') == 'premium';
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(kCardRadius),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Container(
+          decoration: BoxDecoration(
+            color: _colorSuperficie,
+            borderRadius: BorderRadius.circular(kCardRadius),
+            border: Border.all(color: _colorBorde),
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        Text(t['nombre'] ?? '',
+                            style: TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold,
+                                color: _colorTexto)),
+                        if (t['estado'] == 'active')
+                          _chip(Icons.verified_rounded, 'Verificada',
+                              AppColors.success),
+                        if (esVip)
+                          _chip(Icons.star_rounded, 'VIP',
+                              const Color(0xFFD4A017)),
+                      ],
+                    ),
+                  ),
+                  if (!_cargandoFavorito)
+                    IconButton(
+                      icon: Icon(
+                        _esFavorita
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        color: _esFavorita
+                            ? Colors.redAccent
+                            : _colorTextoSecundario,
+                      ),
+                      onPressed: _toggleFavorito,
+                    ),
+                ],
+              ),
+              if (t['municipio'] != null) ...[
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Icon(Icons.place_outlined,
+                        size: 13, color: _colorTextoSecundario),
+                    const SizedBox(width: 4),
+                    Text('${t['municipio']}, ${t['provincia'] ?? ''}',
+                        style: TextStyle(
+                            color: _colorTextoSecundario, fontSize: 12.5)),
+                  ],
+                ),
+              ],
+              if ((t['descripcion'] ?? '').toString().isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(t['descripcion'],
+                    style: TextStyle(
+                        color: _colorTexto, fontSize: 13.5, height: 1.4)),
+              ],
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  _statPill(
+                    icon: Icons.star_rounded,
+                    color: const Color(0xFFD4AF37),
+                    valor: t['promedio_estrellas'] != null
+                        ? (t['promedio_estrellas'] as num).toStringAsFixed(1)
+                        : '—',
+                  ),
+                  const SizedBox(width: 8),
+                  if (widget.distanciaKm != null)
+                    _statPill(
+                      icon: Icons.near_me_rounded,
+                      color: primary,
+                      valor: '${widget.distanciaKm!.toStringAsFixed(1)} km',
+                    ),
+                  if (widget.distanciaKm != null) const SizedBox(width: 8),
+                  FutureBuilder<int>(
+                    future: _ventasFuture,
+                    builder: (context, snapshot) => _statPill(
+                      icon: Icons.shopping_bag_rounded,
+                      color: AppColors.success,
+                      valor: snapshot.hasData
+                          ? '${snapshot.data}+ ventas'
+                          : '— ventas',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _comoLlegar(
+                    (t['latitud'] as num?)?.toDouble(),
+                    (t['longitud'] as num?)?.toDouble(),
+                  ),
+                  icon: const Icon(Icons.directions_rounded, size: 18),
+                  label: const Text('Cómo llegar'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(IconData icon, String texto, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(_esOscuro ? 0.18 : 0.10),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 3),
+          Text(texto,
+              style: TextStyle(
+                  fontSize: 10.5, fontWeight: FontWeight.w700, color: color)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statPill({
+    required IconData icon,
+    required Color color,
+    required String valor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(_esOscuro ? 0.16 : 0.09),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 4),
+          Text(valor,
+              style: TextStyle(
+                  fontSize: 11.5, fontWeight: FontWeight.w700, color: color)),
+        ],
+      ),
+    );
+  }
+
   Widget _botonToolbar({
     required IconData icon,
     required VoidCallback onPressed,
   }) {
     return Material(
-      color: Colors.black.withOpacity(0.05),
+      color: (_esOscuro ? Colors.white : Colors.black).withOpacity(0.06),
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onPressed,
         child: Padding(
           padding: const EdgeInsets.all(8),
-          child: Icon(icon, color: AppColors.ink, size: 20),
+          child: Icon(icon, color: _colorTexto, size: 20),
         ),
       ),
     );
   }
-
-  Widget _statTile({required String valor, required String etiqueta}) {
-    return Column(
-      children: [
-        Text(valor,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        if (etiqueta.isNotEmpty)
-          Text(etiqueta,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-      ],
-    );
-  }
 }
 
-/// Tarjeta cuadrada de producto para la grilla, estilo Home: foto,
-/// nombre, precio, stock disponible, y AHORA también un selector de
-/// cantidad (-/+) y botón "Agregar" inline -- ya no hace falta abrir
-/// el detalle solo para sumar algo al carrito. Tocar la foto/nombre
-/// sigue abriendo el detalle completo; los controles de abajo son
-/// zona táctil aparte (un botón anidado dentro del InkWell del card
-/// consume su propio tap y no dispara el onTap del card).
-class _ProductoCardCuadrada extends StatelessWidget {
+/// Tarjeta de producto chica y simple para la grilla: foto, nombre,
+/// precio, estado de stock, y un botón circular de agregado rápido.
+/// Sin blur ni sombras apiladas -- borde sutil + una sombra suave.
+class _ProductoCardChica extends StatelessWidget {
   final Map<String, dynamic> producto;
   final bool destacado;
   final Color primary;
+  final Color colorSuperficie;
+  final Color colorBorde;
+  final Color colorTexto;
+  final Color colorTextoSecundario;
   final VoidCallback onTap;
-  final int cantidadSeleccionada;
-  final VoidCallback onQuitar;
-  final VoidCallback onAgregarUno;
-  final VoidCallback onAgregarAlCarrito;
+  final VoidCallback onAgregarRapido;
 
-  const _ProductoCardCuadrada({
+  const _ProductoCardChica({
     required this.producto,
     required this.destacado,
     required this.primary,
+    required this.colorSuperficie,
+    required this.colorBorde,
+    required this.colorTexto,
+    required this.colorTextoSecundario,
     required this.onTap,
-    required this.cantidadSeleccionada,
-    required this.onQuitar,
-    required this.onAgregarUno,
-    required this.onAgregarAlCarrito,
+    required this.onAgregarRapido,
   });
 
   @override
@@ -806,228 +806,144 @@ class _ProductoCardCuadrada extends StatelessWidget {
     final sinStock = disponible <= 0;
     final bajoStock = !sinStock && disponible < 10;
 
-    // FIX overflow ("BOTTOM OVERFLOWED BY 15 PIXELS"): antes la foto
-    // usaba AspectRatio(1), forzando una altura fija (=ancho) sin
-    // importar cuánto espacio le quedara disponible dentro de la celda
-    // del grid (childAspectRatio: 0.72 en el GridView). Si el bloque de
-    // texto de abajo (nombre + precio + stock) no entraba en lo que
-    // sobraba, Flutter tiraba el overflow. Ahora la foto vive en un
-    // Expanded: toma todo el alto restante después del texto (que se
-    // mide primero, de tamaño mínimo), así siempre encajan los dos.
-    //
-    // Estilo "vidrio flotante": blur + fondo blanco translúcido + borde
-    // suave + sombra difusa, igual que el resto de las tarjetas/barras
-    // con efecto glass de la app (ver _ItemNav bar, sello VIP, etc).
-    // FIX overflow por escala de fuente: si el usuario tiene el tamaño
-    // de fuente del sistema aumentado, los Text de acá (nombre, precio,
-    // stock) crecen pero el botón "Agregar" (alto fijo 30) y el padding
-    // de los botones +/- no -- esa diferencia es la que producía el
-    // overflow. Se fija la escala en 1.0 solo dentro de esta tarjeta
-    // compacta para que el layout sea predecible en cualquier teléfono.
-    return MediaQuery(
-      data: MediaQuery.of(context).copyWith(
-        textScaler: const TextScaler.linear(1.0),
-      ),
-      child: ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Material(
-          color: Colors.white.withOpacity(0.55),
-          child: InkWell(
-            onTap: onTap,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: destacado ? primary : Colors.white.withOpacity(0.5),
-                  width: destacado ? 2 : 1.2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.10),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
-                    blurRadius: 28,
-                    offset: const Offset(0, 14),
-                    spreadRadius: -6,
-                  ),
-                ],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Material(
+        color: colorSuperficie,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: destacado ? primary : colorBorde,
+                width: destacado ? 2 : 1,
               ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image.network(
-                          producto['imagen_url'] ?? '',
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            color: Colors.grey.shade100,
-                            child: const Icon(
-                                Icons.image_not_supported_outlined,
-                                color: Colors.grey),
-                          ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.network(
+                        producto['imagen_url'] ?? '',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.grey.shade200,
+                          child: const Icon(Icons.image_not_supported_outlined,
+                              color: Colors.grey),
                         ),
-                        if (sinStock)
-                          Container(
-                            color: Colors.black.withOpacity(0.45),
-                            alignment: Alignment.center,
-                            child: const Text('Agotado',
+                      ),
+                      if (sinStock)
+                        Container(
+                          color: Colors.black.withOpacity(0.45),
+                          alignment: Alignment.center,
+                          child: const Text('Agotado',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12)),
+                        )
+                      else if (bajoStock)
+                        Positioned(
+                          top: 6,
+                          left: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade600,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text('¡Últimas!',
                                 style: TextStyle(
                                     color: Colors.white,
-                                    fontWeight: FontWeight.bold)),
-                          )
-                        else if (bajoStock)
-                          Positioned(
-                            top: 6,
-                            right: 6,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 7, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: Colors.red.shade600,
-                                borderRadius: BorderRadius.circular(20),
-                                boxShadow: [
-                                  BoxShadow(
-                                      color: Colors.black.withOpacity(0.18),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 1)),
-                                ],
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700)),
+                          ),
+                        ),
+                      if (!sinStock)
+                        Positioned(
+                          right: 6,
+                          bottom: 6,
+                          child: Material(
+                            color: primary,
+                            shape: const CircleBorder(),
+                            elevation: 2,
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: onAgregarRapido,
+                              child: const Padding(
+                                padding: EdgeInsets.all(6),
+                                child: Icon(Icons.add_rounded,
+                                    size: 16, color: Colors.white),
                               ),
-                              child: const Text('¡Se agota!',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w700)),
                             ),
                           ),
-                      ],
-                    ),
+                        ),
+                    ],
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          producto['nombre'] ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 13),
-                        ),
-                        const SizedBox(height: 4),
-                        PriceTag(
-                            montoUsd:
-                                (producto['precio_usd'] as num).toDouble()),
-                        const SizedBox(height: 2),
-                        Text(
-                          sinStock
-                              ? 'Sin stock'
-                              : bajoStock
-                                  ? '¡Se agota! Quedan $disponible'
-                                  : '$disponible en stock',
-                          style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: bajoStock
-                                  ? FontWeight.w700
-                                  : FontWeight.normal,
-                              color: (sinStock || bajoStock)
-                                  ? Colors.red.shade600
-                                  : Colors.grey.shade600),
-                        ),
-                        if (!sinStock) ...[
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              _botonCantidad(
-                                icon: Icons.remove_rounded,
-                                color: primary,
-                                onTap:
-                                    cantidadSeleccionada > 0 ? onQuitar : null,
-                              ),
-                              Text('$cantidadSeleccionada',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 13.5)),
-                              _botonCantidad(
-                                icon: Icons.add_rounded,
-                                color: primary,
-                                onTap: cantidadSeleccionada < disponible
-                                    ? onAgregarUno
-                                    : null,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 30,
-                            child: FilledButton(
-                              onPressed: cantidadSeleccionada > 0
-                                  ? onAgregarAlCarrito
-                                  : null,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: primary,
-                                padding: EdgeInsets.zero,
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8)),
-                                textStyle: const TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700),
-                              ),
-                              child: const Text('Agregar'),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(9, 7, 9, 9),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        producto['nombre'] ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12.5,
+                            color: colorTexto),
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: PriceTag(
+                              montoUsd:
+                                  (producto['precio_usd'] as num).toDouble(),
+                              style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green.shade700),
                             ),
                           ),
                         ],
+                      ),
+                      if (bajoStock) ...[
+                        const SizedBox(height: 2),
+                        Text('Quedan $disponible',
+                            style: TextStyle(
+                                fontSize: 9.5, color: Colors.red.shade600)),
                       ],
-                    ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-        ),
-      ),
-      ),
-    );
-  }
-
-  Widget _botonCantidad({
-    required IconData icon,
-    required Color color,
-    required VoidCallback? onTap,
-  }) {
-    final activo = onTap != null;
-    return Material(
-      color: activo ? color.withOpacity(0.12) : Colors.grey.withOpacity(0.10),
-      shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Icon(icon,
-              size: 15, color: activo ? color : Colors.grey.shade400),
         ),
       ),
     );
   }
 }
 
-/// Modal de detalle de producto: carrusel de hasta 3 fotos (planes
-/// premium pueden tener imagen_url_2/3; los demás solo imagen_url),
-/// precio, descripción, stock y selector de cantidad + agregar al
-/// carrito, y botón de compartir.
+/// Modal de detalle de producto: carrusel de hasta 3 fotos, precio,
+/// descripción, stock y selector de cantidad + agregar al carrito.
 class _DetalleProductoModal extends StatefulWidget {
   final Map<String, dynamic> producto;
   final void Function(int cantidad) onAgregar;
@@ -1081,16 +997,6 @@ class _DetalleProductoModalState extends State<_DetalleProductoModal> {
     final bajoStock = !sinStock && disponible < 10;
     final fotos = _fotos;
 
-    // FIX (espacio en blanco enorme debajo del botón "Agregar al
-    // carrito"): DraggableScrollableSheet fuerza al modal a ocupar
-    // initialChildSize (85%) de la pantalla SIN IMPORTAR cuánto mida
-    // el contenido real -- si la foto + texto + botón miden menos que
-    // eso (caso típico: producto sin descripción larga), el sobrante
-    // queda como una zona en blanco muerta abajo, tal como se veía en
-    // el bug reportado. Un SingleChildScrollView dentro de SafeArea
-    // (el comportamiento normal de showModalBottomSheet con
-    // isScrollControlled: true) se ajusta al contenido: si es corto,
-    // el modal es corto; si es largo, scrollea.
     return SafeArea(
       top: false,
       child: SingleChildScrollView(
@@ -1098,7 +1004,6 @@ class _DetalleProductoModalState extends State<_DetalleProductoModal> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ---- Carrusel de fotos ----
             Stack(
               children: [
                 SizedBox(
@@ -1232,13 +1137,8 @@ class _DetalleProductoModalState extends State<_DetalleProductoModal> {
   }
 }
 
-/// Ilustración vectorial de marca (100% Flutter, sin assets externos)
-/// usada como fondo de portada cuando la tienda todavía no subió una
-/// imagen_portada propia. Iconos de tiendas + carrito + corazón sobre
-/// halos difusos en tonos teal, con el wordmark "AlLado" -- son los
-/// colores reales del logo (assets), distintos del azul que usa el
-/// resto de la interfaz (es la paleta de marca, no la paleta de UI) --
-/// se mantiene así a propósito, confirmado con el dueño de la app.
+/// Ilustración vectorial de marca usada como fondo de portada cuando
+/// la tienda todavía no subió una imagen_portada propia.
 class _PortadaIlustracion extends StatelessWidget {
   const _PortadaIlustracion();
 
@@ -1258,7 +1158,6 @@ class _PortadaIlustracion extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          // Halo difuso detrás de los íconos
           Positioned(
             left: 24,
             top: 10,
@@ -1269,70 +1168,15 @@ class _PortadaIlustracion extends StatelessWidget {
             bottom: 20,
             child: _halo(50, _tealSoft.withOpacity(0.3)),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Composición de "tienditas" con íconos lineales
-                Expanded(
-                  flex: 3,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          _tiendaIcono(30, _teal.withOpacity(0.55)),
-                          const SizedBox(width: 6),
-                          _tiendaIcono(42, _teal),
-                          const SizedBox(width: 6),
-                          _tiendaIcono(34, _teal.withOpacity(0.75)),
-                        ],
-                      ),
-                      Positioned(
-                        top: -6,
-                        left: 8,
-                        child: _iconoFlotante(
-                            Icons.two_wheeler_rounded, 16, _teal),
-                      ),
-                      Positioned(
-                        top: -2,
-                        right: 4,
-                        child: _iconoFlotante(
-                            Icons.favorite_rounded, 14, _teal.withOpacity(0.8)),
-                      ),
-                      Positioned(
-                        bottom: 30,
-                        right: -4,
-                        child: _iconoFlotante(
-                            Icons.shopping_cart_rounded, 15, _teal),
-                      ),
-                    ],
-                  ),
-                ),
-                // Wordmark "AlLado"
-                Expanded(
-                  flex: 2,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'AlLado',
-                        style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                          color: _teal,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      Icon(Icons.location_on_outlined, color: _teal, size: 20),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _tiendaIcono(30, _teal.withOpacity(0.55)),
+              const SizedBox(width: 6),
+              _tiendaIcono(42, _teal),
+              const SizedBox(width: 6),
+              _tiendaIcono(34, _teal.withOpacity(0.75)),
+            ],
           ),
         ],
       ),
@@ -1367,23 +1211,6 @@ class _PortadaIlustracion extends StatelessWidget {
         ],
       ),
       child: Icon(Icons.storefront_rounded, color: color, size: size * 0.55),
-    );
-  }
-
-  Widget _iconoFlotante(IconData icon, double size, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.25),
-            blurRadius: 6,
-          ),
-        ],
-      ),
-      child: Icon(icon, size: size, color: color),
     );
   }
 }

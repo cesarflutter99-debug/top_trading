@@ -1,7 +1,18 @@
+// gestionar_planes_screen.dart
+//
+// INTEGRACIÓN CON TiendaStateService (2026-08):
+//   - _activarGratis(): tras activar un plan gratis, se refresca el
+//     estado compartido antes de cerrar la pantalla -- el panel del
+//     vendedor y mi perfil ven el plan nuevo sin reiniciar la app.
+//   - onSolicitudCreada (pasado a ModalPagoPlan): además de recargar
+//     la solicitud pendiente local, refresca TiendaStateService --
+//     por si el estado de la tienda cambió al crear la solicitud.
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
 import '../services/tiendas_service.dart';
+import '../services/tienda_state_service.dart';
 import '../widgets/modal_pago_plan.dart';
 import '../main.dart' show AppBanner;
 
@@ -49,11 +60,15 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
         tienda: widget.tienda,
         plan: plan,
         tiendasService: _tiendasService,
-        // En cuanto se crea la solicitud (antes de que WhatsApp
-        // siquiera se abra), refrescamos el banner de "en revisión" --
-        // así el usuario ve el cambio de estado de inmediato, sin
-        // esperar a volver de WhatsApp.
-        onSolicitudCreada: _cargarSolicitudPendiente,
+        onSolicitudCreada: () async {
+          // FIX (persistencia): antes esto solo refrescaba el banner
+          // local de "en revisión" de ESTA pantalla. Ahora también se
+          // avisa a TiendaStateService, para que si algo del estado de
+          // la tienda cambió al crear la solicitud, el resto de la app
+          // (panel del vendedor, mi perfil) lo vea sin salir y entrar.
+          await _cargarSolicitudPendiente();
+          await TiendaStateService.instance.refrescar();
+        },
       ),
     );
   }
@@ -65,6 +80,11 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
         idTienda: widget.tienda['id_tienda'],
         idPlan: plan['id_plan'],
       );
+
+      // FIX (persistencia): antes había que salir y entrar a la app
+      // para ver el plan nuevo reflejado en el panel del vendedor.
+      await TiendaStateService.instance.refrescar();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -110,9 +130,7 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
                       fontWeight: FontWeight.bold, fontSize: 22)),
               const SizedBox(height: 8),
               Text(
-                esGratis
-                    ? 'Gratis'
-                    : '\$${plan['precio_usd']} USD',
+                esGratis ? 'Gratis' : '\$${plan['precio_usd']} USD',
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
@@ -133,14 +151,13 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
                         fontWeight: FontWeight.bold, fontSize: 14)),
                 const SizedBox(height: 6),
                 Text(plan['descripcion'],
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 14, height: 1.4)),
+                    style:
+                        GoogleFonts.plusJakartaSans(fontSize: 14, height: 1.4)),
               ],
               const SizedBox(height: 24),
               if (esActual)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
                     color: Colors.green.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(10),
@@ -224,9 +241,9 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
                 ],
                 ...planes.map((p) {
                   final esGratis = p['es_gratis'] as bool? ?? false;
-                  final esActual = (p['codigo'] as String? ?? '')
-                          .toLowerCase() ==
-                      planActual;
+                  final esActual =
+                      (p['codigo'] as String? ?? '').toLowerCase() ==
+                          planActual;
                   final yaUsoGratis =
                       widget.tienda['plan_gratis_usado'] as bool? ?? false;
                   final esElPlanSolicitado = haySolicitudPendiente &&
@@ -248,102 +265,104 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
                       child: Padding(
                         padding: const EdgeInsets.all(16),
                         child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(p['nombre'] ?? '',
-                                  style: GoogleFonts.plusJakartaSans(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 18)),
-                              if (esActual)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green.withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(20),
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(p['nombre'] ?? '',
+                                    style: GoogleFonts.plusJakartaSans(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 18)),
+                                if (esActual)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green.withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: const Text('Plan actual',
+                                        style: TextStyle(
+                                            color: Colors.green, fontSize: 12)),
+                                  )
+                                else if (esElPlanSolicitado)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.mostazaLight,
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Text('Pendiente de revisión',
+                                        style: GoogleFonts.plusJakartaSans(
+                                            color: AppColors.warm,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 12)),
                                   ),
-                                  child: const Text('Plan actual',
-                                      style: TextStyle(
-                                          color: Colors.green, fontSize: 12)),
-                                )
-                              else if (esElPlanSolicitado)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.mostazaLight,
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Text('Pendiente de revisión',
-                                      style: GoogleFonts.plusJakartaSans(
-                                          color: AppColors.warm,
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 12)),
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            esGratis
-                                ? 'Gratis · ${p['duracion_dias']} días'
-                                : '\$${p['precio_usd']} USD',
-                            style: GoogleFonts.plusJakartaSans(
-                                fontSize: 16, color: AppColors.ink),
-                          ),
-                          Text('${p['limite_productos']} productos permitidos',
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              esGratis
+                                  ? 'Gratis · ${p['duracion_dias']} días'
+                                  : '\$${p['precio_usd']} USD',
                               style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 13,
-                                  color: AppColors.inkSecundarioLight)),
-                          if ((p['descripcion'] ?? '')
-                              .toString()
-                              .isNotEmpty) ...[
-                            const SizedBox(height: 6),
-                            Text(p['descripcion'],
+                                  fontSize: 16, color: AppColors.ink),
+                            ),
+                            Text(
+                                '${p['limite_productos']} productos permitidos',
                                 style: GoogleFonts.plusJakartaSans(
                                     fontSize: 13,
                                     color: AppColors.inkSecundarioLight)),
+                            if ((p['descripcion'] ?? '')
+                                .toString()
+                                .isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(p['descripcion'],
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      color: AppColors.inkSecundarioLight)),
+                            ],
+                            if (esGratis && yaUsoGratis && !esActual) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                'Ya usaste tu plan gratuito anteriormente. Solo se puede activar una vez por cuenta.',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 12.5, color: Colors.red.shade700),
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            if (!esActual)
+                              SizedBox(
+                                width: double.infinity,
+                                child: esGratis
+                                    ? OutlinedButton(
+                                        onPressed: (_procesandoGratis ||
+                                                yaUsoGratis ||
+                                                haySolicitudPendiente)
+                                            ? null
+                                            : () => _activarGratis(p),
+                                        child: _procesandoGratis
+                                            ? const SizedBox(
+                                                height: 16,
+                                                width: 16,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                        strokeWidth: 2))
+                                            : const Text('Activar gratis'),
+                                      )
+                                    : FilledButton(
+                                        onPressed: haySolicitudPendiente
+                                            ? null
+                                            : () => _abrirModalPago(p),
+                                        child: Text(esElPlanSolicitado
+                                            ? 'Pendiente de revisión'
+                                            : 'Seleccionar este plan'),
+                                      ),
+                              ),
                           ],
-                          if (esGratis && yaUsoGratis && !esActual) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              'Ya usaste tu plan gratuito anteriormente. Solo se puede activar una vez por cuenta.',
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 12.5, color: Colors.red.shade700),
-                            ),
-                          ],
-                          const SizedBox(height: 12),
-                          if (!esActual)
-                            SizedBox(
-                              width: double.infinity,
-                              child: esGratis
-                                  ? OutlinedButton(
-                                      onPressed: (_procesandoGratis ||
-                                              yaUsoGratis ||
-                                              haySolicitudPendiente)
-                                          ? null
-                                          : () => _activarGratis(p),
-                                      child: _procesandoGratis
-                                          ? const SizedBox(
-                                              height: 16,
-                                              width: 16,
-                                              child: CircularProgressIndicator(
-                                                  strokeWidth: 2))
-                                          : const Text('Activar gratis'),
-                                    )
-                                  : FilledButton(
-                                      onPressed: haySolicitudPendiente
-                                          ? null
-                                          : () => _abrirModalPago(p),
-                                      child: Text(esElPlanSolicitado
-                                          ? 'Pendiente de revisión'
-                                          : 'Seleccionar este plan'),
-                                    ),
-                            ),
-                        ],
-                      ),
+                        ),
                       ),
                     ),
                   );

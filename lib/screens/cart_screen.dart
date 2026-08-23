@@ -8,6 +8,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import 'package:url_launcher/url_launcher.dart';
 import '../core/supabase_client.dart';
 import '../core/auth_guard.dart';
@@ -164,13 +165,33 @@ class _CartScreenState extends State<CartScreen> {
       if (mounted) context.pop();
     } catch (e) {
       if (mounted) {
+        // FIX: ahora el pedido puede rechazarse a nivel de base de
+        // datos si alguien más se llevó el stock justo antes (ver
+        // trigger reservar_stock_pedido -- RAISE EXCEPTION cuando no
+        // alcanza). Ese mensaje ya viene redactado para el usuario
+        // ("Sin stock suficiente de..."); se muestra tal cual en vez
+        // de envolverlo en el genérico "No se pudo completar el
+        // pedido: PostgrestException(...)". Además se refresca la
+        // data del carrito para que las cantidades disponibles que ve
+        // el comprador queden al día.
+        final mensaje = _mensajeErrorPedido(e);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo completar el pedido: $e')),
+          SnackBar(content: Text(mensaje)),
         );
+        setState(() => _dataFuture = _cargarCarrito());
       }
     } finally {
       if (mounted) setState(() => _procesando = false);
     }
+  }
+
+  String _mensajeErrorPedido(Object e) {
+    if (e is PostgrestException &&
+        (e.message.contains('Sin stock suficiente') ||
+            e.message.contains('ya no existe'))) {
+      return e.message;
+    }
+    return 'No se pudo completar el pedido: $e';
   }
 
   @override

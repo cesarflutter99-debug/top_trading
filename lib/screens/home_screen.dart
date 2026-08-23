@@ -13,17 +13,19 @@ import '../services/productos_service.dart';
 import '../services/currency_service.dart';
 import 'package:provider/provider.dart';
 import '../services/theme_provider.dart';
+import '../services/tienda_state_service.dart';
+import '../services/afiliado_state_service.dart';
 import '../core/app_colors.dart';
 
 // Se añade 'hide supabase' para evitar el conflicto de nombres
 // Asegúrate de que el import sea correcto y sin el "hide" que causaba el error anterior
 import 'package:top_trading/widgets/product_detail_modal.dart';
 
-import 'admin_panel_screen.dart';
 import 'panel_vendedor_screen.dart';
-import 'notifications_screen.dart';
+import '../widgets/notification_bell.dart';
 import 'valorar_pedido_screen.dart';
 import '../services/notificaciones_service.dart';
+import 'tasa_cambio_screen.dart';
 
 // ---------------------------------------------------------------------
 // ESTILO VISUAL (paleta cálida coral + crema, tarjetas redondeadas,
@@ -87,10 +89,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _heroAutoplayIniciado =
       false; // evita reiniciar el Timer en cada rebuild del FutureBuilder
 
-  Map<String, dynamic>? _miTienda;
-  bool _esAdmin = false;
-  bool _cargandoRol = true;
-  Map<String, dynamic>? _miAfiliado;
+  // FIX (persistencia): _miTienda/_miAfiliado/_cargandoRol ya NO se
+  // cachean localmente acá. Antes cada pantalla (Home, Mi Perfil,
+  // Panel Vendedor...) guardaba su propia copia con setState(), así
+  // que crear/editar/eliminar una tienda o afiliarse en una pantalla
+  // no se reflejaba en las demás hasta cerrar y reabrir la app. Ahora
+  // Home lee directo de TiendaStateService.instance /
+  // AfiliadoStateService.instance (ver getters más abajo) y el
+  // build() entero está envuelto en un AnimatedBuilder que escucha a
+  // ambos servicios -- cualquier cambio se refleja en el mismo frame.
 
   // ---- Filtro / búsqueda del feed de cercanos ----
   _ModoCercanos _modo = _ModoCercanos.productos;
@@ -122,6 +129,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Map<String, dynamic>? get _miTienda => TiendaStateService.instance.miTienda;
+  Map<String, dynamic>? get _miAfiliado =>
+      AfiliadoStateService.instance.miAfiliado;
+  bool get _cargandoRol =>
+      TiendaStateService.instance.cargando || AfiliadoStateService.instance.cargando;
   bool get _esVendedor => _miTienda != null;
   bool get _esPremium =>
       _miTienda != null &&
@@ -148,7 +160,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _premium = _tiendasService.obtenerCarruselPremium();
     _trending = _tiendasService.obtenerCarruselTrending(limite: 10);
     _cargarCercanas();
-    _cargarRol();
+    TiendaStateService.instance.cargar();
+    AfiliadoStateService.instance.cargar();
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _verificarAvisoDeValoracion());
   }
@@ -252,49 +265,15 @@ class _HomeScreenState extends State<HomeScreen> {
     _heroAutoplayTimer?.cancel();
   }
 
+  /// Alias que fuerza un refresco de ambos servicios globales (tienda
+  /// y afiliado). Cada uno es independiente: si uno falla, el otro
+  /// igual se resuelve -- misma garantía que antes tenía la versión
+  /// local de este método.
   Future<void> _cargarRol() async {
-    // FIX: antes esto era
-    //   final tienda = await _tiendasService.obtenerMiTienda();
-    //   final admin = await _tiendasService.esAdmin();
-    // Si obtenerMiTienda() lanzaba una excepción por CUALQUIER motivo
-    // (ej. quedó más de una fila con el mismo owner_id de pruebas
-    // anteriores, y .maybeSingle() lanza si hay más de un resultado),
-    // esAdmin() nunca se ejecutaba y _esAdmin se quedaba en false para
-    // siempre -- el panel de admin desaparecía sin relación alguna con
-    // si la cuenta era admin o no.
-    //
-    // Ahora cada chequeo es 100% independiente: ser admin no depende
-    // en nada de si existe, falla, o se pudo cargar una tienda.
-    bool admin = false;
-    Map<String, dynamic>? tienda;
-    Map<String, dynamic>? afiliado;
-
-    try {
-      admin = await _tiendasService.esAdmin();
-    } catch (e) {
-      debugPrint('Error verificando admin: $e');
-    }
-
-    try {
-      tienda = await _tiendasService.obtenerMiTienda();
-    } catch (e) {
-      debugPrint('Error obteniendo tienda: $e');
-    }
-
-    try {
-      afiliado = await _tiendasService.obtenerMiAfiliado();
-    } catch (e) {
-      debugPrint('Error obteniendo afiliado: $e');
-    }
-
-    if (mounted) {
-      setState(() {
-        _miTienda = tienda;
-        _esAdmin = admin;
-        _miAfiliado = afiliado;
-        _cargandoRol = false;
-      });
-    }
+    await Future.wait([
+      TiendaStateService.instance.refrescar(),
+      AfiliadoStateService.instance.refrescar(),
+    ]);
   }
 
   Future<void> _cargarCercanas() async {
@@ -397,12 +376,6 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(
         builder: (_) => GestionarPlanesScreen(tienda: _miTienda!),
       ),
-    );
-  }
-
-  void _abrirAdmin() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
     );
   }
 
@@ -786,6 +759,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // FIX (persistencia): todo el build queda envuelto escuchando los
+    // dos servicios globales -- así, si otra pantalla crea/edita/
+    // elimina la tienda o el perfil de afiliado, Home se repinta solo
+    // en el mismo frame, sin esperar a que se vuelva a montar.
+    return AnimatedBuilder(
+      animation: TiendaStateService.instance,
+      builder: (context, _) => AnimatedBuilder(
+        animation: AfiliadoStateService.instance,
+        builder: (context, __) => _buildScaffold(context),
+      ),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: _colorFondo,
       extendBodyBehindAppBar: true,
@@ -878,16 +865,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
 
                 if (!_cargandoRol) ...[
-                  if (_esAdmin)
-                    ListTile(
-                      leading: const Icon(Icons.admin_panel_settings,
-                          color: Colors.deepPurple),
-                      title: const Text('Panel de Admin'),
-                      onTap: () {
-                        Navigator.of(innerContext).pop();
-                        _abrirAdmin();
-                      },
-                    ),
                   if (_esAfiliado)
                     ListTile(
                       leading: const Icon(Icons.handshake_outlined,
@@ -1003,50 +980,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               actions: [
-                AnimatedBuilder(
-                  animation: NotificacionesService.instance,
-                  builder: (context, _) {
-                    final noLeidas = NotificacionesService.instance.noLeidas;
-                    return Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.notifications_outlined),
-                          tooltip: 'Notificaciones',
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const NotificationsScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                        if (noLeidas > 0)
-                          Positioned(
-                            right: 6,
-                            top: 6,
-                            child: Container(
-                              padding: const EdgeInsets.all(3),
-                              decoration: const BoxDecoration(
-                                color: Colors.red,
-                                shape: BoxShape.circle,
-                              ),
-                              constraints: const BoxConstraints(
-                                minWidth: 16,
-                                minHeight: 16,
-                              ),
-                              child: Text(
-                                noLeidas > 9 ? '9+' : '$noLeidas',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
+                // FIX (choque de campanitas duplicadas): antes esta era
+                // una implementación inline con su propio Stack/Positioned
+                // y Navigator.push() -- distinta de NotificationBell (que
+                // nadie usaba) y con un badge que quedaba demasiado
+                // pegado al ícono de Tasa de Cambio de al lado. Ahora usa
+                // el mismo widget compartido que el resto de la app, con
+                // context.push() de go_router (no Navigator.push suelto)
+                // y un badge con más aire respecto al ícono vecino.
+                const NotificationBell(),
+                IconButton(
+                  icon: const Icon(Icons.currency_exchange_rounded),
+                  tooltip: 'Tasa de Cambio',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const TasaCambioScreen()),
                     );
                   },
                 ),

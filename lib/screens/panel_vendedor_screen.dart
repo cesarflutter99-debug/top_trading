@@ -1,4 +1,24 @@
+// panel_vendedor_screen.dart
+//
+// INTEGRACIÓN CON TiendaStateService (2026-08):
+//   - didUpdateWidget: MainShellScreen ahora reconstruye este widget
+//     con datos frescos cada vez que TiendaStateService notifica un
+//     cambio -- PERO Flutter reutiliza el State existente cuando el
+//     tipo de widget coincide (no vuelve a llamar a initState()). Sin
+//     este método, _tienda se quedaría con la copia vieja para
+//     siempre, aunque widget.tienda sí llegara actualizado. Ahora se
+//     sincroniza en cada rebuild del padre.
+//   - _recargarTodo(): en vez de llamar directo a
+//     _tiendasService.obtenerMiTienda(), delega en
+//     TiendaStateService.instance.refrescar() y lee el resultado de
+//     ahí -- así cualquier otra pantalla que esté escuchando el
+//     servicio (mi perfil, home) también se entera.
+//   - _cambiarLogo() y _abrirEdicion(): ya llamaban a _recargarTodo(),
+//     así que heredan el fix sin cambios adicionales.
+
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -7,17 +27,27 @@ import '../core/supabase_client.dart';
 import '../main.dart' show AppBanner;
 import '../services/storage_service.dart';
 import '../services/tiendas_service.dart';
+import '../services/tienda_state_service.dart';
 import '../widgets/product_edit_modal.dart';
 import '../widgets/modal_pago_plan.dart';
-import 'admin_panel_screen.dart';
 import 'agregar_producto_screen.dart';
 import 'gestionar_tienda_screen.dart';
 import 'welcome_screen.dart';
 
 class PanelVendedorScreen extends StatefulWidget {
   final Map<String, dynamic> tienda;
+  // FIX: permite llegar desde una notificación ("stock bajo",
+  // "producto agotado") directo al panel del vendedor con el modal de
+  // edición de ESE producto ya abierto, en vez de dejarlo en la
+  // pantalla general teniendo que buscarlo él mismo entre todos sus
+  // productos.
+  final String? idProductoParaEditar;
 
-  const PanelVendedorScreen({super.key, required this.tienda});
+  const PanelVendedorScreen({
+    super.key,
+    required this.tienda,
+    this.idProductoParaEditar,
+  });
 
   @override
   State<PanelVendedorScreen> createState() => _PanelVendedorScreenState();
@@ -29,21 +59,85 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
   final _picker = ImagePicker();
   late Map<String, dynamic> _tienda;
   late Future<List<Map<String, dynamic>>> _productos;
-  bool _esAdmin = false;
+  Map<String, dynamic>? _planActual;
   bool _subiendoLogo = false;
   bool _cargandoDatosPago = false;
+  bool _fabExpandido = false;
+  Timer? _fabColapsarTimer;
 
   @override
   void initState() {
     super.initState();
     _tienda = widget.tienda;
     _cargarProductos();
-    _chequearAdmin();
+    _cargarPlanActual();
+
+    // FIX: si llegamos acá desde una notificación de stock (bajo o
+    // agotado), abrimos directo el modal de edición de ESE producto
+    // apenas la pantalla termina de montarse, sin esperar a que el
+    // vendedor lo busque manualmente en la grilla.
+    if (widget.idProductoParaEditar != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _abrirEdicionDesdeNotificacion(widget.idProductoParaEditar!);
+      });
+    }
   }
 
-  Future<void> _chequearAdmin() async {
-    final admin = await _tiendasService.esAdmin();
-    if (mounted) setState(() => _esAdmin = admin);
+  /// Busca el producto puntual y abre su modal de edición. Independiente
+  /// de _productos (que puede tardar en cargar) -- consulta directo por
+  /// id, así el modal aparece apenas la pantalla está lista.
+  Future<void> _abrirEdicionDesdeNotificacion(String idProducto) async {
+    try {
+      final producto = await _tiendasService.obtenerProductoPorId(idProducto);
+      if (producto == null || !mounted) return;
+      await _editarProducto(producto);
+    } catch (_) {
+      // Si el producto ya no existe (se borró) o falla la carga, no
+      // hacemos nada -- el vendedor igual ve el panel normal.
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant PanelVendedorScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // FIX (persistencia): si el padre (MainShellScreen, escuchando
+    // TiendaStateService) reconstruye este widget con una tienda
+    // distinta -- por ejemplo porque se aprobó el plan desde el panel
+    // admin, o porque otra pantalla llamó a
+    // TiendaStateService.refrescar() -- hay que copiar esos datos
+    // nuevos a nuestro estado local. Sin esto, como Flutter reutiliza
+    // el mismo State, _tienda se quedaría congelada con los datos del
+    // primer initState() para siempre.
+    if (!_mismaTienda(oldWidget.tienda, widget.tienda)) {
+      setState(() => _tienda = widget.tienda);
+      _cargarProductos();
+      _cargarPlanActual();
+    }
+  }
+
+  bool _mismaTienda(Map<String, dynamic> a, Map<String, dynamic> b) {
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (a[key] != b[key]) return false;
+    }
+    return true;
+  }
+
+  @override
+  void dispose() {
+    _fabColapsarTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _cargarPlanActual() async {
+    final codigo = _tienda['plan'] as String?;
+    if (codigo == null) return;
+    try {
+      final plan = await _tiendasService.obtenerPlanPorCodigo(codigo);
+      if (mounted) setState(() => _planActual = plan);
+    } catch (_) {
+      // Sin datos del plan -- las barras de uso simplemente no se muestran.
+    }
   }
 
   Future<void> _cambiarLogo() async {
@@ -81,11 +175,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
         .obtenerProductosDeTienda(_tienda['id_tienda'] as String);
   }
 
-  // Reabre el modal de pago (QR + pasos + botón "Verificar Pago") del
-  // plan actual de la tienda. Útil si al vendedor "se le fue" el mensaje
-  // de WhatsApp con los datos de transferencia y necesita verlos de
-  // nuevo para completar la verificación. No aplica al plan gratis
-  // (no requiere pago).
   Future<void> _verDatosPago() async {
     final codigoPlan = _tienda['plan'] as String?;
     if (codigoPlan == null || codigoPlan == 'gratis') return;
@@ -111,6 +200,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
           tienda: _tienda,
           plan: plan,
           tiendasService: _tiendasService,
+          onSolicitudCreada: () async => await _recargarTodo(),
         ),
       );
     } catch (e) {
@@ -126,19 +216,24 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
   }
 
   Future<void> _recargarTodo() async {
-    final actualizada = await _tiendasService.obtenerMiTienda();
+    // FIX (persistencia): en vez de pedirle directo a TiendasService
+    // los datos de la tienda (lo que solo actualizaba esta pantalla),
+    // se delega en TiendaStateService.refrescar() -- que además de
+    // traer los datos nuevos, notifica a CUALQUIER otra pantalla que
+    // esté escuchando (mi perfil, home, main shell).
+    await TiendaStateService.instance.refrescar();
+    final actualizada = TiendaStateService.instance.miTienda;
     if (actualizada != null && mounted) {
       setState(() {
         _tienda = actualizada;
         _cargarProductos();
       });
-    } else {
+      await _cargarPlanActual();
+    } else if (mounted) {
       setState(_cargarProductos);
     }
   }
 
-  // NUEVO: abre el modal de edición de producto. Al volver con `true`
-  // (se guardó o se eliminó algo), recarga la lista de productos.
   Future<void> _editarProducto(Map<String, dynamic> producto) async {
     final actualizado = await showModalBottomSheet<bool>(
       context: context,
@@ -146,7 +241,10 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => ProductEditModal(producto: producto),
+      builder: (_) => ProductEditModal(
+        producto: producto,
+        esPremium: (_tienda['plan'] as String? ?? 'basic') == 'premium',
+      ),
     );
     if (actualizado == true && mounted) {
       setState(_cargarProductos);
@@ -173,6 +271,9 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     if (confirmar != true) return;
 
     await supabase.auth.signOut();
+    // La sesión cambió -- limpiamos el estado compartido para que no
+    // quede "colgada" la tienda de la cuenta anterior.
+    TiendaStateService.instance.limpiar();
 
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -182,12 +283,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     }
   }
 
-  /// Abre un bottom sheet con la lista de categorías (kCategoriasTienda)
-  /// para que el vendedor elija una. Devuelve la categoría elegida, o
-  /// null si el usuario cierra sin elegir. La categoría actual se
-  /// marca con un check para saber cuál está seleccionada.
-  Future<String?> _elegirCategoria(
-      BuildContext context, String? actual) async {
+  Future<String?> _elegirCategoria(BuildContext context, String? actual) async {
     return showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
@@ -294,8 +390,8 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                 InkWell(
                   borderRadius: BorderRadius.circular(8),
                   onTap: () async {
-                    final elegida = await _elegirCategoria(
-                        context, categoriaSeleccionada);
+                    final elegida =
+                        await _elegirCategoria(context, categoriaSeleccionada);
                     if (elegida != null) {
                       setDialogState(() => categoriaSeleccionada = elegida);
                     }
@@ -373,6 +469,71 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     );
   }
 
+  Future<void> _tocarFabAgregarProducto() async {
+    if (!_fabExpandido) {
+      _fabColapsarTimer?.cancel();
+      setState(() => _fabExpandido = true);
+      _fabColapsarTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _fabExpandido = false);
+      });
+      return;
+    }
+    _fabColapsarTimer?.cancel();
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AgregarProductoScreen(
+          idTienda: _tienda['id_tienda'] as String,
+          plan: _tienda['plan'] as String?,
+        ),
+      ),
+    );
+    if (mounted) setState(() => _fabExpandido = false);
+    await _recargarTodo();
+  }
+
+  Widget _buildFabAgregarProducto(Color primary) {
+    return Material(
+      color: primary,
+      elevation: 4,
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: _tocarFabAgregarProducto,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+          height: 56,
+          padding: EdgeInsets.symmetric(horizontal: _fabExpandido ? 18 : 16),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRect(
+                child: AnimatedAlign(
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.centerRight,
+                  widthFactor: _fabExpandido ? 1 : 0,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: Text(
+                      'Agregar producto',
+                      maxLines: 1,
+                      style: GoogleFonts.inter(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14.5),
+                    ),
+                  ),
+                ),
+              ),
+              const Icon(Icons.add_a_photo_outlined, color: Colors.white),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
@@ -383,16 +544,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
       appBar: AppBar(
         title: Text(_tienda['nombre'] ?? 'Mi tienda'),
         actions: [
-          if (_esAdmin)
-            IconButton(
-              icon: const Icon(Icons.admin_panel_settings_outlined),
-              tooltip: 'Panel Admin',
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => AdminPanelScreen()),
-                );
-              },
-            ),
           IconButton(
             icon: const Icon(Icons.edit_outlined),
             tooltip: 'Editar información',
@@ -406,36 +557,16 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
         ],
       ),
       floatingActionButton: Padding(
-        // La barra de navegación flotante de MainShellScreen vive en un
-        // Scaffold externo (extendBody: true); este Scaffold anidado no
-        // sabe que existe, así que sin este offset el FAB queda tapado
-        // detrás de ella. Offset = inset del sistema + alto real de la
-        // barra (58px de contenido) + 12px de aire.
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).padding.bottom + 70,
         ),
-        child: FloatingActionButton.extended(
-          onPressed: () async {
-            await Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => AgregarProductoScreen(
-                  idTienda: _tienda['id_tienda'] as String,
-                  plan: _tienda['plan'] as String?,
-                ),
-              ),
-            );
-            await _recargarTodo();
-          },
-          icon: const Icon(Icons.add_a_photo_outlined),
-          label: const Text('Nuevo producto'),
-        ),
+        child: _buildFabAgregarProducto(primary),
       ),
       body: RefreshIndicator(
         onRefresh: _recargarTodo,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // ---------- Header visual: logo, nombre, VIP, estrellas, puntos ----------
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -543,6 +674,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                         ),
                       ],
                     ),
+                    _buildMiniEstadisticasProductos(),
                     const SizedBox(height: 16),
                     Row(
                       children: [
@@ -580,13 +712,17 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: () {
-                          Navigator.of(context).push(
+                        onPressed: () async {
+                          await Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) =>
                                   GestionarTiendaScreen(tienda: _tienda),
                             ),
                           );
+                          // Por si se editó/eliminó algo en Gestionar
+                          // Tienda y volvemos con "atrás" en vez de con
+                          // el popUntil de eliminar.
+                          await _recargarTodo();
                         },
                         icon: const Icon(Icons.settings_outlined),
                         label: const Text('Gestionar Tienda'),
@@ -597,8 +733,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
               ),
             ),
             const SizedBox(height: 16),
-
-            // ---------- Banner de estado ----------
             if (esPending) ...[
               AppBanner(
                 icon: Icons.hourglass_top_rounded,
@@ -655,10 +789,19 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                   ),
                 ),
               ),
-
             const SizedBox(height: 16),
-
-            // ---------- Datos de la tienda ----------
+            FutureBuilder<List<Map<String, dynamic>>>(
+              future: _productos,
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const SizedBox.shrink();
+                final seccion = _buildUsoDePlan(snapshot.data!.length);
+                if (seccion is SizedBox) return seccion;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: seccion,
+                );
+              },
+            ),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -700,9 +843,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                 ),
               ),
             ),
-
             const SizedBox(height: 24),
-
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -716,7 +857,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
               ],
             ),
             const SizedBox(height: 12),
-
             FutureBuilder<List<Map<String, dynamic>>>(
               future: _productos,
               builder: (context, snapshot) {
@@ -755,8 +895,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                     final sinStock =
                         (p['cantidad_disponible'] as num? ?? 0) <= 0;
                     return GestureDetector(
-                      // NUEVO: esto es lo que faltaba. Sin esto no había
-                      // ninguna forma de editar cantidad_disponible.
                       onTap: () => _editarProducto(p),
                       child: Card(
                         clipBehavior: Clip.antiAlias,
@@ -776,7 +914,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                           Icons.image_not_supported_outlined),
                                     ),
                                   ),
-                                  // Ícono de editar, siempre visible
                                   Positioned(
                                     top: 6,
                                     left: 6,
@@ -830,10 +967,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                         ),
                                       ),
                                     ),
-                                  // NUEVO: aviso de "Sin stock" cuando
-                                  // cantidad_disponible <= 0 -- esto es
-                                  // justo lo que hace que al comprador
-                                  // le salga "Agotado" en el modal.
                                   if (sinStock)
                                     Positioned(
                                       bottom: 6,
@@ -878,6 +1011,23 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                     style: GoogleFonts.inter(
                                         color: Colors.black54, fontSize: 12),
                                   ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    sinStock
+                                        ? 'Sin stock'
+                                        : '${(p['cantidad_disponible'] as num? ?? 0).toInt()} en stock',
+                                    style: GoogleFonts.inter(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: sinStock
+                                            ? Colors.red
+                                            : ((p['cantidad_disponible']
+                                                            as num? ??
+                                                        0) <
+                                                    10
+                                                ? Colors.orange.shade800
+                                                : Colors.black45)),
+                                  ),
                                 ],
                               ),
                             ),
@@ -892,6 +1042,230 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
             const SizedBox(height: 80),
           ],
         ),
+      ),
+    );
+  }
+
+  Color _colorBarraSegunFraccion(double fracLibre) {
+    const verde = Color(0xFF2ECC71);
+    const amarillo = Color(0xFFFFC107);
+    const rojo = Color(0xFFE53935);
+    if (fracLibre >= 0.5) {
+      final t = ((fracLibre - 0.5) / 0.5).clamp(0.0, 1.0);
+      return Color.lerp(amarillo, verde, t)!;
+    }
+    final t = (fracLibre / 0.5).clamp(0.0, 1.0);
+    return Color.lerp(rojo, amarillo, t)!;
+  }
+
+  Widget _barraUso({
+    required IconData icono,
+    required String etiqueta,
+    required String valorDerecha,
+    required String detalle,
+    required double pct,
+    required Color color,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.035),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: color.withOpacity(0.4), width: 1.1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(icono, size: 14, color: color),
+                      const SizedBox(width: 5),
+                      Text(etiqueta,
+                          style: GoogleFonts.inter(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black87)),
+                    ],
+                  ),
+                  Text(valorDerecha,
+                      style: GoogleFonts.inter(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                          color: color)),
+                ],
+              ),
+              const SizedBox(height: 9),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  height: 9,
+                  color: color.withOpacity(0.15),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: pct),
+                      duration: const Duration(milliseconds: 800),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, value, _) => FractionallySizedBox(
+                        widthFactor: value.clamp(0.03, 1.0),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            gradient: LinearGradient(
+                                colors: [color.withOpacity(0.65), color]),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(detalle,
+                  style:
+                      GoogleFonts.inter(fontSize: 10.5, color: Colors.black54)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUsoDePlan(int productosPublicados) {
+    final limite = (_planActual?['limite_productos'] as num?)?.toInt();
+    final expiraStr = _tienda['plan_expira_en'] as String?;
+    final expira = expiraStr != null ? DateTime.tryParse(expiraStr) : null;
+
+    final filas = <Widget>[];
+
+    if (limite != null && limite > 0) {
+      final pct = (productosPublicados / limite).clamp(0.0, 1.0);
+      final restantes = (limite - productosPublicados).clamp(0, limite);
+      final color = _colorBarraSegunFraccion(1 - pct);
+      filas.add(_barraUso(
+        icono: Icons.inventory_2_rounded,
+        etiqueta: 'Productos publicados',
+        valorDerecha: restantes <= 0
+            ? 'Límite alcanzado'
+            : '$restantes espacio${restantes == 1 ? '' : 's'} libre${restantes == 1 ? '' : 's'}',
+        detalle:
+            '$productosPublicados de $limite productos · ${(pct * 100).round()}% usado',
+        pct: pct,
+        color: color,
+      ));
+    }
+
+    if (expira != null) {
+      final ahora = DateTime.now();
+      final restante = expira.difference(ahora);
+      final dias = restante.isNegative ? 0 : (restante.inHours / 24).ceil();
+      final duracionTotal = (_planActual?['duracion_dias'] as num?)?.toInt();
+      double pctD;
+      if (duracionTotal != null && duracionTotal > 0) {
+        pctD = dias <= 0
+            ? 1.0
+            : ((duracionTotal - dias) / duracionTotal).clamp(0.0, 1.0);
+      } else {
+        pctD = dias <= 0 ? 1.0 : 0.15;
+      }
+      final colorD = _colorBarraSegunFraccion(1 - pctD);
+      filas.add(_barraUso(
+        icono: Icons.bolt_rounded,
+        etiqueta: 'Vigencia del plan',
+        valorDerecha: dias <= 0
+            ? 'Vencido'
+            : (dias == 1 ? '1 día restante' : '$dias días restantes'),
+        detalle: duracionTotal != null
+            ? '${(pctD * 100).round()}% del período usado'
+            : 'Plan activo',
+        pct: pctD,
+        color: colorD,
+      ));
+    }
+
+    if (filas.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Uso de tu plan',
+            style:
+                GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 16)),
+        const SizedBox(height: 10),
+        for (int i = 0; i < filas.length; i++) ...[
+          filas[i],
+          if (i != filas.length - 1) const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildMiniEstadisticasProductos() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _productos,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox.shrink();
+        final productos = snapshot.data!;
+        final total = productos.length;
+        final sinStock = productos
+            .where((p) => (p['cantidad_disponible'] as num? ?? 0) <= 0)
+            .length;
+        return Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _miniStatPill(
+                icon: Icons.inventory_2_outlined,
+                texto: '$total producto${total == 1 ? '' : 's'}',
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              if (sinStock > 0)
+                _miniStatPill(
+                  icon: Icons.warning_amber_rounded,
+                  texto:
+                      '$sinStock producto${sinStock == 1 ? '' : 's'} sin stock',
+                  color: Colors.red,
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _miniStatPill({
+    required IconData icon,
+    required String texto,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 5),
+          Text(
+            texto,
+            style: GoogleFonts.inter(
+                fontSize: 11.5, fontWeight: FontWeight.w700, color: color),
+          ),
+        ],
       ),
     );
   }

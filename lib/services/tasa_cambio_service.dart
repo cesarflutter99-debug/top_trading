@@ -14,25 +14,13 @@ import '../core/supabase_client.dart';
 /// nombre; si no se agrega, igual se muestra con su código tal cual.
 const Map<String, String> kNombresMonedas = {
   'USD': 'Dólar estadounidense',
-  'EUR': 'Euro',
   'MLC': 'MLC',
-  'CAD': 'Dólar canadiense',
-  'MXN': 'Peso mexicano',
-  'ZELLE': 'Zelle (USD)',
-  'CLA': 'Tarjeta Clásica',
 };
 
-/// Orden en el que se muestran las monedas en la pantalla -- mismo
-/// orden que usa la tabla de elTOQUE en su sitio.
-const List<String> kOrdenMonedas = [
-  'USD',
-  'EUR',
-  'MLC',
-  'CAD',
-  'MXN',
-  'ZELLE',
-  'CLA',
-];
+/// Orden en el que se muestran las monedas en la pantalla.
+/// Solo USD y MLC: son las únicas que expone la API de ElToque en
+/// nuestro plan (confirmado con una prueba real).
+const List<String> kOrdenMonedas = ['USD', 'MLC'];
 
 class TasaCambioService {
   /// Trae todas las filas de `tasas_cambio`, ya ordenadas según

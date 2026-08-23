@@ -28,9 +28,11 @@
 // Admin, etc.) no se ven afectadas -- siguen cerrándose normalmente con
 // atrás, ya que son rutas apiladas de verdad, no pestañas del shell.
 
+import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:ui';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
@@ -57,10 +59,63 @@ class _MainShellScreenState extends State<MainShellScreen> {
   Map<String, dynamic>? _miTienda;
   bool _cargandoTienda = true;
 
+  // Canal de presencia para el contador de "usuarios en línea" del
+  // panel admin (pantalla "En vivo"). Solo se trackea si hay sesión
+  // iniciada -- la navegación de invitados (solo lectura) no cuenta.
+  // Se re-evalúa en cada cambio de sesión (login/logout vía el modal
+  // de _irA) porque este shell vive durante toda la vida de la app,
+  // no se remonta al iniciar/cerrar sesión.
+  late final RealtimeChannel _canalPresencia;
+  late final StreamSubscription<AuthState> _suscripcionAuth;
+
   @override
   void initState() {
     super.initState();
     _cargarMiTienda();
+    // FIX: desde 2024 Supabase requiere marcar el canal como público
+    // (private: false) para que la presencia se sincronice entre
+    // distintas apps/clientes -- sin esto, cada cliente puede quedar
+    // aislado en su propio canal aunque el código de track() esté
+    // bien armado, y el admin nunca ve la presencia real de la tienda.
+    _canalPresencia = supabase.channel(
+      'usuarios-online',
+      opts: const RealtimeChannelConfig(private: false),
+    );
+    _canalPresencia.subscribe((status, [error]) async {
+      if (status == RealtimeSubscribeStatus.subscribed) {
+        await _actualizarPresencia();
+      }
+    });
+    _suscripcionAuth = supabase.auth.onAuthStateChange.listen((_) {
+      _actualizarPresencia();
+    });
+  }
+
+  /// Trackea la presencia si hay usuario con sesión iniciada, o la
+  /// retira si no (logout, o el canal aún no llegó a "subscribed").
+  Future<void> _actualizarPresencia() async {
+    final uid = supabase.auth.currentUser?.id;
+    try {
+      if (uid != null) {
+        await _canalPresencia.track({
+          'user_id': uid,
+          'desde': DateTime.now().toIso8601String(),
+        });
+      } else {
+        await _canalPresencia.untrack();
+      }
+    } catch (_) {
+      // El canal puede no estar listo todavía (p.ej. sin conexión);
+      // no es crítico para la experiencia del usuario, se ignora.
+    }
+  }
+
+  @override
+  void dispose() {
+    _canalPresencia.untrack();
+    _canalPresencia.unsubscribe();
+    _suscripcionAuth.cancel();
+    super.dispose();
   }
 
   Future<void> _cargarMiTienda() async {
@@ -171,8 +226,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
                     ),
                   ],
                 ),
-                padding:
-                    const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+                padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [

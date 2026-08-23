@@ -1,23 +1,14 @@
 // onboarding_tienda_screen.dart
 //
-// Registro de tienda dividido en 4 pasos (antes era un único
-// formulario largo):
-//   1. Datos básicos      -- nombre + WhatsApp (obligatorios)
-//   2. Categoría           -- selector de categoría
-//   3. Ubicación            -- provincia (dropdown), municipio (dropdown
-//                              si es La Habana, texto libre para el
-//                              resto), captura GPS
-//   4. Plan                 -- Basic / Premium / Gratis (14 días, una
-//                              sola vez por cuenta -- ver
-//                              cuentas_beneficios en SQL)
-//
-// Al terminar:
-//   - Basic/Premium: crea la tienda en estado 'pending' (como antes) y
-//     navega a /pago-plan con context.push() (NO context.go() -- ver
-//     el FIX de navegación en router.dart, era la causa de que "atrás"
-//     sacara de la app).
-//   - Gratis: crea la tienda YA activa (sin pasar por pago ni admin) y
-//     navega directo a /home.
+// INTEGRACIÓN CON TiendaStateService (2026-08):
+//   - Al terminar _confirmar() (tanto la rama de plan gratis como la
+//     de basic/premium con pago pendiente), se llama a
+//     TiendaStateService.instance.refrescar() ANTES de navegar. Así,
+//     cuando el usuario llega a /home (o vuelve de /pago-plan), la
+//     pestaña "Mi Tienda" de MainShellScreen ya sabe que existe una
+//     tienda nueva y muestra el panel del vendedor directamente --
+//     antes había que salir y volver a entrar a la app para que
+//     dejara de mostrar el CTA de "Hacerte vendedor".
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -25,13 +16,13 @@ import 'package:go_router/go_router.dart';
 import '../core/provincias_cuba.dart';
 import '../services/location_service.dart';
 import '../services/tiendas_service.dart';
+import '../services/tienda_state_service.dart';
 
 class OnboardingTiendaScreen extends StatefulWidget {
   const OnboardingTiendaScreen({super.key});
 
   @override
-  State<OnboardingTiendaScreen> createState() =>
-      _OnboardingTiendaScreenState();
+  State<OnboardingTiendaScreen> createState() => _OnboardingTiendaScreenState();
 }
 
 class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
@@ -40,27 +31,25 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
   final _pageController = PageController();
 
   int _paso = 0;
-  static const _totalPasos = 4;
+  static const _totalPasos = 5;
 
-  // ---- Paso 1: datos básicos ----
   final _formKeyDatos = GlobalKey<FormState>();
   final _nombreCtrl = TextEditingController();
   final _telefonoCtrl = TextEditingController();
 
-  // ---- Paso 2: categoría ----
+  final _formKeyPropietario = GlobalKey<FormState>();
+  final _nombrePropietarioCtrl = TextEditingController();
+
   String? _categoria;
 
-  // ---- Paso 3: ubicación ----
   String? _provincia;
-  String? _municipioSeleccionado; // cuando la provincia tiene dropdown
-  final _municipioLibreCtrl = TextEditingController(); // texto libre
+  String? _municipioSeleccionado;
+  final _municipioLibreCtrl = TextEditingController();
   double? _lat;
   double? _lon;
   bool _capturandoGps = false;
 
-  // ---- Paso 4: plan ----
   String _planElegido = 'basic';
-  final _codigoAfiliadoCtrl = TextEditingController();
   bool _cargandoElegibilidadGratis = true;
   bool _puedeUsarGratis = false;
   bool _guardando = false;
@@ -87,8 +76,8 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     _pageController.dispose();
     _nombreCtrl.dispose();
     _telefonoCtrl.dispose();
+    _nombrePropietarioCtrl.dispose();
     _municipioLibreCtrl.dispose();
-    _codigoAfiliadoCtrl.dispose();
     super.dispose();
   }
 
@@ -96,9 +85,12 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
       ? (_municipioSeleccionado ?? '')
       : _municipioLibreCtrl.text.trim();
 
-  bool get _puedeAvanzarPaso2 => _categoria != null;
-  bool get _puedeAvanzarPaso3 =>
-      _provincia != null && _municipioFinal.isNotEmpty && _lat != null && _lon != null;
+  bool get _puedeAvanzarPaso3 => _categoria != null;
+  bool get _puedeAvanzarPaso4 =>
+      _provincia != null &&
+      _municipioFinal.isNotEmpty &&
+      _lat != null &&
+      _lon != null;
 
   void _irAPaso(int paso) {
     setState(() => _paso = paso);
@@ -111,11 +103,12 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
 
   void _siguiente() {
     if (_paso == 0 && !_formKeyDatos.currentState!.validate()) return;
-    if (_paso == 1 && !_puedeAvanzarPaso2) {
+    if (_paso == 1 && !_formKeyPropietario.currentState!.validate()) return;
+    if (_paso == 2 && !_puedeAvanzarPaso3) {
       _mostrarError('Selecciona una categoría');
       return;
     }
-    if (_paso == 2 && !_puedeAvanzarPaso3) {
+    if (_paso == 3 && !_puedeAvanzarPaso4) {
       _mostrarError(_lat == null
           ? 'Captura la ubicación de tu negocio primero'
           : 'Completa provincia y municipio');
@@ -161,31 +154,35 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
       if (_planElegido == 'gratis') {
         await _tiendasService.crearTiendaConPlanGratis(
           nombre: _nombreCtrl.text.trim(),
+          nombrePropietario: _nombrePropietarioCtrl.text.trim(),
           telefonoWhatsapp: _telefonoCtrl.text.trim(),
           provincia: _provincia!,
           municipio: _municipioFinal,
           lat: _lat!,
           lon: _lon!,
           categoria: _categoria!,
-          codigoAfiliado: _codigoAfiliadoCtrl.text.trim().isEmpty
-              ? null
-              : _codigoAfiliadoCtrl.text.trim(),
         );
+
+        // FIX (persistencia): antes, al llegar a /home, la pestaña
+        // "Mi Tienda" seguía mostrando "Hacerte vendedor" hasta
+        // reiniciar la app -- porque nadie le avisaba a
+        // MainShellScreen que ya existía una tienda nueva. Se
+        // refresca el estado compartido ANTES de navegar.
+        await TiendaStateService.instance.refrescar();
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
                 content: Text('¡Tu tienda ya está activa por 14 días! 🎉')),
           );
-          // Plan gratis: no hay pago que verificar -- punto final real
-          // del flujo, se manda directo al shell principal.
           context.go('/home');
         }
         return;
       }
 
-      // Basic / Premium: sigue el flujo existente (pending + pago).
       final idTienda = await _tiendasService.crearTienda(
         nombre: _nombreCtrl.text.trim(),
+        nombrePropietario: _nombrePropietarioCtrl.text.trim(),
         telefonoWhatsapp: _telefonoCtrl.text.trim(),
         provincia: _provincia!,
         municipio: _municipioFinal,
@@ -193,14 +190,14 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
         lon: _lon!,
         plan: _planElegido,
         categoria: _categoria,
-        codigoAfiliado: _codigoAfiliadoCtrl.text.trim().isEmpty
-            ? null
-            : _codigoAfiliadoCtrl.text.trim(),
       );
 
+      // Mismo fix para el flujo basic/premium: la tienda queda en
+      // 'pending', pero ya debe verse en el panel del vendedor (con
+      // el banner de "en revisión") sin esperar a reiniciar la app.
+      await TiendaStateService.instance.refrescar();
+
       if (mounted) {
-        // FIX de navegación: push (no go) para que /crear-tienda quede
-        // debajo en el stack -- así "atrás" en /pago-plan funciona.
         context.push('/pago-plan', extra: {
           'idTienda': idTienda,
           'plan': _planElegido,
@@ -218,13 +215,18 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+    final fondo = theme.scaffoldBackgroundColor;
+    final bordeSutil = theme.dividerColor;
+    final textoSecundario = theme.textTheme.bodySmall?.color ??
+        theme.colorScheme.onSurface.withOpacity(0.6);
 
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: Scaffold(
         resizeToAvoidBottomInset: true,
-        backgroundColor: Colors.white,
+        backgroundColor: fondo,
         body: SafeArea(
           child: Column(
             children: [
@@ -241,7 +243,10 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                         'Registrar Tienda',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.inter(
-                            fontWeight: FontWeight.bold, fontSize: 17),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
+                          color: theme.textTheme.bodyLarge?.color,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 40),
@@ -255,10 +260,11 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                     final activo = i <= _paso;
                     return Expanded(
                       child: Container(
-                        margin: EdgeInsets.only(right: i < _totalPasos - 1 ? 6 : 0),
+                        margin:
+                            EdgeInsets.only(right: i < _totalPasos - 1 ? 6 : 0),
                         height: 4,
                         decoration: BoxDecoration(
-                          color: activo ? primary : Colors.black12,
+                          color: activo ? primary : bordeSutil,
                           borderRadius: BorderRadius.circular(4),
                         ),
                       ),
@@ -273,7 +279,8 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                   alignment: Alignment.centerLeft,
                   child: Text(
                     'Paso ${_paso + 1} de $_totalPasos · ${_tituloPaso(_paso)}',
-                    style: GoogleFonts.inter(fontSize: 12.5, color: Colors.black54),
+                    style: GoogleFonts.inter(
+                        fontSize: 12.5, color: textoSecundario),
                   ),
                 ),
               ),
@@ -283,10 +290,11 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                   controller: _pageController,
                   physics: const NeverScrollableScrollPhysics(),
                   children: [
-                    _pasoDatos(),
-                    _pasoCategoria(),
-                    _pasoUbicacion(primary),
-                    _pasoPlan(primary),
+                    _pasoDatos(theme),
+                    _pasoPropietario(theme),
+                    _pasoCategoria(theme),
+                    _pasoUbicacion(theme),
+                    _pasoPlan(theme),
                   ],
                 ),
               ),
@@ -297,21 +305,24 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                   child: FilledButton(
                     style: FilledButton.styleFrom(
                       backgroundColor: primary,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                     onPressed: _guardando ? null : _siguiente,
                     child: _guardando
                         ? const SizedBox(
                             height: 20,
                             width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
                         : Text(
                             _paso < _totalPasos - 1
                                 ? 'Siguiente'
                                 : (_planElegido == 'gratis'
                                     ? 'Activar tienda gratis'
                                     : 'Enviar solicitud'),
-                            style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 16),
+                            style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w600, fontSize: 16),
                           ),
                   ),
                 ),
@@ -326,17 +337,19 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
   String _tituloPaso(int i) {
     switch (i) {
       case 0:
-        return 'Datos básicos';
+        return 'Datos del negocio';
       case 1:
-        return 'Categoría';
+        return 'Propietario';
       case 2:
+        return 'Categoría';
+      case 3:
         return 'Ubicación';
       default:
         return 'Plan';
     }
   }
 
-  Widget _pasoDatos() {
+  Widget _pasoDatos(ThemeData theme) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Form(
@@ -344,13 +357,11 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Información de Contacto',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 20)),
-            const SizedBox(height: 4),
-            Text('Empecemos con lo básico de tu negocio.',
-                style: GoogleFonts.inter(color: Colors.black54)),
+            _tituloPasoTexto(theme, 'Información de Contacto',
+                'Empecemos con lo básico de tu negocio.'),
             const SizedBox(height: 20),
             _campoTexto(
+              theme: theme,
               controller: _nombreCtrl,
               label: 'Nombre del negocio',
               hint: 'Ej: Cafetería El Rincón',
@@ -358,6 +369,7 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
             ),
             const SizedBox(height: 16),
             _campoTexto(
+              theme: theme,
               controller: _telefonoCtrl,
               label: 'WhatsApp de Negocio',
               hint: '+53...',
@@ -371,81 +383,100 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     );
   }
 
-  Widget _pasoCategoria() {
+  Widget _pasoPropietario(ThemeData theme) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Form(
+        key: _formKeyPropietario,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _tituloPasoTexto(theme, '¿Quién eres?',
+                'Nombre de la persona responsable de esta tienda.'),
+            const SizedBox(height: 20),
+            _campoTexto(
+              theme: theme,
+              controller: _nombrePropietarioCtrl,
+              label: 'Nombre y apellido del propietario',
+              hint: 'Ej: María Fernández López',
+              icon: Icons.badge_outlined,
+              helper: 'Es distinto del nombre del negocio -- este es tu '
+                  'nombre real, para que el admin sepa con quién habla.',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pasoCategoria(ThemeData theme) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('¿Qué categoría describe tu negocio?',
-              style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 20)),
-          const SizedBox(height: 4),
-          Text('Ayuda a que compradores cercanos te encuentren más fácil.',
-              style: GoogleFonts.inter(color: Colors.black54)),
+          _tituloPasoTexto(theme, '¿Qué categoría describe tu negocio?',
+              'Ayuda a que compradores cercanos te encuentren más fácil.'),
           const SizedBox(height: 20),
-          ...kCategoriasTienda.map((c) {
-            final seleccionada = c == _categoria;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => setState(() => _categoria = c),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    color: seleccionada
-                        ? Theme.of(context).colorScheme.primary.withOpacity(0.06)
-                        : Colors.white,
-                    border: Border.all(
-                      color: seleccionada
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.black12,
-                      width: seleccionada ? 2 : 1,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(c,
-                            style: GoogleFonts.inter(
-                                fontWeight: seleccionada ? FontWeight.w700 : FontWeight.normal)),
-                      ),
-                      if (seleccionada)
-                        Icon(Icons.check_circle_rounded,
-                            color: Theme.of(context).colorScheme.primary, size: 20),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }),
+          _labelCampo(theme, 'Categoría'),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: _categoria,
+            isExpanded: true,
+            style: GoogleFonts.inter(color: theme.textTheme.bodyLarge?.color),
+            dropdownColor: theme.colorScheme.surface,
+            decoration: _decoracionCampo(
+              theme: theme,
+              hint: 'Elige la categoría de tu negocio',
+              icon: Icons.category_outlined,
+            ),
+            items: kCategoriasTienda
+                .map((c) => DropdownMenuItem(
+                      value: c,
+                      child: Text(c, overflow: TextOverflow.ellipsis),
+                    ))
+                .toList(),
+            onChanged: (v) => setState(() => _categoria = v),
+          ),
         ],
       ),
     );
   }
 
-  Widget _pasoUbicacion(Color primary) {
+  Widget _pasoUbicacion(ThemeData theme) {
     final tieneMunicipios = tieneMunicipiosCargados(_provincia ?? '');
+    final primary = theme.colorScheme.primary;
+    final textoSecundario = theme.textTheme.bodySmall?.color ??
+        theme.colorScheme.onSurface.withOpacity(0.6);
+    final campoDeshabilitadoBg = theme.colorScheme.surfaceContainerHighest
+        .withOpacity(theme.brightness == Brightness.dark ? 0.4 : 1);
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Ubicación de tu negocio',
-              style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 20)),
-          const SizedBox(height: 4),
-          Text('Selecciona tu provincia y municipio, y marca el punto exacto en el mapa.',
-              style: GoogleFonts.inter(color: Colors.black54, height: 1.4)),
+          _tituloPasoTexto(
+            theme,
+            'Ubicación de tu negocio',
+            'Selecciona tu provincia y municipio, y marca el punto exacto '
+                'en el mapa.',
+          ),
           const SizedBox(height: 20),
-          _labelCampo('Provincia'),
+          _labelCampo(theme, 'Provincia'),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
             value: _provincia,
             isExpanded: true,
-            style: GoogleFonts.inter(color: Colors.black87),
-            decoration: _decoracionCampo(hint: 'Elige tu provincia', icon: Icons.map_outlined),
-            items: kProvinciasCuba.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+            style: GoogleFonts.inter(color: theme.textTheme.bodyLarge?.color),
+            dropdownColor: theme.colorScheme.surface,
+            decoration: _decoracionCampo(
+                theme: theme,
+                hint: 'Elige tu provincia',
+                icon: Icons.map_outlined),
+            items: kProvinciasCuba
+                .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                .toList(),
             onChanged: (v) => setState(() {
               _provincia = v;
               _municipioSeleccionado = null;
@@ -453,51 +484,67 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
             }),
           ),
           const SizedBox(height: 16),
-          _labelCampo('Municipio'),
+          _labelCampo(theme, 'Municipio'),
           const SizedBox(height: 8),
           if (_provincia == null)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF3F4F6),
+                color: campoDeshabilitadoBg,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Text('Elige primero la provincia', style: GoogleFonts.inter(color: Colors.black38)),
+              child: Text('Elige primero la provincia',
+                  style: GoogleFonts.inter(color: textoSecundario)),
             )
           else if (tieneMunicipios)
             DropdownButtonFormField<String>(
               value: _municipioSeleccionado,
               isExpanded: true,
-              style: GoogleFonts.inter(color: Colors.black87),
-              decoration: _decoracionCampo(hint: 'Elige tu municipio', icon: Icons.location_city_outlined),
-              items: municipiosDe(_provincia!).map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+              style: GoogleFonts.inter(color: theme.textTheme.bodyLarge?.color),
+              dropdownColor: theme.colorScheme.surface,
+              decoration: _decoracionCampo(
+                  theme: theme,
+                  hint: 'Elige tu municipio',
+                  icon: Icons.location_city_outlined),
+              items: municipiosDe(_provincia!)
+                  .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                  .toList(),
               onChanged: (v) => setState(() => _municipioSeleccionado = v),
             )
           else
             TextField(
               controller: _municipioLibreCtrl,
-              style: GoogleFonts.inter(),
-              decoration: _decoracionCampo(hint: 'Escribe tu municipio', icon: Icons.location_city_outlined),
+              style: GoogleFonts.inter(color: theme.textTheme.bodyLarge?.color),
+              decoration: _decoracionCampo(
+                  theme: theme,
+                  hint: 'Escribe tu municipio',
+                  icon: Icons.location_city_outlined),
               onChanged: (_) => setState(() {}),
             ),
           if (_provincia != null && !tieneMunicipios) ...[
             const SizedBox(height: 6),
             Text(
-              'Aún no tenemos la lista de municipios de $_provincia -- escríbelo tal cual.',
-              style: GoogleFonts.inter(fontSize: 11.5, color: Colors.black45),
+              'Aún no tenemos la lista de municipios de $_provincia -- '
+              'escríbelo tal cual.',
+              style: GoogleFonts.inter(fontSize: 11.5, color: textoSecundario),
             ),
           ],
           const SizedBox(height: 20),
-          Text('Ubicación GPS', style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 16)),
+          Text('Ubicación GPS',
+              style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  color: theme.textTheme.bodyLarge?.color)),
           const SizedBox(height: 4),
-          Text('Marca el punto exacto de tu local.', style: GoogleFonts.inter(color: Colors.black54)),
+          Text('Marca el punto exacto de tu local.',
+              style: GoogleFonts.inter(color: textoSecundario)),
           const SizedBox(height: 12),
           Container(
             height: 160,
             decoration: BoxDecoration(
-              color: const Color(0xFFF3F4F6),
+              color: campoDeshabilitadoBg,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.black12),
+              border: Border.all(color: theme.dividerColor),
             ),
             child: Stack(
               alignment: Alignment.center,
@@ -505,13 +552,15 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                 Icon(
                   _lat != null ? Icons.location_on_rounded : Icons.map_outlined,
                   size: 44,
-                  color: _lat != null ? Theme.of(context).colorScheme.error : Colors.black26,
+                  color: _lat != null
+                      ? theme.colorScheme.error
+                      : textoSecundario.withOpacity(0.5),
                 ),
                 Positioned(
                   right: 14,
                   bottom: 14,
                   child: Material(
-                    color: Colors.white,
+                    color: theme.colorScheme.surface,
                     borderRadius: BorderRadius.circular(8),
                     elevation: 1,
                     child: InkWell(
@@ -521,8 +570,12 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                         padding: const EdgeInsets.all(10),
                         child: _capturandoGps
                             ? const SizedBox(
-                                height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                            : Icon(Icons.my_location_rounded, color: primary, size: 18),
+                                height: 18,
+                                width: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : Icon(Icons.my_location_rounded,
+                                color: primary, size: 18),
                       ),
                     ),
                   ),
@@ -533,15 +586,15 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
           const SizedBox(height: 10),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: theme.colorScheme.surface,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.black12),
+              border: Border.all(color: theme.dividerColor),
             ),
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Row(
                 children: [
-                  const Icon(Icons.explore_rounded, color: Colors.black54, size: 20),
+                  Icon(Icons.explore_rounded, color: textoSecundario, size: 20),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
@@ -550,7 +603,8 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                           : 'Aún no has capturado tu ubicación',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inter(),
+                      style: GoogleFonts.inter(
+                          color: theme.textTheme.bodyLarge?.color),
                     ),
                   ),
                 ],
@@ -562,16 +616,24 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     );
   }
 
-  Widget _pasoPlan(Color primary) {
+  Widget _pasoPlan(ThemeData theme) {
+    final primary = theme.colorScheme.primary;
+    final textoSecundario = theme.textTheme.bodySmall?.color ??
+        theme.colorScheme.onSurface.withOpacity(0.6);
+    final esOscuro = theme.brightness == Brightness.dark;
+    final infoBg = esOscuro ? const Color(0xFF11304D) : const Color(0xFFF0F7FF);
+    final infoBorde =
+        esOscuro ? const Color(0xFF1D4E7A) : const Color(0xFFD0E3F7);
+    final infoTexto =
+        esOscuro ? const Color(0xFF8FC4F7) : const Color(0xFF1565C0);
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Elige tu plan', style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 20)),
-          const SizedBox(height: 4),
-          Text('Puedes empezar gratis o ir directo a un plan de pago.',
-              style: GoogleFonts.inter(color: Colors.black54)),
+          _tituloPasoTexto(theme, 'Elige tu plan',
+              'Puedes empezar gratis o ir directo a un plan de pago.'),
           const SizedBox(height: 20),
           if (_cargandoElegibilidadGratis)
             const Padding(
@@ -580,62 +642,67 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
             )
           else
             _planOption(
+              theme: theme,
               titulo: 'Gratis · 14 días',
               subtitulo: _puedeUsarGratis
-                  ? 'Tu tienda queda activa de inmediato, sin pago. Válido por 14 días, una sola vez por cuenta.'
-                  : 'Ya usaste tu plan gratuito con esta cuenta. Elige Basic o Premium para continuar.',
+                  ? 'Tu tienda queda activa de inmediato, sin pago. Válido '
+                      'por 14 días, una sola vez por cuenta.'
+                  : 'Ya usaste tu plan gratuito con esta cuenta. Elige '
+                      'Basic o Premium para continuar.',
               value: 'gratis',
               habilitado: _puedeUsarGratis,
               primary: primary,
+              textoSecundario: textoSecundario,
             ),
           const SizedBox(height: 12),
           _planOption(
+            theme: theme,
             titulo: 'Basic',
-            subtitulo: '20 productos visibles, 20 fotos. Requiere aprobación y pago.',
+            subtitulo:
+                '20 productos visibles, 20 fotos. Requiere aprobación y pago.',
             value: 'basic',
             habilitado: true,
             primary: primary,
+            textoSecundario: textoSecundario,
           ),
           const SizedBox(height: 12),
           _planOption(
+            theme: theme,
             titulo: 'Premium',
-            subtitulo: '50 productos, 50 fotos, elegible para Portada Mensual. Requiere aprobación y pago.',
+            subtitulo: '50 productos, 50 fotos, elegible para Portada '
+                'Mensual. Requiere aprobación y pago.',
             value: 'premium',
             habilitado: true,
             primary: primary,
+            textoSecundario: textoSecundario,
           ),
-          const SizedBox(height: 24),
-          _labelCampo('Código de afiliado (opcional)'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _codigoAfiliadoCtrl,
-            textCapitalization: TextCapitalization.characters,
-            style: GoogleFonts.inter(),
-            decoration: _decoracionCampo(hint: 'Ej: A3F9K2', icon: Icons.card_giftcard_outlined),
-          ),
-          const SizedBox(height: 6),
-          Text('Cada código solo puede usarse una vez por cuenta.',
-              style: GoogleFonts.inter(fontSize: 11.5, color: Colors.black45)),
           const SizedBox(height: 24),
           Container(
             decoration: BoxDecoration(
-              color: const Color(0xFFF0F7FF),
+              color: infoBg,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFD0E3F7)),
+              border: Border.all(color: infoBorde),
             ),
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.verified_user_rounded, color: Color(0xFF1565C0), size: 22),
+                  Icon(Icons.verified_user_rounded, color: infoTexto, size: 22),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Text(
                       _planElegido == 'gratis'
-                          ? 'Tu tienda gratuita queda activa de inmediato. 5 y 3 días antes de que venza tu plan, te avisaremos para que puedas renovarlo.'
-                          : 'Tu tienda será revisada manualmente por el admin. Una vez aprobada y verificado el pago, recibirás el sello de confianza.',
-                      style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF1565C0), height: 1.4),
+                          ? 'Tu tienda gratuita queda activa de inmediato. '
+                              '5 y 3 días antes de que venza tu plan, te '
+                              'avisaremos para que puedas renovarlo.'
+                          : 'Tu tienda será revisada manualmente por el '
+                              'admin. Una vez aprobada y verificado el pago, '
+                              'recibirás el sello de confianza. Si tienes un '
+                              'código de afiliado, lo puedes aplicar en la '
+                              'siguiente pantalla de pago.',
+                      style: GoogleFonts.inter(
+                          fontSize: 13, color: infoTexto, height: 1.4),
                     ),
                   ),
                 ],
@@ -648,11 +715,13 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
   }
 
   Widget _planOption({
+    required ThemeData theme,
     required String titulo,
     required String subtitulo,
     required String value,
     required bool habilitado,
     required Color primary,
+    required Color textoSecundario,
   }) {
     final seleccionado = value == _planElegido;
     return Opacity(
@@ -663,9 +732,11 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            color: seleccionado && habilitado ? primary.withOpacity(0.06) : Colors.white,
+            color: seleccionado && habilitado
+                ? primary.withOpacity(0.08)
+                : theme.colorScheme.surface,
             border: Border.all(
-              color: seleccionado && habilitado ? primary : Colors.black12,
+              color: seleccionado && habilitado ? primary : theme.dividerColor,
               width: seleccionado && habilitado ? 2 : 1,
             ),
           ),
@@ -677,15 +748,22 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                   value: value,
                   groupValue: habilitado ? _planElegido : null,
                   activeColor: primary,
-                  onChanged: habilitado ? (v) => setState(() => _planElegido = v!) : null,
+                  onChanged: habilitado
+                      ? (v) => setState(() => _planElegido = v!)
+                      : null,
                 ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(titulo, style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+                      Text(titulo,
+                          style: GoogleFonts.inter(
+                              fontWeight: FontWeight.w700,
+                              color: theme.textTheme.bodyLarge?.color)),
                       const SizedBox(height: 2),
-                      Text(subtitulo, style: GoogleFonts.inter(fontSize: 12, color: Colors.black54)),
+                      Text(subtitulo,
+                          style: GoogleFonts.inter(
+                              fontSize: 12, color: textoSecundario)),
                     ],
                   ),
                 ),
@@ -697,16 +775,48 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     );
   }
 
-  Widget _labelCampo(String texto) {
-    return Text(texto, style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 14));
+  Widget _tituloPasoTexto(ThemeData theme, String titulo, String subtitulo) {
+    final textoSecundario = theme.textTheme.bodySmall?.color ??
+        theme.colorScheme.onSurface.withOpacity(0.6);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(titulo,
+            style: GoogleFonts.inter(
+                fontWeight: FontWeight.w800,
+                fontSize: 20,
+                color: theme.textTheme.bodyLarge?.color)),
+        const SizedBox(height: 4),
+        Text(subtitulo,
+            style: GoogleFonts.inter(color: textoSecundario, height: 1.4)),
+      ],
+    );
   }
 
-  InputDecoration _decoracionCampo({required String hint, required IconData icon}) {
+  Widget _labelCampo(ThemeData theme, String texto) {
+    return Text(
+      texto,
+      style: GoogleFonts.inter(
+          fontWeight: FontWeight.w600,
+          fontSize: 14,
+          color: theme.textTheme.bodyLarge?.color),
+    );
+  }
+
+  InputDecoration _decoracionCampo({
+    required ThemeData theme,
+    required String hint,
+    required IconData icon,
+  }) {
+    final esOscuro = theme.brightness == Brightness.dark;
     return InputDecoration(
       hintText: hint,
-      prefixIcon: Icon(icon, size: 20),
+      hintStyle: GoogleFonts.inter(
+          color: theme.textTheme.bodySmall?.color ??
+              theme.colorScheme.onSurface.withOpacity(0.5)),
+      prefixIcon: Icon(icon, size: 20, color: theme.iconTheme.color),
       filled: true,
-      fillColor: const Color(0xFFF3F4F6),
+      fillColor: esOscuro ? theme.colorScheme.surface : const Color(0xFFF3F4F6),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
         borderSide: BorderSide.none,
@@ -716,6 +826,7 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
   }
 
   Widget _campoTexto({
+    required ThemeData theme,
     required TextEditingController controller,
     required String label,
     required String hint,
@@ -723,28 +834,39 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     TextInputType? keyboardType,
     String? helper,
   }) {
+    final textoSecundario = theme.textTheme.bodySmall?.color ??
+        theme.colorScheme.onSurface.withOpacity(0.6);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Text(label, style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 14)),
+            Text(label,
+                style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: theme.textTheme.bodyLarge?.color)),
             const SizedBox(width: 4),
-            Text('*', style: GoogleFonts.inter(color: Colors.red, fontWeight: FontWeight.w600)),
+            Text('*',
+                style: GoogleFonts.inter(
+                    color: theme.colorScheme.error,
+                    fontWeight: FontWeight.w600)),
           ],
         ),
         const SizedBox(height: 8),
         TextFormField(
           controller: controller,
           keyboardType: keyboardType,
-          validator: (v) => (v == null || v.trim().isEmpty) ? 'Requerido' : null,
+          validator: (v) =>
+              (v == null || v.trim().isEmpty) ? 'Requerido' : null,
           onChanged: (_) => setState(() {}),
-          style: GoogleFonts.inter(),
-          decoration: _decoracionCampo(hint: hint, icon: icon),
+          style: GoogleFonts.inter(color: theme.textTheme.bodyLarge?.color),
+          decoration: _decoracionCampo(theme: theme, hint: hint, icon: icon),
         ),
         if (helper != null) ...[
           const SizedBox(height: 4),
-          Text(helper, style: GoogleFonts.inter(fontSize: 12, color: Colors.black54)),
+          Text(helper,
+              style: GoogleFonts.inter(fontSize: 12, color: textoSecundario)),
         ],
       ],
     );

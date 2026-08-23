@@ -22,6 +22,10 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen>
   final Set<String> _procesando = {};
   final _busquedaCtrl = TextEditingController();
   String _busqueda = '';
+  // Área 3: ids de pedidos en proceso de rechazo/cancelación -- se
+  // usa para deshabilitar ambos botones (Rechazar/Vendido) de esa
+  // fila mientras la operación está en curso.
+  final Set<String> _cancelando = {};
 
   @override
   void initState() {
@@ -105,6 +109,74 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen>
       }
     } finally {
       if (mounted) setState(() => _procesando.remove(idPedido));
+    }
+  }
+
+  /// Área 3: el vendedor rechaza/cancela un pedido pendiente. El
+  /// stock reservado se devuelve automáticamente en el backend
+  /// (fn_cancelar_pedido, ver sql/cancelacion_pedidos.sql) y se
+  /// notifica al comprador.
+  Future<void> _rechazarPedido(String idPedido, String numeroPedido) async {
+    final motivoCtrl = TextEditingController();
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('¿Rechazar pedido #$numeroPedido?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'El stock reservado se devolverá automáticamente y se '
+              'notificará al comprador.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: motivoCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Motivo (opcional)',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Volver'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Rechazar pedido'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+
+    setState(() => _cancelando.add(idPedido));
+    try {
+      await _tiendasService.cancelarPedidoComoVendedor(
+        idPedido,
+        motivo:
+            motivoCtrl.text.trim().isEmpty ? null : motivoCtrl.text.trim(),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pedido rechazado y stock devuelto')),
+        );
+        setState(_cargar);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo rechazar el pedido: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _cancelando.remove(idPedido));
     }
   }
 
@@ -298,20 +370,49 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen>
                         ),
                         if (esPendientes) ...[
                           const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              onPressed:
-                                  procesando ? null : () => _marcarVendido(id),
-                              icon: procesando
-                                  ? const SizedBox(
-                                      height: 16,
-                                      width: 16,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2, color: Colors.white))
-                                  : const Icon(Icons.check_rounded),
-                              label: const Text('Marcar como vendido'),
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: (procesando ||
+                                          _cancelando.contains(id))
+                                      ? null
+                                      : () => _rechazarPedido(
+                                          id, '${numeroPedido ?? ''}'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.red,
+                                    side: const BorderSide(color: Colors.red),
+                                  ),
+                                  icon: _cancelando.contains(id)
+                                      ? const SizedBox(
+                                          height: 16,
+                                          width: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2))
+                                      : const Icon(Icons.close_rounded,
+                                          size: 18),
+                                  label: const Text('Rechazar'),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: FilledButton.icon(
+                                  onPressed: (procesando ||
+                                          _cancelando.contains(id))
+                                      ? null
+                                      : () => _marcarVendido(id),
+                                  icon: procesando
+                                      ? const SizedBox(
+                                          height: 16,
+                                          width: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white))
+                                      : const Icon(Icons.check_rounded),
+                                  label: const Text('Vendido'),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ],

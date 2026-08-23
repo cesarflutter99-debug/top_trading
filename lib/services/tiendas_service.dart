@@ -105,6 +105,8 @@ class TiendasService {
     String? nombre,
     double? precioUsd,
     String? imagenUrl,
+    String? imagenUrl2,
+    String? imagenUrl3,
     String? descripcion,
     int? cantidadDisponible,
     String? categoria,
@@ -113,6 +115,8 @@ class TiendasService {
     if (nombre != null) data['nombre'] = nombre;
     if (precioUsd != null) data['precio_usd'] = precioUsd;
     if (imagenUrl != null) data['imagen_url'] = imagenUrl;
+    if (imagenUrl2 != null) data['imagen_url_2'] = imagenUrl2;
+    if (imagenUrl3 != null) data['imagen_url_3'] = imagenUrl3;
     if (descripcion != null) data['descripcion'] = descripcion;
     if (cantidadDisponible != null) {
       data['cantidad_disponible'] = cantidadDisponible;
@@ -126,30 +130,6 @@ class TiendasService {
     }
   }
 
-  /// Crea una tienda manualmente desde el panel de administrador
-  /// (por ejemplo, para dar de alta un negocio que se registró fuera
-  /// de la app). Queda 'active' de inmediato porque la crea el admin.
-  ///
-  /// NOTA: como 'owner_id' es NOT NULL en el esquema y esta tienda no
-  /// tiene un vendedor real detrás todavía, se asigna temporalmente al
-  /// propio admin que la crea. Si luego el negocio se suma como
-  /// vendedor real, hay que reasignar 'owner_id' a su cuenta desde
-  /// Supabase directamente (no hay UI para esto todavía).
-  Future<void> crearTiendaManual({
-    required String nombre,
-    required String provincia,
-    required String municipio,
-    required String plan,
-  }) async {
-    await supabase.from('tiendas').insert({
-      'owner_id': supabase.auth.currentUser!.id,
-      'nombre': nombre,
-      'provincia': provincia,
-      'municipio': municipio,
-      'plan': plan,
-      'estado': 'active',
-    });
-  }
 
   /// Trae los datos completos de una tienda por su id (nombre,
   /// descripción, ubicación, WhatsApp, etc.). Se usa en el modal de
@@ -161,6 +141,18 @@ class TiendasService {
         .from('tiendas')
         .select()
         .eq('id_tienda', idTienda)
+        .maybeSingle();
+    return res;
+  }
+
+  /// Trae un producto puntual por su id -- usado para abrir el modal
+  /// de edición directo desde una notificación de stock bajo/agotado,
+  /// sin esperar a que cargue toda la lista de productos.
+  Future<Map<String, dynamic>?> obtenerProductoPorId(String idProducto) async {
+    final res = await supabase
+        .from('productos')
+        .select()
+        .eq('id_producto', idProducto)
         .maybeSingle();
     return res;
   }
@@ -186,6 +178,18 @@ class TiendasService {
 
   /// Verifica si el usuario autenticado ya tiene una tienda creada,
   /// para saber si mandarlo al onboarding o directo a su panel.
+  ///
+  /// FIX (406 "multiple rows returned"): antes usaba .maybeSingle(),
+  /// que tolera 0 o 1 fila pero LANZA una excepción si encuentra 2 o
+  /// más -- y como owner_id ahora tiene un UNIQUE constraint en la
+  /// base de datos, en teoría nunca debería pasar. Pero si por algún
+  /// motivo (migración vieja, dato importado a mano, etc.) llegara a
+  /// pasar, .maybeSingle() rompía CUALQUIER pantalla que llamara a
+  /// este método (home, perfil, shell principal), haciendo parecer
+  /// que el usuario "nunca tuvo tienda" aunque sí existiera. Ahora se
+  /// pide una lista ordenada por fecha y se toma la más reciente --
+  /// nunca truena, en el peor caso devuelve la tienda "equivocada"
+  /// (la más nueva), que es preferible a que la app entera falle.
   Future<Map<String, dynamic>?> obtenerMiTienda() async {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) return null;
@@ -194,20 +198,12 @@ class TiendasService {
         .from('tiendas')
         .select()
         .eq('owner_id', userId)
-        .maybeSingle();
-    return res;
+        .order('creado_en', ascending: false)
+        .limit(1);
+    final lista = List<Map<String, dynamic>>.from(res);
+    return lista.isEmpty ? null : lista.first;
   }
 
-  /// Igual que obtenerMiTienda(), pero para cualquier owner_id -- usado
-  /// por el admin al ver "Información del vendedor" de otro usuario.
-  Future<Map<String, dynamic>?> obtenerTiendaPorOwnerId(String ownerId) async {
-    final res = await supabase
-        .from('tiendas')
-        .select()
-        .eq('owner_id', ownerId)
-        .maybeSingle();
-    return res;
-  }
 
   /// Crea un pedido (dispara el trigger anti-autoventa en el backend)
   Future<Map<String, dynamic>> crearPedido({
@@ -229,16 +225,20 @@ class TiendasService {
   }
 
   /// El vendedor marca el pedido como completado (dispara +15 pts).
-  /// También descuenta el stock vendido de cada producto -- antes esto
-  /// no pasaba en ningún lado del flujo, así que el stock nunca bajaba
-  /// aunque se vendiera. Devuelve la lista de productos que quedaron
-  /// en 0 o por debajo de 10 unidades, para poder avisar al vendedor.
   ///
-  /// FIX: antes solo se actualizaba 'estado', pero contarVentasDelMes()
-  /// filtra por 'fecha_completado' >= inicio de mes. Sin poner esta
-  /// fecha aquí mismo, el contador de "Vendidos este mes" siempre
-  /// devolvía 0 (a menos que existiera un trigger en la base de datos
-  /// que la llenara automáticamente, lo cual no está garantizado).
+  /// FIX (doble descuento de stock): antes este método restaba el
+  /// stock vendido acá, en el momento de completar el pedido. Ahora
+  /// el stock se reserva DESDE QUE SE CREA el pedido (ver migración
+  /// SQL reserva_stock_pedidos.sql -> trigger reservar_stock_pedido),
+  /// justamente para que dos compradores no puedan agotar el mismo
+  /// producto sin que ninguno se entere. Si acá restáramos de nuevo,
+  /// el stock quedaría descontado DOS veces por la misma venta. Ahora
+  /// solo se lee el nivel actual (ya reservado) para armar el aviso de
+  /// "productos con stock bajo" -- sin volver a restar nada.
+  ///
+  /// FIX (fecha_completado): contarVentasDelMes() filtra por
+  /// 'fecha_completado' >= inicio de mes -- sin poner esta fecha acá,
+  /// el contador de "Vendidos este mes" siempre devolvía 0.
   Future<List<Map<String, dynamic>>> marcarPedidoCompletado(
       String idPedido) async {
     final pedido = await supabase
@@ -257,8 +257,7 @@ class TiendasService {
 
     for (final item in detalle) {
       final idProducto = item['id_producto'] as String?;
-      final cantidadVendida = (item['cantidad'] as num?)?.toInt() ?? 0;
-      if (idProducto == null || cantidadVendida <= 0) continue;
+      if (idProducto == null) continue;
 
       final producto = await supabase
           .from('productos')
@@ -268,17 +267,11 @@ class TiendasService {
       if (producto == null) continue;
 
       final actual = (producto['cantidad_disponible'] as num?)?.toInt() ?? 0;
-      final nuevo = actual - cantidadVendida;
-      final nuevoClamp = nuevo < 0 ? 0 : nuevo;
-
-      await supabase.from('productos').update(
-          {'cantidad_disponible': nuevoClamp}).eq('id_producto', idProducto);
-
-      if (nuevoClamp < 10) {
+      if (actual < 10) {
         productosBajoStock.add({
           'id_producto': idProducto,
           'nombre': producto['nombre'],
-          'cantidad_disponible': nuevoClamp,
+          'cantidad_disponible': actual,
         });
       }
     }
@@ -324,25 +317,7 @@ class TiendasService {
     return res != null;
   }
 
-  /// Devuelve la fila de 'admins' (incluye 'permisos') para cualquier
-  /// user_id -- usado por el admin al ver "Información del vendedor"
-  /// de otro usuario, para saber si esa persona también es admin y con
-  /// qué permisos.
-  Future<Map<String, dynamic>?> obtenerPermisosAdmin(String userId) async {
-    final res = await supabase
-        .from('admins')
-        .select()
-        .eq('user_id', userId)
-        .order('creado_en', ascending: false)
-        .limit(1);
-    final lista = List<Map<String, dynamic>>.from(res);
-    return lista.isEmpty ? null : lista.first;
-  }
 
-  /// Quita a un usuario de la tabla 'admins' (le revoca el acceso).
-  Future<void> eliminarAdmin(String userId) async {
-    await supabase.from('admins').delete().eq('user_id', userId);
-  }
 
   /// Tiendas activas con coordenadas, para pintar los pines del mapa
   /// interactivo. Solo trae lo que el pin/globito necesita mostrar --
@@ -403,36 +378,8 @@ class TiendasService {
     return List<Map<String, dynamic>>.from(res);
   }
 
-  /// Lista todas las tiendas con estado 'pending' para revisión manual.
-  Future<List<Map<String, dynamic>>> obtenerTiendasPendientes() async {
-    final res = await supabase
-        .from('tiendas')
-        .select()
-        .eq('estado', 'pending')
-        .order('ultima_activacion', ascending: true);
-    return List<Map<String, dynamic>>.from(res);
-  }
 
-  /// Lista TODAS las tiendas (cualquier estado), para la pestaña
-  /// "Tiendas y Productos" del panel de admin.
-  Future<List<Map<String, dynamic>>> obtenerTodasLasTiendas() async {
-    final res = await supabase
-        .from('tiendas')
-        .select()
-        .order('nombre', ascending: true);
-    return List<Map<String, dynamic>>.from(res);
-  }
 
-  /// Lista todos los afiliados (para el listado del panel de admin).
-  /// La política RLS de 'afiliados' ya permite que un admin lea todas
-  /// las filas (afiliados_lectura_propia_o_admin).
-  Future<List<Map<String, dynamic>>> obtenerTodosLosAfiliados() async {
-    final res = await supabase
-        .from('afiliados')
-        .select()
-        .order('creado_en', ascending: false);
-    return List<Map<String, dynamic>>.from(res);
-  }
 
   /// Actualiza la URL de la foto de portada de la tienda.
   Future<void> actualizarPortadaTienda({
@@ -444,37 +391,9 @@ class TiendasService {
         .update({'imagen_portada': portadaUrl}).eq('id_tienda', idTienda);
   }
 
-  /// Aprueba una tienda: cambia su estado a 'active' y, si se registró
-  /// con un código de afiliado válido, acredita la comisión (10% del
-  /// precio del plan) en este mismo momento -- no antes.
-  Future<void> aprobarTienda(String idTienda, {double tasaCupUsd = 0}) async {
-    await supabase.rpc('admin_aprobar_tienda', params: {
-      'p_id_tienda': idTienda,
-      'p_tasa_cup_usd': tasaCupUsd,
-    });
-  }
 
-  /// Rechaza una tienda: cambia su estado a 'rechazada'.
-  Future<void> rechazarTienda(String idTienda) async {
-    await supabase
-        .from('tiendas')
-        .update({'estado': 'rechazada'}).eq('id_tienda', idTienda);
-  }
 
-  /// Elimina una tienda directamente desde el panel de admin
-  /// (los productos se van con ella por ON DELETE CASCADE).
-  Future<void> eliminarTiendaComoAdmin(String idTienda) async {
-    await supabase.from('tiendas').delete().eq('id_tienda', idTienda);
-  }
 
-  /// Lista todos los números de WhatsApp configurados (activos e inactivos).
-  Future<List<Map<String, dynamic>>> obtenerContactosWhatsapp() async {
-    final res = await supabase
-        .from('contactos_whatsapp')
-        .select()
-        .order('creado_en', ascending: true);
-    return List<Map<String, dynamic>>.from(res);
-  }
 
   /// Devuelve el primer número activo, para usarlo en el flujo de
   /// verificación del onboarding y de gestionar_tienda_screen. Null
@@ -490,29 +409,8 @@ class TiendasService {
     return res?['telefono'] as String?;
   }
 
-  Future<void> agregarContactoWhatsapp({
-    required String telefono,
-    String? etiqueta,
-  }) async {
-    await supabase.from('contactos_whatsapp').insert({
-      'telefono': telefono,
-      'etiqueta': etiqueta,
-      'activo': true,
-    });
-  }
 
-  Future<void> actualizarActivoContactoWhatsapp({
-    required String id,
-    required bool activo,
-  }) async {
-    await supabase
-        .from('contactos_whatsapp')
-        .update({'activo': activo}).eq('id', id);
-  }
 
-  Future<void> eliminarContactoWhatsapp(String id) async {
-    await supabase.from('contactos_whatsapp').delete().eq('id', id);
-  }
 
   // ---------------------------------------------------------------------
   // PANEL DE VENDEDOR
@@ -531,8 +429,8 @@ class TiendasService {
   }
 
   /// Edita los datos básicos de la tienda del vendedor. No permite
-  /// cambiar 'estado' -- eso solo lo hace el admin (aprobarTienda /
-  /// rechazarTienda) -- ni 'plan', que se cambia desde
+  /// cambiar 'estado' -- eso lo hace la app de administración -- ni
+  /// 'plan', que se cambia desde
   /// gestionar_tienda_screen usando update directo a Supabase.
   Future<void> actualizarTienda({
     required String idTienda,
@@ -594,51 +492,7 @@ class TiendasService {
     return List.from(res).length;
   }
 
-  /// Ventas totales (histórico, no solo del mes) de una tienda --
-  /// para el modal de detalle de tienda del panel de admin.
-  Future<Map<String, dynamic>> obtenerVentasTotalesTienda(
-      String idTienda) async {
-    final res = await supabase
-        .from('pedidos')
-        .select('total_usd')
-        .eq('id_tienda', idTienda)
-        .eq('estado', 'completado');
-    final lista = List<Map<String, dynamic>>.from(res);
-    final monto = lista.fold<double>(
-        0, (acc, p) => acc + ((p['total_usd'] as num?)?.toDouble() ?? 0));
-    return {'total_pedidos': lista.length, 'monto_total': monto};
-  }
 
-  /// Top productos más vendidos de una tienda específica (a diferencia
-  /// de adminTopProductos(), que es global) -- suma las cantidades de
-  /// cada línea de `pedidos.detalle` a través de todos los pedidos
-  /// completados de esa tienda.
-  Future<List<Map<String, dynamic>>> obtenerTopProductosTienda(String idTienda,
-      {int limite = 3}) async {
-    final res = await supabase
-        .from('pedidos')
-        .select('detalle')
-        .eq('id_tienda', idTienda)
-        .eq('estado', 'completado');
-    final lista = List<Map<String, dynamic>>.from(res);
-    final Map<String, int> conteo = {};
-    for (final pedido in lista) {
-      final detalle = pedido['detalle'];
-      if (detalle is List) {
-        for (final item in detalle) {
-          final nombre = item['nombre'] as String? ?? 'Producto';
-          final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
-          conteo[nombre] = (conteo[nombre] ?? 0) + cantidad;
-        }
-      }
-    }
-    final ordenado = conteo.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return ordenado
-        .take(limite)
-        .map((e) => {'nombre': e.key, 'cantidad': e.value})
-        .toList();
-  }
 
   /// Lista completa de pedidos vendidos (completados) del mes actual,
   /// para la tarjeta "Ventas realizadas" en Gestionar Ventas -- a
@@ -658,21 +512,9 @@ class TiendasService {
   }
 
   // ---------------------------------------------------------------------
-  // ADMIN - GESTIÓN DE PLANES Y SOLICITUDES
+  // SOLICITUDES DE CAMBIO DE PLAN (creadas aquí; aprobación queda a
+  // cargo de la app de administración por separado)
   // ---------------------------------------------------------------------
-
-  Future<Map<String, dynamic>?> obtenerMiAdminInfo() async {
-    final uid = supabase.auth.currentUser?.id;
-    if (uid == null) return null;
-    final res =
-        await supabase.from('admins').select().eq('user_id', uid).maybeSingle();
-    return res;
-  }
-
-  Future<List<Map<String, dynamic>>> obtenerSolicitudesPendientes() async {
-    final res = await supabase.rpc('admin_solicitudes_plan_pendientes');
-    return List<Map<String, dynamic>>.from(res);
-  }
 
   /// Chequeo interno compartido: ¿esta tienda ya usó este código de
   /// afiliado antes? Cubre las TRES formas en que pudo haberse usado:
@@ -765,174 +607,17 @@ class TiendasService {
     });
   }
 
-  Future<void> aprobarSolicitudCambioPlan({
-    required String idSolicitud,
-    required String idTienda,
-    required String codigoPlanNuevo,
-    Map<String, dynamic>? usoAfiliado,
-    double tasaCupUsd = 0,
-  }) async {
-    // FIX: la versión anterior hacía 3 operaciones sueltas (aprobar
-    // solicitud, insertar en usos_afiliado, sumar saldo) sin
-    // transacción -- si la segunda o tercera fallaban, quedaba la
-    // solicitud marcada 'aprobada' pero sin acreditar nada. También
-    // tenía 'aprobada'/femenino, que no coincide con lo que chequea el
-    // resto de la app ('aprobado'). Ahora todo pasa junto en un RPC
-    // atómico (admin_aprobar_solicitud_plan) -- o se aplica todo, o no
-    // se aplica nada.
-    await supabase.rpc('admin_aprobar_solicitud_plan', params: {
-      'p_id_solicitud': idSolicitud,
-      'p_id_tienda': idTienda,
-      'p_codigo_plan': codigoPlanNuevo,
-      'p_id_afiliado': usoAfiliado?['id_afiliado'],
-      'p_codigo_afiliado': usoAfiliado?['codigo'],
-      'p_comision_usd': usoAfiliado?['comision_usd'],
-      'p_tasa_cup_usd': tasaCupUsd,
-    });
-  }
 
-  Future<void> rechazarSolicitudCambioPlan(String idSolicitud) async {
-    await supabase.from('solicitudes_cambio_plan').update({
-      'estado': 'rechazada',
-      'resuelto_en': DateTime.now().toIso8601String()
-    }).eq('id_solicitud', idSolicitud);
-  }
 
-  // FIX: consultaba una tabla `usuarios` que no existe -- la identidad
-  // vive en auth.users, que necesita el RPC SECURITY DEFINER de abajo
-  // porque no se puede leer directo desde el cliente.
-  Future<Map<String, dynamic>?> obtenerInfoUsuario(String uid) async {
-    final res =
-        await supabase.rpc('admin_info_usuario', params: {'p_user_id': uid});
-    if (res is List) {
-      return res.isNotEmpty ? Map<String, dynamic>.from(res.first) : null;
-    }
-    return res != null ? Map<String, dynamic>.from(res) : null;
-  }
 
-  /// Crea O actualiza un admin (upsert) -- es idempotente a propósito:
-  /// si el usuario ya tenía una fila en 'admins' (por ejemplo, si el
-  /// modal no detectó bien que ya era admin), esto actualiza sus
-  /// permisos en vez de tronar con "duplicate key violates unique
-  /// constraint admins_user_id_key".
-  Future<void> crearAdmin({
-    required String userId,
-    required Map<String, dynamic> permisos,
-  }) async {
-    await supabase.from('admins').upsert(
-      {'user_id': userId, 'permisos': permisos},
-      onConflict: 'user_id',
-    );
-  }
 
-  /// Actualiza los permisos de un admin que YA existe (a diferencia de
-  /// crearAdmin(), que hace un INSERT). El modal de "Gestionar
-  /// permisos" debe llamar a este método, no a crearAdmin(), o si no
-  /// intenta insertar una fila duplicada cada vez que se edita.
-  Future<void> actualizarPermisosAdmin({
-    required String userId,
-    required Map<String, dynamic> permisos,
-  }) async {
-    await supabase
-        .from('admins')
-        .update({'permisos': permisos}).eq('user_id', userId);
-  }
 
-  Future<List<Map<String, dynamic>>> obtenerTodosLosPlanes() async {
-    final res = await supabase
-        .from('planes')
-        .select()
-        .order('precio_usd', ascending: true);
-    return List<Map<String, dynamic>>.from(res);
-  }
 
-  Future<void> actualizarPlan({
-    required String idPlan,
-    String? nombre,
-    String? codigo,
-    double? precioUsd,
-    int? limiteProductos,
-    String? descripcion,
-    String? numeroTarjeta,
-    String? numeroTelefonoPago,
-    String? qrUrl,
-    bool? esGratis,
-    int? duracionDias,
-  }) async {
-    final data = <String, dynamic>{};
-    if (nombre != null) data['nombre'] = nombre;
-    if (codigo != null) data['codigo'] = codigo;
-    if (precioUsd != null) data['precio_usd'] = precioUsd;
-    if (limiteProductos != null) data['limite_productos'] = limiteProductos;
-    if (descripcion != null) data['descripcion'] = descripcion;
-    if (numeroTarjeta != null) data['numero_tarjeta'] = numeroTarjeta;
-    if (numeroTelefonoPago != null)
-      data['numero_telefono_pago'] = numeroTelefonoPago;
-    if (qrUrl != null) data['qr_url'] = qrUrl;
-    if (esGratis != null) data['es_gratis'] = esGratis;
-    if (duracionDias != null) data['duracion_dias'] = duracionDias;
-    if (data.isNotEmpty) {
-      await supabase.from('planes').update(data).eq('id_plan', idPlan);
-    }
-  }
 
-  Future<void> crearPlan({
-    required String nombre,
-    required String codigo,
-    required double precioUsd,
-    required int limiteProductos,
-    String? descripcion,
-    String? numeroTarjeta,
-    String? numeroTelefonoPago,
-    String? qrUrl,
-    bool? esGratis,
-    int? duracionDias,
-  }) async {
-    await supabase.from('planes').insert({
-      'nombre': nombre,
-      'codigo': codigo,
-      'precio_usd': precioUsd,
-      'limite_productos': limiteProductos,
-      'descripcion': descripcion,
-      'numero_tarjeta': numeroTarjeta,
-      'numero_telefono_pago': numeroTelefonoPago,
-      'qr_url': qrUrl,
-      'es_gratis': esGratis,
-      'duracion_dias': duracionDias,
-      'activo': true,
-    });
-  }
 
-  Future<void> eliminarPlan(String idPlan) async {
-    await supabase
-        .from('planes')
-        .update({'activo': false}).eq('id_plan', idPlan);
-  }
 
-  Future<void> reactivarPlan(String idPlan) async {
-    await supabase
-        .from('planes')
-        .update({'activo': true}).eq('id_plan', idPlan);
-  }
 
-  Future<List<Map<String, dynamic>>> obtenerRetirosPendientes() async {
-    final res = await supabase
-        .from('retiros')
-        .select(
-            '*, afiliados(id_afiliado, nombre, codigo, saldo_cup, telefono, numero_tarjeta)')
-        .eq('estado', 'pendiente')
-        .order('created_at', ascending: true);
-    return List<Map<String, dynamic>>.from(res);
-  }
 
-  Future<Map<String, dynamic>?> buscarAfiliadoPorCodigo(String codigo) async {
-    final res = await supabase
-        .from('afiliados')
-        .select()
-        .eq('codigo', codigo)
-        .maybeSingle();
-    return res;
-  }
 
   Future<List<Map<String, dynamic>>> obtenerUsosDeAfiliado(
       String idAfiliado) async {
@@ -944,22 +629,6 @@ class TiendasService {
     return List<Map<String, dynamic>>.from(res);
   }
 
-  Future<void> marcarRetiroPagado({
-    required String idRetiro,
-    required String idAfiliado,
-    required double montoCup,
-  }) async {
-    // FIX: antes esto solo actualizaba retiros.estado y nunca
-    // descontaba afiliados.saldo_cup, aunque recibía idAfiliado y
-    // montoCup como parámetros. Ahora usa un RPC atómico que hace
-    // ambas cosas juntas (o ninguna si algo falla) y bloquea el
-    // doble-procesamiento si el retiro ya no está 'pendiente'.
-    await supabase.rpc('admin_marcar_retiro_pagado', params: {
-      'p_id_retiro': idRetiro,
-      'p_id_afiliado': idAfiliado,
-      'p_monto': montoCup,
-    });
-  }
 
   // ---------------------------------------------------------------------
   // AFILIADO - PERFIL Y GESTIÓN
@@ -976,16 +645,6 @@ class TiendasService {
     return res;
   }
 
-  /// Igual que obtenerMiAfiliado(), pero para cualquier user_id -- usado
-  /// por el admin al ver "Información del vendedor" de otro usuario.
-  Future<Map<String, dynamic>?> obtenerAfiliadoPorUserId(String userId) async {
-    final res = await supabase
-        .from('afiliados')
-        .select()
-        .eq('user_id', userId)
-        .maybeSingle();
-    return res;
-  }
 
   Future<List<Map<String, dynamic>>> obtenerRetirosDeAfiliado(
       String idAfiliado) async {
@@ -1120,6 +779,7 @@ class TiendasService {
   /// onboarding para navegar a /pago-plan justo después de registrar.
   Future<String> crearTienda({
     required String nombre,
+    required String nombrePropietario,
     required String telefonoWhatsapp,
     required String provincia,
     required String municipio,
@@ -1130,6 +790,19 @@ class TiendasService {
     String? categoria,
   }) async {
     final uid = supabase.auth.currentUser!.id;
+
+    // FIX (tiendas duplicadas): antes no había ningún chequeo acá --
+    // si el usuario tocaba "Enviar solicitud" dos veces (doble tap,
+    // reintento tras un error de red, o volvía atrás y repetía el
+    // paso) se creaban dos filas para la misma cuenta. Ahora hay
+    // también un UNIQUE constraint en owner_id a nivel de base de
+    // datos como red de seguridad final, pero este chequeo evita
+    // llegar siquiera a intentarlo, con un mensaje claro.
+    final yaTieneTienda = await obtenerMiTienda();
+    if (yaTieneTienda != null) {
+      throw Exception('Esta cuenta ya tiene una tienda registrada.');
+    }
+
     final codigo = codigoAfiliado?.trim().toUpperCase();
     if (codigo != null && codigo.isNotEmpty) {
       final afiliado = await supabase
@@ -1150,7 +823,8 @@ class TiendasService {
         params: {'p_user_id': uid, 'p_codigo': codigo},
       );
       if (puedeUsarlo != true) {
-        throw Exception('Ya usaste este código de afiliado antes con esta cuenta');
+        throw Exception(
+            'Ya usaste este código de afiliado antes con esta cuenta');
       }
     }
     final res = await supabase
@@ -1158,6 +832,7 @@ class TiendasService {
         .insert({
           'owner_id': uid,
           'nombre': nombre,
+          'nombre_propietario': nombrePropietario,
           'telefono_whatsapp': telefonoWhatsapp,
           'provincia': provincia,
           'municipio': municipio,
@@ -1231,6 +906,7 @@ class TiendasService {
   /// gratis ni reusar códigos de afiliado.
   Future<String> crearTiendaConPlanGratis({
     required String nombre,
+    required String nombrePropietario,
     required String telefonoWhatsapp,
     required String provincia,
     required String municipio,
@@ -1240,6 +916,13 @@ class TiendasService {
     String? descripcion,
     String? codigoAfiliado,
   }) async {
+    // Mismo chequeo que crearTienda() -- ver ese comentario para el
+    // detalle completo de por qué hace falta esto.
+    final yaTieneTienda = await obtenerMiTienda();
+    if (yaTieneTienda != null) {
+      throw Exception('Esta cuenta ya tiene una tienda registrada.');
+    }
+
     final codigo = codigoAfiliado?.trim().toUpperCase();
     try {
       final idTienda = await supabase.rpc('crear_tienda_plan_gratis', params: {
@@ -1251,9 +934,24 @@ class TiendasService {
         'p_lon': lon,
         'p_categoria': categoria,
         'p_descripcion': descripcion,
-        'p_codigo_afiliado': (codigo != null && codigo.isNotEmpty) ? codigo : null,
-      });
-      return idTienda as String;
+        'p_codigo_afiliado':
+            (codigo != null && codigo.isNotEmpty) ? codigo : null,
+      }) as String;
+
+      // NOTA: nombre_propietario no lo recibe el RPC (crear_tienda_
+      // plan_gratis vive en Supabase y no se tocó su firma acá) --
+      // se guarda con un update normal justo después, sobre la fila
+      // que el propio RPC ya creó. Si esto falla, no revertimos la
+      // tienda: prefiero que quede creada sin este dato opcional a
+      // que el usuario pierda su plan gratis por un error de red acá.
+      try {
+        await supabase
+            .from('tiendas')
+            .update({'nombre_propietario': nombrePropietario}).eq(
+                'id_tienda', idTienda);
+      } catch (_) {}
+
+      return idTienda;
     } on PostgrestException catch (e) {
       // El RPC lanza excepciones con mensaje amigable (ej. "Ya usaste
       // tu plan gratuito...") -- se propagan tal cual para que la UI
@@ -1427,46 +1125,6 @@ class TiendasService {
   }
 
   // ---------------------------------------------------------------------
-  // ANALYTICS - ADMIN
-  // ---------------------------------------------------------------------
-
-  Future<Map<String, dynamic>> adminDashboardResumen() async {
-    final res = await supabase.rpc('admin_dashboard_resumen');
-    return Map<String, dynamic>.from(res.first);
-  }
-
-  Future<List<Map<String, dynamic>>> adminTopTiendasPorPedidos(
-      {int limite = 10}) async {
-    final res = await supabase
-        .rpc('admin_top_tiendas_por_pedidos', params: {'limite': limite});
-    return List<Map<String, dynamic>>.from(res);
-  }
-
-  Future<List<Map<String, dynamic>>> adminPedidosPendientes() async {
-    final res = await supabase.rpc('admin_pedidos_pendientes');
-    return List<Map<String, dynamic>>.from(res);
-  }
-
-  Future<List<Map<String, dynamic>>> adminTopProductos(
-      {int limite = 10}) async {
-    final res =
-        await supabase.rpc('admin_top_productos', params: {'limite': limite});
-    return List<Map<String, dynamic>>.from(res);
-  }
-
-  Future<List<Map<String, dynamic>>> adminTopAfiliados(
-      {int limite = 10}) async {
-    final res =
-        await supabase.rpc('admin_top_afiliados', params: {'limite': limite});
-    return List<Map<String, dynamic>>.from(res);
-  }
-
-  Future<List<Map<String, dynamic>>> adminIngresosPorMes() async {
-    final res = await supabase.rpc('admin_ingresos_por_mes');
-    return List<Map<String, dynamic>>.from(res);
-  }
-
-  // ---------------------------------------------------------------------
   // ANALYTICS - VENDEDOR
   // ---------------------------------------------------------------------
 
@@ -1585,6 +1243,80 @@ class TiendasService {
         return 'historico';
     }
   }
+// -----------------------------------------------------------------------
+// AGREGAR ESTE MÉTODO a tiendas_service.dart, dentro de la sección
+// "ANALYTICS - VENDEDOR, con rango de fechas" (junto a
+// vendedorResumenPeriodo / vendedorIngresosSerie). Usa las tablas
+// `productos` y `tiendas`/`planes` directo -- no depende de rango de
+// fechas porque el stock es un dato del momento actual, no histórico.
+// -----------------------------------------------------------------------
+
+  /// Estado real del inventario de la tienda AHORA MISMO: valor total en
+  /// USD, unidades en stock, productos sin stock / con stock bajo, uso
+  /// del límite de productos según el plan contratado, y distribución
+  /// por categoría. Todo calculado a partir de los productos reales en
+  /// la base de datos -- no hay ninguna tabla de "resumen de inventario"
+  /// separada, se computa acá mismo.
+  Future<Map<String, dynamic>> vendedorInventarioActual(String idTienda) async {
+    final productosRes = await supabase
+        .from('productos')
+        .select(
+            'id_producto, nombre, precio_usd, cantidad_disponible, categoria, es_visible')
+        .eq('id_tienda', idTienda);
+    final productos = List<Map<String, dynamic>>.from(productosRes);
+
+    // Límite de productos del plan actual -- para la barra de "uso del
+    // plan". Si no se puede resolver (tienda o plan no encontrados), se
+    // omite esa parte de la UI sin romper el resto.
+    int? limiteProductos;
+    try {
+      final tienda = await obtenerTiendaPorId(idTienda);
+      final codigoPlan = tienda?['plan'] as String?;
+      if (codigoPlan != null) {
+        final plan = await obtenerPlanPorCodigo(codigoPlan);
+        limiteProductos = (plan?['limite_productos'] as num?)?.toInt();
+      }
+    } catch (_) {
+      // Sin límite disponible -- la UI simplemente no muestra esa barra.
+    }
+
+    double valorTotalUsd = 0;
+    int unidadesTotales = 0;
+    int sinStock = 0;
+    int bajoStock = 0;
+    final Map<String, int> porCategoria = {};
+
+    for (final p in productos) {
+      final precio = (p['precio_usd'] as num?)?.toDouble() ?? 0;
+      final cantidad = (p['cantidad_disponible'] as num?)?.toInt() ?? 0;
+      valorTotalUsd += precio * cantidad;
+      unidadesTotales += cantidad;
+      if (cantidad <= 0) {
+        sinStock++;
+      } else if (cantidad < 10) {
+        bajoStock++;
+      }
+      final categoria = (p['categoria'] as String?)?.trim();
+      if (categoria != null && categoria.isNotEmpty) {
+        porCategoria[categoria] = (porCategoria[categoria] ?? 0) + 1;
+      }
+    }
+
+    final distribucionCategorias = porCategoria.entries
+        .map((e) => {'categoria': e.key, 'cantidad': e.value})
+        .toList()
+      ..sort((a, b) => (b['cantidad'] as int).compareTo(a['cantidad'] as int));
+
+    return {
+      'total_productos': productos.length,
+      'unidades_totales': unidadesTotales,
+      'valor_total_usd': valorTotalUsd,
+      'sin_stock': sinStock,
+      'bajo_stock': bajoStock,
+      'limite_productos': limiteProductos,
+      'por_categoria': distribucionCategorias,
+    };
+  }
 
   /// Ingresos, pedidos, ticket promedio y calificación del período, con
   /// % de variación vs. el período anterior equivalente.
@@ -1635,19 +1367,48 @@ class TiendasService {
   }
 
   // ---------------------------------------------------------------------
-  // ANALYTICS - ADMIN, ingresos reales con rango de fechas
+  // CANCELACIÓN DE PEDIDOS (Área 3 / Tarea 1 y 4)
+  //
+  // fn_cancelar_pedido (SQL, ver sql/cancelacion_pedidos.sql) restaura
+  // de forma atómica el stock reservado del pedido y notifica a la
+  // parte correspondiente. Solo se puede cancelar un pedido en estado
+  // 'pendiente' -- si ya fue marcado como completado, esto lanza una
+  // excepción del lado del servidor.
   // ---------------------------------------------------------------------
 
-  /// Ingresos reales del admin (pagos de planes aprobados, con el 90%
-  /// si hubo código de afiliado), con rango de fechas.
-  Future<Map<String, dynamic>> adminIngresosPeriodo(
-      RangoAnalitica rango) async {
-    final res = await supabase.rpc('admin_ingresos_periodo', params: {
-      'p_rango': _rangoParam(rango),
+  /// El vendedor rechaza/cancela un pedido pendiente de su tienda.
+  Future<void> cancelarPedidoComoVendedor(String idPedido,
+      {String? motivo}) async {
+    await supabase.rpc('fn_cancelar_pedido', params: {
+      'p_id_pedido': idPedido,
+      'p_motivo': motivo,
+      'p_cancelado_por': 'vendedor',
     });
-    if (res is List) {
-      return res.isNotEmpty ? Map<String, dynamic>.from(res.first) : {};
-    }
-    return Map<String, dynamic>.from(res as Map);
   }
+
+  /// El comprador cancela su propio pedido pendiente.
+  Future<void> cancelarPedidoComoComprador(String idPedido,
+      {String? motivo}) async {
+    await supabase.rpc('fn_cancelar_pedido', params: {
+      'p_id_pedido': idPedido,
+      'p_motivo': motivo,
+      'p_cancelado_por': 'comprador',
+    });
+  }
+
+  /// Pedidos del comprador actual, con los datos básicos de la tienda
+  /// embebidos (nombre, logo, whatsapp) -- usado por la pantalla "Mis
+  /// Pedidos por Tienda" para agrupar sin tener que hacer una consulta
+  /// aparte por cada tienda distinta.
+  Future<List<Map<String, dynamic>>> obtenerPedidosDeCompradorConTienda(
+      String uid) async {
+    final res = await supabase
+        .from('pedidos')
+        .select(
+            '*, tiendas(id_tienda, nombre, logo_url, telefono_whatsapp)')
+        .eq('id_comprador', uid)
+        .order('creado_en', ascending: false);
+    return List<Map<String, dynamic>>.from(res);
+  }
+
 }
