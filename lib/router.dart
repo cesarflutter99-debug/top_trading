@@ -55,6 +55,7 @@ import 'screens/mapa_tiendas_screen.dart';
 import 'screens/store_screen_flow.dart';
 import 'screens/cart_screen.dart';
 import 'screens/onboarding_tienda_screen.dart';
+import 'screens/onboarding_negocio_screen.dart';
 import 'screens/gestionar_tienda_screen.dart';
 import 'screens/panel_vendedor_screen.dart';
 import 'screens/gestionar_planes_screen.dart';
@@ -68,6 +69,8 @@ import 'screens/mi_perfil_screen.dart';
 import 'screens/vendedor_dashboard_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/mis_pedidos_screen.dart';
+import 'screens/negocio_screen.dart';
+import 'screens/standalone_anuncio_screen.dart';
 import 'widgets/modal_pago_plan.dart';
 import 'services/tiendas_service.dart';
 
@@ -145,7 +148,8 @@ final GoRouter router = GoRouter(
     if (haySesion && enWelcome) return '/home';
     final esRutaPublica = state.matchedLocation == '/home' ||
         state.matchedLocation == '/mapa' ||
-        state.matchedLocation.startsWith('/tienda/');
+        state.matchedLocation.startsWith('/tienda/') ||
+        state.matchedLocation.startsWith('/negocio/');
     if (!haySesion && !enWelcome && !esRutaPublica) return '/';
     return null;
   },
@@ -177,6 +181,20 @@ final GoRouter router = GoRouter(
       ),
     ),
     GoRoute(
+      // Mini-página del negocio (barbería, taller...) -- destino de los
+      // anuncios tipo 'negocio'. Pública: se puede abrir sin sesión.
+      path: '/negocio/:idNegocio',
+      builder: (context, state) => NegocioScreen(
+        idNegocio: state.pathParameters['idNegocio']!,
+      ),
+    ),
+    GoRoute(
+      // Anuncio independiente (standalone) -- acceso directo por
+      // URL/deep link con context.push('/anuncio-independiente').
+      path: '/anuncio-independiente',
+      builder: (context, state) => const StandaloneAnuncioScreen(),
+    ),
+    GoRoute(
       path: '/carrito/:idTienda',
       builder: (context, state) => CartScreen(
         idTienda: state.pathParameters['idTienda']!,
@@ -185,6 +203,13 @@ final GoRouter router = GoRouter(
     GoRoute(
       path: '/crear-tienda',
       builder: (context, state) => const OnboardingTiendaScreen(),
+    ),
+    GoRoute(
+      // Formulario por steps para registrar un NEGOCIO de servicios
+      // (destino del CTA "promociona tu negocio"). Requiere sesión:
+      // la RLS de negocios obliga a id_dueno = auth.uid().
+      path: '/registrar-negocio',
+      builder: (context, state) => const OnboardingNegocioScreen(),
     ),
     GoRoute(
       path: '/pago-plan',

@@ -16,7 +16,6 @@
 //   - _cambiarLogo() y _abrirEdicion(): ya llamaban a _recargarTodo(),
 //     así que heredan el fix sin cambios adicionales.
 
-import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
@@ -25,13 +24,17 @@ import 'package:image_picker/image_picker.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../main.dart' show AppBanner;
+import '../services/anuncios_service.dart';
 import '../services/storage_service.dart';
 import '../services/tiendas_service.dart';
 import '../services/tienda_state_service.dart';
+import '../widgets/anuncios_tienda_sheet.dart';
 import '../widgets/product_edit_modal.dart';
 import '../widgets/modal_pago_plan.dart';
 import 'agregar_producto_screen.dart';
+import 'gestionar_planes_screen.dart';
 import 'gestionar_tienda_screen.dart';
+import 'vendedor_dashboard_screen.dart';
 import 'welcome_screen.dart';
 
 class PanelVendedorScreen extends StatefulWidget {
@@ -56,14 +59,16 @@ class PanelVendedorScreen extends StatefulWidget {
 class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
   final _tiendasService = TiendasService();
   final _storageService = StorageService();
+  final _anunciosService = AnunciosService();
   final _picker = ImagePicker();
   late Map<String, dynamic> _tienda;
   late Future<List<Map<String, dynamic>>> _productos;
   Map<String, dynamic>? _planActual;
   bool _subiendoLogo = false;
   bool _cargandoDatosPago = false;
+  // Menú de acciones del FAB (agregar producto, potenciar, anuncios,
+  // analíticas, cambiar plan) -- ver _buildFabMenu() más abajo.
   bool _fabExpandido = false;
-  Timer? _fabColapsarTimer;
 
   @override
   void initState() {
@@ -125,7 +130,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
 
   @override
   void dispose() {
-    _fabColapsarTimer?.cancel();
     super.dispose();
   }
 
@@ -469,16 +473,21 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     );
   }
 
-  Future<void> _tocarFabAgregarProducto() async {
-    if (!_fabExpandido) {
-      _fabColapsarTimer?.cancel();
-      setState(() => _fabExpandido = true);
-      _fabColapsarTimer = Timer(const Duration(seconds: 3), () {
-        if (mounted) setState(() => _fabExpandido = false);
-      });
-      return;
-    }
-    _fabColapsarTimer?.cancel();
+  // ======================================================================
+  // MENÚ DEL FAB (2026-08)
+  //
+  // El FAB dejó de ser un botón único de "Agregar producto" -- ahora es
+  // un menú desplegable (speed-dial) con las acciones rápidas del día a
+  // día del vendedor: Agregar producto, Potenciar producto, Gestionar
+  // anuncios, Ver analíticas y Cambiar plan. "Gestionar Tienda" (portada,
+  // logo, datos básicos, ventas, eliminar) sigue siendo la pantalla
+  // aparte de siempre -- ya no repite estos accesos.
+  // ======================================================================
+
+  void _alternarMenuFab() => setState(() => _fabExpandido = !_fabExpandido);
+
+  Future<void> _accionAgregarProducto() async {
+    setState(() => _fabExpandido = false);
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => AgregarProductoScreen(
@@ -487,50 +496,275 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
         ),
       ),
     );
-    if (mounted) setState(() => _fabExpandido = false);
     await _recargarTodo();
   }
 
-  Widget _buildFabAgregarProducto(Color primary) {
-    return Material(
-      color: primary,
-      elevation: 4,
-      shape: const StadiumBorder(),
-      child: InkWell(
-        customBorder: const StadiumBorder(),
-        onTap: _tocarFabAgregarProducto,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-          height: 56,
-          padding: EdgeInsets.symmetric(horizontal: _fabExpandido ? 18 : 16),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipRect(
-                child: AnimatedAlign(
-                  duration: const Duration(milliseconds: 280),
-                  curve: Curves.easeOutCubic,
-                  alignment: Alignment.centerRight,
-                  widthFactor: _fabExpandido ? 1 : 0,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: Text(
-                      'Agregar producto',
-                      maxLines: 1,
-                      style: GoogleFonts.inter(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14.5),
+  /// Deja elegir uno de los productos ya publicados para potenciarlo,
+  /// sin pasar por el sheet completo de "Anuncios y Promociones" --
+  /// mismo servicio (AnunciosService.potenciarProducto) y misma regla de
+  /// cupo (ranurasDeTienda) que usa ese sheet.
+  Future<void> _accionPotenciarProducto() async {
+    setState(() => _fabExpandido = false);
+    final productos = await _productos;
+    if (!mounted) return;
+    if (productos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Agrega un producto primero para poder potenciarlo')));
+      return;
+    }
+    final elegido = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Elige el producto a potenciar',
+                    style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w800, fontSize: 17)),
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.only(bottom: 12),
+                children: productos.map((p) {
+                  return ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: (p['imagen_url'] as String?)?.isNotEmpty == true
+                            ? Image.network(p['imagen_url'], fit: BoxFit.cover)
+                            : Container(
+                                color: Colors.grey.shade200,
+                                child: const Icon(Icons.image_outlined)),
+                      ),
                     ),
+                    title: Text(p['nombre'] ?? '',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text('\$${p['precio_usd']} USD'),
+                    onTap: () => Navigator.pop(ctx, p),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (elegido == null || !mounted) return;
+    await _confirmarYPotenciar(elegido);
+  }
+
+  Future<void> _confirmarYPotenciar(Map<String, dynamic> producto) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('¿Potenciar "${producto['nombre']}"?',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w800)),
+        content: Text(
+          'Se publicará como "Promoción Pagada" en el feed de inicio. '
+          'No pasa por moderación: sale al instante si tu plan tiene '
+          'ranura libre.',
+          style: GoogleFonts.inter(height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Potenciar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true || !mounted) return;
+
+    try {
+      final r = await _anunciosService
+          .ranurasDeTienda(_tienda['id_tienda'] as String);
+      if (r.max > 0 && r.usados >= r.max) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content:
+                  Text('Tu plan no tiene ranuras libres. Sube de plan o pon en '
+                      'pausa otro anuncio desde "Gestionar anuncios".')));
+        }
+        return;
+      }
+      await _anunciosService.potenciarProducto(
+        idTienda: _tienda['id_tienda'] as String,
+        idProducto: producto['id_producto'] as String,
+        titulo: '${producto['nombre']}',
+        texto: 'Ahora \$${producto['precio_usd']} en '
+            '${_tienda['nombre'] ?? 'nuestra tienda'}. ¡Pídelo ya!',
+        imagenUrl: producto['imagen_url'] as String?,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('¡Producto potenciado! Ya está corriendo en el feed.')));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final s = e.toString();
+      final msg = s.contains('CUPO_ANUNCIOS')
+          ? 'Tu plan no tiene ranuras libres. Sube de plan o pon en pausa '
+              'otro anuncio.'
+          : 'No se pudo potenciar el producto: '
+              '${s.replaceFirst('Exception: ', '')}';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  void _accionGestionarAnuncios() {
+    setState(() => _fabExpandido = false);
+    mostrarAnunciosSheet(context, _tienda);
+  }
+
+  void _accionVerAnaliticas() {
+    setState(() => _fabExpandido = false);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            VendedorDashboardScreen(idTienda: _tienda['id_tienda'] as String),
+      ),
+    );
+  }
+
+  void _accionCambiarPlan() {
+    setState(() => _fabExpandido = false);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GestionarPlanesScreen(tienda: _tienda),
+      ),
+    );
+  }
+
+  /// Una fila "etiqueta + botón circular" del menú desplegable.
+  Widget _miniAccionFab({
+    required IconData icono,
+    required String etiqueta,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    final esOscuro = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            color: esOscuro ? const Color(0xFF2A2A2A) : Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            elevation: 3,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: onTap,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                child: Text(
+                  etiqueta,
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: esOscuro ? Colors.white : Colors.black87,
                   ),
                 ),
               ),
-              const Icon(Icons.add_a_photo_outlined, color: Colors.white),
-            ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Material(
+            color: color,
+            shape: const CircleBorder(),
+            elevation: 3,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(icono, color: Colors.white, size: 20),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// FAB principal + menú desplegable. Al tocarlo alterna entre + y X;
+  /// cada acción se cierra sola al elegirse.
+  Widget _buildFabMenu(Color primary) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (_fabExpandido) ...[
+          _miniAccionFab(
+            icono: Icons.workspace_premium_outlined,
+            etiqueta: 'Cambiar plan',
+            color: primary,
+            onTap: _accionCambiarPlan,
+          ),
+          _miniAccionFab(
+            icono: Icons.analytics_outlined,
+            etiqueta: 'Ver analíticas',
+            color: primary,
+            onTap: _accionVerAnaliticas,
+          ),
+          _miniAccionFab(
+            icono: Icons.campaign_outlined,
+            etiqueta: 'Gestionar anuncios',
+            color: const Color(0xFF0D9488),
+            onTap: _accionGestionarAnuncios,
+          ),
+          _miniAccionFab(
+            icono: Icons.rocket_launch_outlined,
+            etiqueta: 'Potenciar producto',
+            color: const Color(0xFF0D9488),
+            onTap: _accionPotenciarProducto,
+          ),
+          _miniAccionFab(
+            icono: Icons.add_a_photo_outlined,
+            etiqueta: 'Agregar producto',
+            color: primary,
+            onTap: _accionAgregarProducto,
+          ),
+        ],
+        Material(
+          color: primary,
+          elevation: 4,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: _alternarMenuFab,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: AnimatedRotation(
+                duration: const Duration(milliseconds: 220),
+                turns: _fabExpandido ? 0.125 : 0,
+                child: Icon(
+                  _fabExpandido ? Icons.close_rounded : Icons.add_rounded,
+                  color: Colors.white,
+                ),
+              ),
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 
@@ -560,7 +794,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).padding.bottom + 70,
         ),
-        child: _buildFabAgregarProducto(primary),
+        child: _buildFabMenu(primary),
       ),
       body: RefreshIndicator(
         onRefresh: _recargarTodo,
@@ -1190,6 +1424,41 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
         color: colorD,
       ));
     }
+
+    // NUEVO: barra de RANURAS DE ANUNCIO -- plan + extra compradas
+    // aparte (ver ranurasDeTienda() en anuncios_service.dart). Se
+    // pinta con FutureBuilder porque, a diferencia de las dos barras
+    // de arriba (que ya vienen resueltas en _tienda/_planActual), esto
+    // requiere una consulta aparte a permisos_tienda_anuncios.
+    filas.add(
+      FutureBuilder<({int usados, int max, int maxPlan, int maxExtra})>(
+        future:
+            _anunciosService.ranurasDeTienda(_tienda['id_tienda'] as String),
+        builder: (context, snap) {
+          final r = snap.data;
+          if (r == null || r.max <= 0) return const SizedBox.shrink();
+          final pct = (r.usados / r.max).clamp(0.0, 1.0);
+          final restantes = (r.max - r.usados).clamp(0, r.max);
+          final color = _colorBarraSegunFraccion(1 - pct);
+          final detalle = r.maxExtra > 0
+              ? '${r.usados} de ${r.max} ranuras · ${r.maxPlan} del plan + ${r.maxExtra} extra'
+              : '${r.usados} de ${r.max} ranuras de tu plan';
+          return Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: _barraUso(
+              icono: Icons.campaign_rounded,
+              etiqueta: 'Ranuras de anuncio',
+              valorDerecha: restantes <= 0
+                  ? 'Máximo alcanzado'
+                  : '$restantes libre${restantes == 1 ? '' : 's'}',
+              detalle: detalle,
+              pct: pct,
+              color: color,
+            ),
+          );
+        },
+      ),
+    );
 
     if (filas.isEmpty) return const SizedBox.shrink();
 

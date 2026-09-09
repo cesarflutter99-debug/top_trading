@@ -112,6 +112,60 @@ class StorageService {
     return supabase.storage.from('perfiles').getPublicUrl(nombreArchivo);
   }
 
+  /// Sube el logo del NEGOCIO (barbería, taller...) al bucket público
+  /// "negocios". La política RLS solo deja escribir en tu propia
+  /// carpeta {uid}/ -- ver sistema_anuncios_sql.sql.
+  Future<String> subirLogoNegocio({
+    required File archivo,
+    required String uid,
+  }) async {
+    final nombreArchivo =
+        '$uid/logo_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    await supabase.storage.from('negocios').upload(
+          nombreArchivo,
+          archivo,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return supabase.storage.from('negocios').getPublicUrl(nombreArchivo);
+  }
+
+  /// Sube la portada del negocio al bucket público "negocios".
+  Future<String> subirPortadaNegocio({
+    required File archivo,
+    required String uid,
+  }) async {
+    final nombreArchivo =
+        '$uid/portada_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    await supabase.storage.from('negocios').upload(
+          nombreArchivo,
+          archivo,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return supabase.storage.from('negocios').getPublicUrl(nombreArchivo);
+  }
+
+  /// Sube la imagen de un ANUNCIO (promo de tienda en pleno) al bucket
+  /// público "anuncios", carpeta propia {uid}/.
+  Future<String> subirImagenAnuncio({
+    required File archivo,
+    required String uid,
+  }) async {
+    final nombreArchivo =
+        '$uid/anuncio_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    await supabase.storage.from('anuncios').upload(
+          nombreArchivo,
+          archivo,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return supabase.storage.from('anuncios').getPublicUrl(nombreArchivo);
+  }
+
   /// Sube la foto de portada del perfil personal (fondo del header de
   /// "Mi Perfil"). Mismo bucket "perfiles" que subirFotoPerfil().
   Future<String> subirPortadaPerfil({

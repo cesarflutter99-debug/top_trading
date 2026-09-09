@@ -20,7 +20,6 @@ import '../core/supabase_client.dart';
 import '../services/storage_service.dart';
 import '../services/tiendas_service.dart';
 import '../services/tienda_state_service.dart';
-import 'gestionar_planes_screen.dart';
 import 'gestionar_ventas_screen.dart';
 
 class GestionarTiendaScreen extends StatefulWidget {
@@ -201,7 +200,28 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
     try {
       final idTienda = _tienda['id_tienda'];
       await _storageService.borrarArchivosDeTienda(idTienda);
-      await supabase.from('tiendas').delete().eq('id_tienda', idTienda);
+
+      // FIX (borrado fantasma): igual que en negocio_screen.dart --
+      // si la política RLS de DELETE bloquea la fila, Supabase/
+      // PostgREST NO lanza excepción, simplemente borra 0 filas y
+      // responde 200 OK. Sin este chequeo, el usuario veía "Tienda
+      // eliminada ✅" y quedaba mandado al home, pero la tienda
+      // seguía existiendo -- reaparecía al reabrir la app o hacer
+      // pull-to-refresh. Ahora se pide de vuelta la fila borrada con
+      // .select() -- si vuelve vacía, avisamos explícitamente en vez
+      // de mentir con un éxito falso.
+      final borrados = await supabase
+          .from('tiendas')
+          .delete()
+          .eq('id_tienda', idTienda)
+          .select('id_tienda');
+
+      if (borrados.isEmpty) {
+        throw Exception(
+            'No se pudo eliminar: no tienes permiso sobre esta tienda o '
+            'ya no existe. Si el problema persiste, revisa la política '
+            'de seguridad (RLS) "tiendas_admin_delete" en Supabase.');
+      }
 
       // FIX (persistencia) -- EL CAMBIO CLAVE: antes, al volver a
       // MainShellScreen, la pestaña "Mi Tienda" seguía mostrando el
@@ -611,6 +631,13 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
     );
   }
 
+  // NOTA (2026-08): "Gestionar Productos" se quitó de acá -- solo hacía
+  // Navigator.pop() para volver a Mi Tienda (donde en realidad viven los
+  // productos), así que era un acceso muerto. "Anuncios y Promociones" y
+  // "Cambiar Plan" se movieron al menú del botón flotante de Mi Tienda
+  // (panel_vendedor_screen.dart) -- Gestionar Tienda ahora se enfoca en
+  // los datos propios de la tienda (foto, portada, datos básicos),
+  // Gestionar Ventas y Eliminar tienda.
   Widget _buildAccesos(
       Color primary, bool esOscuro, Color colorSuperficie, Color colorBorde) {
     return Column(
@@ -626,32 +653,6 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
             Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => GestionarVentasScreen(tienda: _tienda),
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 12),
-        _accesoTile(
-          icono: Icons.inventory_2_outlined,
-          color: primary,
-          titulo: 'Gestionar Productos',
-          subtitulo: 'Editar, ocultar o eliminar productos',
-          colorSuperficie: colorSuperficie,
-          colorBorde: colorBorde,
-          onTap: () => Navigator.of(context).pop(),
-        ),
-        const SizedBox(height: 12),
-        _accesoTile(
-          icono: Icons.workspace_premium_outlined,
-          color: AppColors.primary,
-          titulo: 'Cambiar Plan',
-          subtitulo: 'Plan actual: ${_tienda['plan'] ?? 'Sin plan'}',
-          colorSuperficie: colorSuperficie,
-          colorBorde: colorBorde,
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => GestionarPlanesScreen(tienda: _tienda),
               ),
             );
           },

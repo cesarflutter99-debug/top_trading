@@ -264,8 +264,28 @@ _EstiloNotificacion _estiloPorTipo(String? tipo) {
     case 'tienda_eliminada_plan_vencido':
       return const _EstiloNotificacion(
           Icons.delete_outline_rounded, Colors.redAccent);
+    case 'tienda_rechazada':
+      return const _EstiloNotificacion(Icons.storefront_rounded, Colors.redAccent);
     case 'pedido_cancelado':
       return const _EstiloNotificacion(Icons.cancel_outlined, Colors.redAccent);
+    case 'pedido_cancelado_comprador':
+      return const _EstiloNotificacion(
+          Icons.person_off_rounded, Colors.deepOrange);
+    case 'pedido_completado':
+      return const _EstiloNotificacion(
+          Icons.inventory_rounded, AppColors.success);
+    case 'negocio_aprobado':
+      return const _EstiloNotificacion(
+          Icons.verified_rounded, AppColors.success);
+    case 'negocio_rechazado':
+      return const _EstiloNotificacion(
+          Icons.storefront_rounded, Colors.redAccent);
+    case 'negocio_suspendido':
+      return const _EstiloNotificacion(
+          Icons.pause_circle_rounded, Colors.deepOrange);
+    case 'anuncio_por_vencer':
+      return const _EstiloNotificacion(
+          Icons.schedule_rounded, Colors.deepOrange);
     case 'nueva_resena':
       return const _EstiloNotificacion(
           Icons.reviews_rounded, Color(0xFFD4AF37));
@@ -345,6 +365,27 @@ class _NotificacionTile extends StatelessWidget {
         break;
       case 'pedido_cancelado':
         context.push('/comprador/dashboard');
+        break;
+      case 'pedido_cancelado_comprador':
+        context.push('/vendedor/pedidos');
+        break;
+      case 'pedido_completado':
+        final idTienda2 = data['id_tienda'];
+        final rutaCompleto = idTienda2 != null
+            ? '/valorar/${data['id_pedido']}?tienda=$idTienda2'
+            : '/valorar/${data['id_pedido']}';
+        context.push(rutaCompleto);
+        break;
+      case 'negocio_aprobado':
+      case 'negocio_rechazado':
+      case 'negocio_suspendido':
+        context.push('/mi-perfil');
+        break;
+      case 'tienda_rechazada':
+        context.push('/vendedor/mi-tienda');
+        break;
+      case 'anuncio_por_vencer':
+        context.push('/mi-perfil');
         break;
       case 'tienda_eliminada_plan_vencido':
         // La tienda ya no existe -- no hay a dónde navegar dentro de

@@ -6,6 +6,9 @@ import 'core/app_colors.dart';
 import 'core/supabase_client.dart';
 import 'router.dart';
 import 'services/theme_provider.dart';
+import 'services/connectivity_service.dart';
+import 'services/pending_actions_queue.dart';
+import 'widgets/offline_banner.dart';
 
 // AppColors y kCardRadius ahora viven en core/app_colors.dart -- se
 // mantiene ahí para que home_screen.dart y esta config compartan la
@@ -14,9 +17,18 @@ import 'services/theme_provider.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initSupabase();
+  // Offline: carga la cola de acciones pendientes guardadas de una
+  // sesión anterior y arranca el monitoreo de conexión -- si ya hay
+  // red, procesa la cola de inmediato; si no, queda escuchando.
+  await PendingActionsQueue.instance.cargar();
+  ConnectivityService.instance.iniciar();
+  // Restaura el tema (claro/oscuro) guardado antes de pintar la app,
+  // para que el modo oscuro se preserve entre sesiones sin parpadeo.
+  final themeProvider = ThemeProvider();
+  await themeProvider.cargar();
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ThemeProvider(),
+    ChangeNotifierProvider.value(
+      value: themeProvider,
       child: const TopTradingApp(),
     ),
   );
@@ -213,9 +225,6 @@ ThemeData _buildTheme(Brightness brightness) {
 // ---------------------------------------------------------------------
 // WIDGET REUTILIZABLE: banner destacado en amarillo mostaza
 // ---------------------------------------------------------------------
-// Úsalo para avisos importantes -- ej. "Tienda en revisión", "Plan por
-// vencer", promociones. Mantiene el estilo consistente sin que cada
-// pantalla reinvente su propio Container.
 class AppBanner extends StatelessWidget {
   final IconData icon;
   final String titulo;
@@ -286,3 +295,4 @@ class AppBanner extends StatelessWidget {
     );
   }
 }
+

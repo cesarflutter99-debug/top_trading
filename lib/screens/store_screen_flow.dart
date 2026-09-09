@@ -15,6 +15,21 @@
 //     rápido" (+1) sobre la foto en vez del selector +/- completo
 //     dentro de la tarjeta -- para elegir más de 1 se abre el detalle
 //     (ya existía ese modal, ahora es el único camino, más simple).
+//   - FIX (2026-08): el botón de compartir (ícono en el AppBar) no
+//     hacía nada -- onPressed estaba vacío. Ahora comparte el nombre
+//     de la tienda + su link, mismo patrón que ya usa
+//     product_detail_modal.dart (_shareTienda). Se guarda una copia de
+//     los datos de la tienda (_tiendaCache) apenas carga el
+//     FutureBuilder para poder armar el mensaje sin tener que esperar
+//     de nuevo a la red al tocar compartir.
+//
+// PENDIENTE (revisado, no resuelto en este cambio):
+//   - No hay forma de ver las reseñas/comentarios de la tienda, solo
+//     el promedio de estrellas.
+//   - No hay botón directo de WhatsApp para preguntar antes de
+//     comprar (solo se abre WhatsApp al completar el pedido).
+//   - Sin buscador dentro del catálogo de la tienda (solo orden por
+//     precio/relevancia).
 
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
@@ -24,8 +39,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../core/auth_guard.dart';
+import '../services/cache_offline_service.dart';
 import '../services/currency_service.dart';
 import '../services/tiendas_service.dart';
+import '../widgets/boton_favorito.dart';
 
 enum _OrdenCatalogo { relevancia, menorPrecio, mayorPrecio }
 
@@ -106,8 +123,12 @@ class _StoreScreenState extends State<StoreScreen> {
   final GlobalKey _destacadoKey = GlobalKey();
   _OrdenCatalogo _orden = _OrdenCatalogo.relevancia;
 
-  bool _esFavorita = false;
-  bool _cargandoFavorito = true;
+  // FIX (compartir): copia de los datos de la tienda disponible fuera
+  // del FutureBuilder, para armar el mensaje de compartir sin
+  // depender de que el snapshot todavía tenga datos en pantalla (por
+  // ejemplo si se llama desde el ícono del AppBar, que vive fuera del
+  // FutureBuilder que pinta el resto del header).
+  Map<String, dynamic>? _tiendaCache;
 
   @override
   void initState() {
@@ -115,72 +136,53 @@ class _StoreScreenState extends State<StoreScreen> {
     _tiendaFuture = _cargarTienda();
     _productosFuture = _cargarProductos();
     _ventasFuture = _tiendasService.contarVentasDelMes(widget.idTienda);
-    _checkFavorito();
   }
 
   Future<Map<String, dynamic>> _cargarTienda() async {
-    return await supabase
-        .from('tiendas')
-        .select()
-        .eq('id_tienda', widget.idTienda)
-        .single();
+    try {
+      final res = await supabase
+          .from('tiendas')
+          .select()
+          .eq('id_tienda', widget.idTienda)
+          .single();
+      // OFFLINE: dejamos copia para navegar sin conexión
+      CacheOfflineService.instance
+          .guardar('tienda_${widget.idTienda}', Map<String, dynamic>.from(res));
+      return res;
+    } catch (_) {
+      final cache = await CacheOfflineService.instance
+          .leerMapa('tienda_${widget.idTienda}');
+      if (cache != null) return cache;
+      rethrow;
+    }
   }
 
   Future<List<Map<String, dynamic>>> _cargarProductos() async {
-    final data = await supabase
-        .from('productos')
-        .select()
-        .eq('id_tienda', widget.idTienda)
-        .eq('es_visible', true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.productoDestacadoId != null &&
-          _destacadoKey.currentContext != null) {
-        Scrollable.ensureVisible(
-          _destacadoKey.currentContext!,
-          duration: const Duration(milliseconds: 400),
-          alignment: 0.1,
-        );
-      }
-    });
-    return List<Map<String, dynamic>>.from(data);
-  }
-
-  Future<void> _checkFavorito() async {
-    final uid = supabase.auth.currentUser?.id;
-    if (uid == null) {
-      setState(() => _cargandoFavorito = false);
-      return;
-    }
-    final res = await supabase
-        .from('favoritos')
-        .select()
-        .eq('id_usuario', uid)
-        .eq('id_tienda', widget.idTienda)
-        .maybeSingle();
-    if (!mounted) return;
-    setState(() {
-      _esFavorita = res != null;
-      _cargandoFavorito = false;
-    });
-  }
-
-  Future<void> _toggleFavorito() async {
-    if (!await requireAuth(context)) return;
-    final uid = supabase.auth.currentUser!.id;
-    if (_esFavorita) {
-      await supabase
-          .from('favoritos')
-          .delete()
-          .eq('id_usuario', uid)
-          .eq('id_tienda', widget.idTienda);
-    } else {
-      await supabase.from('favoritos').insert({
-        'id_usuario': uid,
-        'id_tienda': widget.idTienda,
+    try {
+      final data = await supabase
+          .from('productos')
+          .select()
+          .eq('id_tienda', widget.idTienda)
+          .eq('es_visible', true);
+      final lista = List<Map<String, dynamic>>.from(data);
+      CacheOfflineService.instance
+          .guardar('productos_${widget.idTienda}', lista);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (widget.productoDestacadoId != null &&
+            _destacadoKey.currentContext != null) {
+          Scrollable.ensureVisible(
+            _destacadoKey.currentContext!,
+            duration: const Duration(milliseconds: 400),
+            alignment: 0.1,
+          );
+        }
       });
+      return lista;
+    } catch (_) {
+      // OFFLINE: catálogo visto antes de esta tienda
+      return CacheOfflineService.instance
+          .leerLista('productos_${widget.idTienda}');
     }
-    if (!mounted) return;
-    setState(() => _esFavorita = !_esFavorita);
   }
 
   Future<void> _comoLlegar(double? lat, double? lon) async {
@@ -193,6 +195,24 @@ class _StoreScreenState extends State<StoreScreen> {
     }
     final url = 'https://www.google.com/maps/search/?api=1&query=$lat,$lon';
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  /// FIX (compartir): antes el ícono de compartir del AppBar tenía
+  /// onPressed: () {} -- no hacía absolutamente nada al tocarlo. Ahora
+  /// arma el mismo tipo de mensaje que ya usa
+  /// product_detail_modal.dart (_shareTienda), usando _tiendaCache si
+  /// ya cargó, o el snapshot del FutureBuilder como respaldo.
+  void _compartirTienda([Map<String, dynamic>? datos]) {
+    final t = datos ?? _tiendaCache;
+    final nombre = (t?['nombre'] as String?)?.trim();
+    final link = 'https://toptrading.app/tienda/${widget.idTienda}';
+    if (nombre == null || nombre.isEmpty) {
+      // Sin nombre todavía cargado (raro, pero por si acaso): igual
+      // compartimos el link, mejor que no hacer nada.
+      Share.share('Mira esta tienda en Al Lado: $link');
+      return;
+    }
+    Share.share('Mira la tienda "$nombre" en Al Lado: $link');
   }
 
   int _cantidad(String idProducto) => _cantidadSeleccionada[idProducto] ?? 0;
@@ -269,8 +289,9 @@ class _StoreScreenState extends State<StoreScreen> {
   Color get _colorTexto => _esOscuro ? const Color(0xFFF5F5F4) : AppColors.ink;
   Color get _colorTextoSecundario =>
       _esOscuro ? AppColors.inkSecundarioDark : AppColors.inkSecundarioLight;
-  Color get _colorSuperficie =>
-      _esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight;
+  Color get _colorSuperficie => _esOscuro
+      ? AppColors.cardTransparentDark
+      : AppColors.cardTransparentLight;
   Color get _colorBorde =>
       (_esOscuro ? AppColors.borderDark : AppColors.borderLight)
           .withOpacity(0.6);
@@ -308,7 +329,10 @@ class _StoreScreenState extends State<StoreScreen> {
                         padding: const EdgeInsets.all(8),
                         child: _botonToolbar(
                           icon: Icons.share_outlined,
-                          onPressed: () {},
+                          // FIX: antes onPressed: () {} -- no hacía
+                          // nada. Ahora comparte nombre + link de la
+                          // tienda (ver _compartirTienda arriba).
+                          onPressed: () => _compartirTienda(),
                         ),
                       ),
                     ],
@@ -324,6 +348,11 @@ class _StoreScreenState extends State<StoreScreen> {
                           );
                         }
                         final t = snapshot.data!;
+                        // Guardamos la copia apenas está disponible,
+                        // así el botón de compartir del AppBar (que
+                        // vive fuera de este FutureBuilder) ya tiene
+                        // el nombre listo sin esperar nada más.
+                        _tiendaCache = t;
                         return Column(
                           children: [
                             _buildPortadaYLogo(t, primary),
@@ -389,10 +418,11 @@ class _StoreScreenState extends State<StoreScreen> {
                           child: Padding(
                             padding: const EdgeInsets.all(32),
                             child: Center(
-                              child: Text('Esta tienda no tiene productos '
+                              child: Text(
+                                  'Esta tienda no tiene productos '
                                   'todavía',
-                                  style: TextStyle(
-                                      color: _colorTextoSecundario)),
+                                  style:
+                                      TextStyle(color: _colorTextoSecundario)),
                             ),
                           ),
                         );
@@ -446,8 +476,8 @@ class _StoreScreenState extends State<StoreScreen> {
                       double total = 0;
                       if (snapshot.hasData) {
                         for (final p in snapshot.data!) {
-                          final cant = CartService.instance
-                              .cantidadDe(p['id_producto']);
+                          final cant =
+                              CartService.instance.cantidadDe(p['id_producto']);
                           total += cant * (p['precio_usd'] as num).toDouble();
                         }
                       }
@@ -470,8 +500,8 @@ class _StoreScreenState extends State<StoreScreen> {
                             animation: CurrencyService.instance,
                             builder: (context, _) => Text(
                               'Ver Carrito (${CurrencyService.instance.formatear(total)})',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w700),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
                             ),
                           ),
                         ),
@@ -495,7 +525,8 @@ class _StoreScreenState extends State<StoreScreen> {
   Widget _buildPortadaYLogo(Map<String, dynamic> t, Color primary) {
     final portada = t['imagen_portada'] as String?;
     final logo = t['logo_url'] as String?;
-    final placeholder = _esOscuro ? const Color(0xFF2A2A2A) : Colors.grey.shade200;
+    final placeholder =
+        _esOscuro ? const Color(0xFF2A2A2A) : Colors.grey.shade200;
     final anilloLogo = _esOscuro ? AppColors.surfaceDark : Colors.white;
 
     return SizedBox(
@@ -624,18 +655,7 @@ class _StoreScreenState extends State<StoreScreen> {
                       ],
                     ),
                   ),
-                  if (!_cargandoFavorito)
-                    IconButton(
-                      icon: Icon(
-                        _esFavorita
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                        color: _esFavorita
-                            ? Colors.redAccent
-                            : _colorTextoSecundario,
-                      ),
-                      onPressed: _toggleFavorito,
-                    ),
+                  BotonFavorito(idTienda: widget.idTienda, size: 24),
                 ],
               ),
               if (t['municipio'] != null) ...[

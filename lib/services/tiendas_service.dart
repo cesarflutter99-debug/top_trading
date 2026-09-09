@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import '../core/supabase_client.dart';
 import '../widgets/analytics_widgets.dart' show RangoAnalitica;
+import 'cache_offline_service.dart';
 
 /// Categorías fijas de tienda -- usadas en el onboarding (crear
 /// tienda), en "Gestionar Tienda" (editar categoría) y como filtro en
@@ -35,18 +36,31 @@ const List<String> kCategoriasTienda = [
 class TiendasService {
   /// Carrusel de arriba: tiendas premium (validación manual del admin)
   Future<List<Map<String, dynamic>>> obtenerCarruselPremium() async {
-    final res = await supabase.rpc('carrusel_premium');
-    return List<Map<String, dynamic>>.from(res);
+    try {
+      final res = await supabase.rpc('carrusel_premium');
+      final lista = List<Map<String, dynamic>>.from(res);
+      CacheOfflineService.instance.guardar('carrusel_premium', lista);
+      return lista;
+    } catch (_) {
+      // OFFLINE: última copia guardada
+      return CacheOfflineService.instance.leerLista('carrusel_premium');
+    }
   }
 
   /// Carrusel de abajo: top trending semanal (automático, resetea lunes)
   Future<List<Map<String, dynamic>>> obtenerCarruselTrending(
       {int limite = 10}) async {
-    final res = await supabase.rpc(
-      'carrusel_top_trending',
-      params: {'limite': limite},
-    );
-    return List<Map<String, dynamic>>.from(res);
+    try {
+      final res = await supabase.rpc(
+        'carrusel_top_trending',
+        params: {'limite': limite},
+      );
+      final lista = List<Map<String, dynamic>>.from(res);
+      CacheOfflineService.instance.guardar('carrusel_trending', lista);
+      return lista;
+    } catch (_) {
+      return CacheOfflineService.instance.leerLista('carrusel_trending');
+    }
   }
 
   /// Búsqueda geoespacial por proximidad (Haversine)
@@ -55,19 +69,27 @@ class TiendasService {
     required double lon,
     double radioKm = 10,
   }) async {
-    final res = await supabase.rpc('buscar_tiendas_cercanas', params: {
-      'lat_usuario': lat,
-      'lon_usuario': lon,
-      'radio_km': radioKm,
-    });
-    return List<Map<String, dynamic>>.from(res);
+    try {
+      final res = await supabase.rpc('buscar_tiendas_cercanas', params: {
+        'lat_usuario': lat,
+        'lon_usuario': lon,
+        'radio_km': radioKm,
+      });
+      final lista = List<Map<String, dynamic>>.from(res);
+      // OFFLINE: guardamos el último resultado (una sola foto global,
+      // sirve para navegar sin conexión aunque no esté "fresca")
+      CacheOfflineService.instance.guardar('tiendas_cercanas', lista);
+      return lista;
+    } catch (_) {
+      return CacheOfflineService.instance.leerLista('tiendas_cercanas');
+    }
   }
 
   /// Crea un producto con su foto ya subida (imagenUrl).
   /// Si la tienda llegó al límite de su plan (20 basic / 50 premium),
-  /// el trigger validar_limite_productos() lanza una excepción que
-  /// hay que capturar en la UI.
-  Future<void> crearProducto({
+  /// crea un producto y devuelve su id_producto (el trigger
+  /// validar_limite_productos() lanza si se excede el límite).
+  Future<String> crearProducto({
     required String idTienda,
     required String nombre,
     required double precioUsd,
@@ -78,17 +100,22 @@ class TiendasService {
     int cantidadDisponible = 1,
     String? categoria,
   }) async {
-    await supabase.from('productos').insert({
-      'id_tienda': idTienda,
-      'nombre': nombre,
-      'precio_usd': precioUsd,
-      'imagen_url': imagenUrl,
-      if (imagenUrl2 != null) 'imagen_url_2': imagenUrl2,
-      if (imagenUrl3 != null) 'imagen_url_3': imagenUrl3,
-      'descripcion': descripcion,
-      'cantidad_disponible': cantidadDisponible,
-      if (categoria != null) 'categoria': categoria,
-    });
+    final res = await supabase
+        .from('productos')
+        .insert({
+          'id_tienda': idTienda,
+          'nombre': nombre,
+          'precio_usd': precioUsd,
+          'imagen_url': imagenUrl,
+          if (imagenUrl2 != null) 'imagen_url_2': imagenUrl2,
+          if (imagenUrl3 != null) 'imagen_url_3': imagenUrl3,
+          'descripcion': descripcion,
+          'cantidad_disponible': cantidadDisponible,
+          if (categoria != null) 'categoria': categoria,
+        })
+        .select('id_producto')
+        .single();
+    return res['id_producto'] as String;
   }
 
   /// Elimina un producto puntual (usado tanto por el admin como,
@@ -137,12 +164,20 @@ class TiendasService {
   /// y en el router para precargar la tienda antes de construir la
   /// pantalla correspondiente.
   Future<Map<String, dynamic>?> obtenerTiendaPorId(String idTienda) async {
-    final res = await supabase
-        .from('tiendas')
-        .select()
-        .eq('id_tienda', idTienda)
-        .maybeSingle();
-    return res;
+    try {
+      final res = await supabase
+          .from('tiendas')
+          .select()
+          .eq('id_tienda', idTienda)
+          .maybeSingle();
+      if (res != null) {
+        CacheOfflineService.instance.guardar('tienda_$idTienda', res);
+      }
+      return res;
+    } catch (_) {
+      // OFFLINE: ficha de la tienda vista antes
+      return CacheOfflineService.instance.leerMapa('tienda_$idTienda');
+    }
   }
 
   /// Trae un producto puntual por su id -- usado para abrir el modal
@@ -165,15 +200,21 @@ class TiendasService {
     String idTienda, {
     int limite = 4,
   }) async {
-    final res = await supabase
-        .from('productos')
-        .select()
-        .eq('id_tienda', idTienda)
-        .eq('es_visible', true)
-        .gt('cantidad_disponible', 0)
-        .order('fecha_creacion', ascending: false)
-        .limit(limite);
-    return List<Map<String, dynamic>>.from(res);
+    try {
+      final res = await supabase
+          .from('productos')
+          .select()
+          .eq('id_tienda', idTienda)
+          .eq('es_visible', true)
+          .gt('cantidad_disponible', 0)
+          .order('fecha_creacion', ascending: false)
+          .limit(limite);
+      final lista = List<Map<String, dynamic>>.from(res);
+      CacheOfflineService.instance.guardar('destacados_$idTienda', lista);
+      return lista;
+    } catch (_) {
+      return CacheOfflineService.instance.leerLista('destacados_$idTienda');
+    }
   }
 
   /// Verifica si el usuario autenticado ya tiene una tienda creada,
@@ -323,14 +364,20 @@ class TiendasService {
   /// interactivo. Solo trae lo que el pin/globito necesita mostrar --
   /// no todo el resto de columnas de 'tiendas'.
   Future<List<Map<String, dynamic>>> obtenerTiendasParaMapa() async {
-    final res = await supabase
-        .from('tiendas')
-        .select(
-            'id_tienda, nombre, logo_url, latitud, longitud, promedio_estrellas, plan, plan_expira_en')
-        .eq('estado', 'active')
-        .not('latitud', 'is', null)
-        .not('longitud', 'is', null);
-    return List<Map<String, dynamic>>.from(res);
+    try {
+      final res = await supabase
+          .from('tiendas')
+          .select(
+              'id_tienda, nombre, logo_url, latitud, longitud, promedio_estrellas, plan, plan_expira_en')
+          .eq('estado', 'active')
+          .not('latitud', 'is', null)
+          .not('longitud', 'is', null);
+      final lista = List<Map<String, dynamic>>.from(res);
+      CacheOfflineService.instance.guardar('tiendas_mapa', lista);
+      return lista;
+    } catch (_) {
+      return CacheOfflineService.instance.leerLista('tiendas_mapa');
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -420,12 +467,19 @@ class TiendasService {
   /// para que el propio dueño (o el admin) los gestione.
   Future<List<Map<String, dynamic>>> obtenerProductosDeTienda(
       String idTienda) async {
-    final res = await supabase
-        .from('productos')
-        .select()
-        .eq('id_tienda', idTienda)
-        .order('fecha_creacion', ascending: false);
-    return List<Map<String, dynamic>>.from(res);
+    try {
+      final res = await supabase
+          .from('productos')
+          .select()
+          .eq('id_tienda', idTienda)
+          .order('fecha_creacion', ascending: false);
+      final lista = List<Map<String, dynamic>>.from(res);
+      CacheOfflineService.instance.guardar('productos_$idTienda', lista);
+      return lista;
+    } catch (_) {
+      // OFFLINE: catálogo visto antes de esta tienda
+      return CacheOfflineService.instance.leerLista('productos_$idTienda');
+    }
   }
 
   /// Edita los datos básicos de la tienda del vendedor. No permite

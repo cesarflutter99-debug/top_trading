@@ -4,6 +4,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
 import '../services/storage_service.dart';
 import '../services/tiendas_service.dart';
+import '../services/anuncios_service.dart';
+import '../widgets/paquete_anuncios_tienda_sheet.dart';
 
 class AgregarProductoScreen extends StatefulWidget {
   final String idTienda;
@@ -30,16 +32,40 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   File? _foto2;
   File? _foto3;
   bool _subiendo = false;
+  bool _potenciarAlPublicar = false;
+  late Future<({int usados, int max, int maxPlan, int maxExtra})>
+      _ranurasFuture;
 
   bool get _esPremium => widget.plan == 'premium';
 
   @override
-  void dispose() {
-    _nombreCtrl.dispose();
-    _precioCtrl.dispose();
-    _descripcionCtrl.dispose();
-    _cantidadCtrl.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _ranurasFuture = AnunciosService().ranurasDeTienda(widget.idTienda);
+  }
+
+  Future<void> _comprarMasRanuras() async {
+    try {
+      final tienda = await TiendasService().obtenerTiendaPorId(widget.idTienda);
+      if (!mounted) return;
+      if (tienda == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo obtener la tienda.')),
+        );
+        return;
+      }
+      await mostrarPaqueteAnunciosTiendaSheet(context, tienda);
+      if (!mounted) return;
+      setState(() {
+        _ranurasFuture = AnunciosService().ranurasDeTienda(widget.idTienda);
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al abrir la compra: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _elegirFoto() async {
@@ -95,8 +121,11 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
         );
       }
 
-      // 2. Insertar el producto (el backend valida el límite del plan)
-      await _tiendasService.crearProducto(
+      // 2. Insertar el producto (el backend valida el límite del plan).
+      // crearProducto() devuelve el id_producto recién creado -- lo
+      // necesitamos para poder potenciarlo enseguida sin volver a
+      // consultar la base de datos.
+      final idProductoCreado = await _tiendasService.crearProducto(
         idTienda: widget.idTienda,
         nombre: _nombreCtrl.text.trim(),
         precioUsd: double.parse(_precioCtrl.text.trim()),
@@ -109,6 +138,36 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
         cantidadDisponible: int.parse(_cantidadCtrl.text.trim()),
         categoria: _categoriaSeleccionada,
       );
+
+      // 3. Opcional: potenciar el producto en el feed de inicio. Fallo
+      // silencioso -- el producto ya quedó publicado igual, no vale la
+      // pena mostrar un error si solo falló el "extra" de potenciarlo.
+      if (_potenciarAlPublicar && mounted) {
+        try {
+          await AnunciosService().potenciarProducto(
+            idTienda: widget.idTienda,
+            idProducto: idProductoCreado,
+            titulo: _nombreCtrl.text.trim(),
+            texto: 'Nuevo producto: ${_nombreCtrl.text.trim()} a '
+                '\$${_precioCtrl.text.trim()} USD. ¡Pídelo ya!',
+            imagenUrl: url,
+          );
+        } catch (e) {
+          debugPrint('Error al potenciar al crear: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                e.toString().contains('CUPO_ANUNCIOS')
+                    ? 'No quedan ranuras de anuncio para potenciar '
+                        'este producto. Puedes comprar más ranuras.'
+                    : 'El producto se publicó, pero no se pudo potenciar '
+                        'en el feed.',
+              ),
+            ));
+          }
+          _potenciarAlPublicar = false;
+        }
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -354,6 +413,53 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
               validator: (v) => v == null ? 'Selecciona una categoría' : null,
             ),
             const SizedBox(height: 28),
+
+            FutureBuilder<({int usados, int max, int maxPlan, int maxExtra})>(
+              future: _ranurasFuture,
+              builder: (context, snap) {
+                final ranuras = snap.data;
+                final hayCupo =
+                    ranuras != null && ranuras.max > 0 && ranuras.usados < ranuras.max;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _potenciarAlPublicar && hayCupo,
+                      onChanged: hayCupo
+                          ? (v) => setState(() => _potenciarAlPublicar = v)
+                          : null,
+                      title: const Text('Potenciar en el feed'),
+                      subtitle: Text(
+                        ranuras == null
+                            ? 'Consultando ranuras disponibles...'
+                            : hayCupo
+                                ? 'Usa ${ranuras.usados + 1} de ${ranuras.max} ranuras de tu plan'
+                                : (ranuras.max <= 0
+                                    ? 'Tu plan no incluye ranuras de anuncio'
+                                    : 'Sin ranuras libres (${ranuras.usados}/${ranuras.max})'),
+                        style: GoogleFonts.plusJakartaSans(fontSize: 12),
+                      ),
+                    ),
+                    if (ranuras != null && !hayCupo) ...[
+                      const SizedBox(height: 4),
+                      TextButton.icon(
+                        onPressed: _comprarMasRanuras,
+                        icon: const Icon(Icons.shopping_cart_outlined,
+                            size: 17),
+                        label: const Text('Comprar más ranuras'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          alignment: Alignment.centerLeft,
+                          padding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 8),
 
             FilledButton(
               onPressed: _subiendo ? null : _guardarProducto,

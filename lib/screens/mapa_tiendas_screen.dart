@@ -21,12 +21,17 @@ import 'package:latlong2/latlong.dart';
 import 'dart:ui' as ui show Path;
 import '../core/app_colors.dart';
 import '../services/location_service.dart';
+import '../services/negocios_service.dart';
 import '../services/tiendas_service.dart';
 
 // Centro por defecto: La Habana, Cuba.
 const LatLng _kCentroLaHabana = LatLng(23.1136, -82.3666);
 const double _kZoomUmbral = 14; // a partir de acá se revela el pin con nombre
 const Color _kDorado = Color(0xFFD4AF37);
+
+// Color identitario de los negocios/servicios en toda la app
+// (mismo verde que los anuncios tipo 'negocio' y la mini-página).
+const Color _kVerdeNegocio = Color(0xFF0D9488);
 
 class MapaTiendasScreen extends StatefulWidget {
   const MapaTiendasScreen({super.key});
@@ -41,6 +46,8 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   final MapController _mapController = MapController();
 
   late Future<List<Map<String, dynamic>>> _tiendasFuture;
+  // NEGOCIOS: barberías, talleres, etc. -- capa aparte de pines verdes.
+  late Future<List<Map<String, dynamic>>> _negociosFuture;
   LatLng? _miUbicacion;
   bool _cargandoUbicacion = true;
   double _zoomActual = 12;
@@ -50,6 +57,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   void initState() {
     super.initState();
     _tiendasFuture = _tiendasService.obtenerTiendasParaMapa();
+    _negociosFuture = NegociosService().obtenerNegociosParaMapa();
     _pedirUbicacion();
     // Trackea el zoom en vivo para decidir si mostrar puntos chicos o
     // el pin grande con detalle, y reposiciona la foto flotante del
@@ -363,6 +371,65 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                         ),
                       );
                     }).toList(),
+                  ),
+                  // ---- NEGOCIOS (verde): capa aparte. Al tocar van
+                  // directo a la mini-página /negocio/:id -- no usan el
+                  // globito de selección de las tiendas porque su
+                  // mini-página ya ES el detalle.
+                  FutureBuilder<List<Map<String, dynamic>>>(
+                    future: _negociosFuture,
+                    builder: (context, snapN) {
+                      final negocios = (snapN.data ?? [])
+                          .where((n) =>
+                              n['latitud'] != null && n['longitud'] != null)
+                          .toList();
+                      return MarkerLayer(
+                        markers: negocios.map((n) {
+                          final punto = LatLng(
+                            (n['latitud'] as num).toDouble(),
+                            (n['longitud'] as num).toDouble(),
+                          );
+                          if (detalleVisible) {
+                            return Marker(
+                              point: punto,
+                              width: 112,
+                              height: 74,
+                              alignment: Alignment.bottomCenter,
+                              child: _PinNegocioDetallado(
+                                negocio: n,
+                                onTap: () => context
+                                    .push('/negocio/${n['id_negocio']}'),
+                              ),
+                            );
+                          }
+                          return Marker(
+                            point: punto,
+                            width: 18,
+                            height: 18,
+                            alignment: Alignment.bottomCenter,
+                            child: GestureDetector(
+                              onTap: () => context
+                                  .push('/negocio/${n['id_negocio']}'),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _kVerdeNegocio,
+                                  border: Border.all(
+                                      color: Colors.white, width: 2),
+                                  boxShadow: [
+                                    BoxShadow(
+                                        color:
+                                            Colors.black.withOpacity(0.2),
+                                        blurRadius: 3,
+                                        offset: const Offset(0, 1)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      );
+                    },
                   ),
                 ],
               );
@@ -679,6 +746,107 @@ class _PinTiendaDetallado extends StatelessWidget {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(Icons.storefront_rounded, size: 10, color: color),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pin detallado de NEGOCIO (barbería, taller...): mismo formato que el
+/// de tiendas pero verde y con tijeras en la gota + categoría en lugar
+/// de estrellas. Al tocar abre directo la mini-página.
+class _PinNegocioDetallado extends StatelessWidget {
+  final Map<String, dynamic> negocio;
+  final VoidCallback onTap;
+
+  const _PinNegocioDetallado({required this.negocio, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final categoria = negocio['categoria']?.toString();
+
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          Container(
+            constraints: const BoxConstraints(maxWidth: 108),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _kVerdeNegocio.withOpacity(0.4)),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 3,
+                    offset: const Offset(0, 1)),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  negocio['nombre'] ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      height: 1.1,
+                      color: AppColors.inkLight),
+                ),
+                if (categoria != null && categoria.isNotEmpty)
+                  Text(
+                    categoria,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 9.5,
+                        height: 1.1,
+                        color: AppColors.inkSecundarioLight),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 1),
+          SizedBox(
+            width: 30,
+            height: 38,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  Icons.location_on,
+                  size: 34,
+                  color: _kVerdeNegocio,
+                  shadows: [
+                    Shadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1)),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 9),
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.content_cut_rounded,
+                        size: 10, color: _kVerdeNegocio),
                   ),
                 ),
               ],

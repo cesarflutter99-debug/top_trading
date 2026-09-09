@@ -23,9 +23,14 @@ class CurrencyService extends ChangeNotifier {
   Moneda _moneda = Moneda.usd;
   double? _tasaCupPorUsd;
   DateTime? _tasaActualizada;
+  // True cuando no hay tasa real de Supabase y usamos el valor de
+  // respaldo (320). La UI lo puede exponer para avisarle al usuario
+  // que el precio en CUP es una estimación.
+  bool _usandoFallback = false;
 
   Moneda get moneda => _moneda;
   double? get tasa => _tasaCupPorUsd;
+  bool get usandoFallback => _usandoFallback;
 
   void toggle() {
     _moneda = _moneda == Moneda.usd ? Moneda.cup : Moneda.usd;
@@ -42,11 +47,22 @@ class CurrencyService extends ChangeNotifier {
   Future<void> _cargarTasa() async {
     try {
       final valor = await _tasaCambioService.obtenerValorUsdCup();
-      _tasaCupPorUsd = valor ?? (_tasaCupPorUsd ?? 320);
+      if (valor != null && valor > 0) {
+        _tasaCupPorUsd = valor;
+        _usandoFallback = false;
+      } else if (_tasaCupPorUsd == null) {
+        _tasaCupPorUsd = 320;
+        _usandoFallback = true;
+      }
       _tasaActualizada = DateTime.now();
       notifyListeners();
     } catch (_) {
-      _tasaCupPorUsd ??= 320;
+      if (_tasaCupPorUsd == null) {
+        _tasaCupPorUsd = 320;
+        _usandoFallback = true;
+        _tasaActualizada = DateTime.now();
+      }
+      notifyListeners();
     }
   }
 

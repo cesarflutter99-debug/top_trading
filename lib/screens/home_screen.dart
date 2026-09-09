@@ -2,6 +2,7 @@ import 'dart:ui' show ImageFilter;
 import 'dart:async';
 import 'dart:math' as math;
 import 'gestionar_planes_screen.dart';
+import 'standalone_anuncio_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -15,40 +16,31 @@ import 'package:provider/provider.dart';
 import '../services/theme_provider.dart';
 import '../services/tienda_state_service.dart';
 import '../services/afiliado_state_service.dart';
+import '../services/connectivity_service.dart';
+import '../services/anuncios_service.dart';
+import '../services/anuncios_state_service.dart';
+import '../services/negocio_state_service.dart';
 import '../core/app_colors.dart';
 
-// Se añade 'hide supabase' para evitar el conflicto de nombres
-// Asegúrate de que el import sea correcto y sin el "hide" que causaba el error anterior
 import 'package:top_trading/widgets/product_detail_modal.dart';
+import 'package:top_trading/widgets/tarjeta_anuncio.dart';
 
 import 'panel_vendedor_screen.dart';
 import '../widgets/notification_bell.dart';
 import 'valorar_pedido_screen.dart';
 import '../services/notificaciones_service.dart';
 import 'tasa_cambio_screen.dart';
+import '../core/provincias_cuba.dart';
 
 // ---------------------------------------------------------------------
-// ESTILO VISUAL (paleta cálida coral + crema, tarjetas redondeadas,
-// insignias tipo pill). Solo cambia apariencia: colores, formas,
-// sombras y tipografía -- ninguna sección ni función se agregó o quitó.
+// ESTILO VISUAL -- ver notas originales de paleta.
 // ---------------------------------------------------------------------
-// Estos valores ahora viven en core/app_colors.dart (AppColors) para
-// que toda la app los comparta -- se dejan estos alias para no tener
-// que tocar las decenas de líneas de este archivo que ya los usan.
-//
-// FIX (paleta): _kCoral/_kCoralDark apuntaban a AppColors.coral (el
-// naranja), pero según el propio app_colors.dart ese naranja es el
-// "acento cálido VIP/premium/destacados", NO el color primario de
-// marca -- el primario real de toda la app es el azul sistema
-// (AppColors.primary). Por eso Home se veía "naranja feo" y
-// desalineado del resto de las pantallas: apuntaban al color
-// equivocado. _kGold sigue siendo el dorado exclusivo del sello VIP.
 const _kCoral = AppColors.primary;
 const _kCoralDark = AppColors.primaryDark;
 const _kCream = AppColors.crema;
 const _kInk = AppColors.ink;
 const _kCardRadius = kCardRadius;
-const _kGold = Color(0xFFD4AF37); // Sello "VIP" en todas las tarjetas de tienda
+const _kGold = Color(0xFFD4AF37);
 
 List<BoxShadow> get _kSoftShadow => [
       BoxShadow(
@@ -64,17 +56,56 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   final _tiendasService = TiendasService();
   final _productosService = ProductosService();
   final _locationService = LocationService();
-  // Guardada aparte de _cargarCercanas() para poder calcular distancia
-  // también en la sección "Más Vendidos" (ver _distanciaKm más abajo).
+  final _anunciosService = AnunciosService();
   double? _miLat;
   double? _miLon;
+
+  // ANUNCIOS: dos futuros -- el del feed (se intercala cada 3 bloques de
+  // tienda) y el del carrusel superior (solo admin). Se recargan con el
+  // pull-to-refresh y TAMBIÉN cada vez que vuelves a la pestaña Inicio
+  // (rotarAnuncios, llamada desde MainShellScreen) para que con muchas
+  // tiendas/anuncios todos roten sin esperar el refresh manual.
+  late Future<List<Anuncio>> _anunciosFeed;
+  late Future<List<Anuncio>> _anunciosCarrusel;
+  // CTA nativo "promociona tu negocio": se decide una vez por carga
+  // (RPC cta_negocio_activo) y se pinta como banner ocasional.
+  bool _ctaNegocio = false;
+
+  void _cargarAnuncios() {
+    if (!ConnectivityService.instance.online) {
+      _anunciosFeed = Future.value(const []);
+      _anunciosCarrusel = Future.value(const []);
+      _ctaNegocio = false;
+      return;
+    }
+    _anunciosFeed = _anunciosService.obtenerFeed(cantidad: 3);
+    _anunciosCarrusel = _anunciosService.obtenerCarrusel(limite: 5);
+    // Estado del negocio propio (para ocultar el CTA si ya registró
+    // uno). El catch interno del servicio lo hace offline-safe.
+    NegocioStateService.instance.refrescar();
+    _anunciosService
+        .ctaNegocioActivo()
+        .then((v) {
+          if (mounted) setState(() => _ctaNegocio = v);
+        })
+        .catchError((_) {});
+  }
+
+  /// Rotación de anuncios al volver a la pestaña Inicio (opción B).
+  /// Público: lo invoca MainShellScreen vía GlobalKey cuando el usuario
+  /// navega de vuelta a esta pestaña. Solo regenera los anuncios; el
+  /// resto del contenido (carruseles, cercanas) NO se recarga.
+  void rotarAnuncios() {
+    _cargarAnuncios();
+    if (mounted) setState(() {});
+  }
 
   late Future<List<Map<String, dynamic>>> _premium;
   late Future<List<Map<String, dynamic>>> _trending;
@@ -82,24 +113,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<List<Map<String, dynamic>>>? _tiendasCercanas;
   String? _errorUbicacion;
 
-  // ---- Carrusel hero de tiendas premium (arriba del todo) ----
   final PageController _heroController = PageController();
   Timer? _heroAutoplayTimer;
   int _heroPaginaActual = 0;
-  bool _heroAutoplayIniciado =
-      false; // evita reiniciar el Timer en cada rebuild del FutureBuilder
+  bool _heroAutoplayIniciado = false;
 
-  // FIX (persistencia): _miTienda/_miAfiliado/_cargandoRol ya NO se
-  // cachean localmente acá. Antes cada pantalla (Home, Mi Perfil,
-  // Panel Vendedor...) guardaba su propia copia con setState(), así
-  // que crear/editar/eliminar una tienda o afiliarse en una pantalla
-  // no se reflejaba en las demás hasta cerrar y reabrir la app. Ahora
-  // Home lee directo de TiendaStateService.instance /
-  // AfiliadoStateService.instance (ver getters más abajo) y el
-  // build() entero está envuelto en un AnimatedBuilder que escucha a
-  // ambos servicios -- cualquier cambio se refleja en el mismo frame.
-
-  // ---- Filtro / búsqueda del feed de cercanos ----
   _ModoCercanos _modo = _ModoCercanos.productos;
 
   bool _filtroDistanciaActivo = false;
@@ -107,18 +125,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _filtroPrecioActivo = false;
   String? _categoriaSeleccionada;
+  String? _provinciaSeleccionada;
+  String? _municipioSeleccionado;
   final _precioMinCtrl = TextEditingController(text: '0');
   final _precioMaxCtrl = TextEditingController();
 
   final _busquedaCtrl = TextEditingController();
   String _busqueda = '';
 
-  // Caché de datos completos de tienda (logo, rating, plan), usada como
-  // respaldo cuando el RPC de productos cercanos no trae esos campos
-  // embebidos en cada producto -- así el círculo de la tienda siempre
-  // muestra la foto real y el puntaje, en vez de quedarse en el ícono
-  // genérico. Cacheado por id_tienda para no repetir la consulta en
-  // cada rebuild/scroll.
   final Map<String, Future<Map<String, dynamic>?>> _tiendaInfoCache = {};
 
   Future<Map<String, dynamic>?> _tiendaInfo(String idTienda) {
@@ -133,18 +147,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic>? get _miAfiliado =>
       AfiliadoStateService.instance.miAfiliado;
   bool get _cargandoRol =>
-      TiendaStateService.instance.cargando || AfiliadoStateService.instance.cargando;
+      TiendaStateService.instance.cargando ||
+      AfiliadoStateService.instance.cargando;
   bool get _esVendedor => _miTienda != null;
   bool get _esPremium =>
       _miTienda != null &&
       (_miTienda!['plan'] as String? ?? 'basic') == 'premium';
   bool get _esAfiliado => _miAfiliado != null;
 
-  // ---- Colores derivados del tema activo (claro/oscuro) ----
-  // Estos SÍ cambian con el modo oscuro, a diferencia de _kCoral/_kInk/
-  // _kCream que son la paleta de marca fija. Se usan para fondos de
-  // tarjetas, texto y placeholders -- todo lo que antes estaba
-  // hardcodeado en blanco/negro y por eso no respondía al toggle.
   bool get _esOscuro => Theme.of(context).brightness == Brightness.dark;
   Color get _colorFondo => Theme.of(context).scaffoldBackgroundColor;
   Color get _colorSuperficie => Theme.of(context).colorScheme.surface;
@@ -159,22 +169,24 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _premium = _tiendasService.obtenerCarruselPremium();
     _trending = _tiendasService.obtenerCarruselTrending(limite: 10);
+    _cargarAnuncios();
     _cargarCercanas();
     TiendaStateService.instance.cargar();
     AfiliadoStateService.instance.cargar();
+    // Sesión restaurada en frío: sin esto los canales de notificaciones
+    // y de "mis anuncios" nunca arrancan al reabrir la app ya logueado.
+    if (supabase.auth.currentUser != null) {
+      NotificacionesService.instance.iniciar();
+      AnunciosStateService.instance.iniciar();
+    }
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _verificarAvisoDeValoracion());
   }
 
-  /// Revisa si hay una notificación sin leer de tipo "valorar_servicio"
-  /// (se crea automáticamente cuando el vendedor marca un pedido como
-  /// completado -- ver notificar_pedido_completado() en SQL) y, si la
-  /// hay, muestra un diálogo bloqueante pidiendo valorar la compra.
-  /// Vuelve a aparecer cada vez que se abre Home hasta que el usuario
-  /// elija "Valorar ahora" (que la marca como leída).
   Future<void> _verificarAvisoDeValoracion() async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) return;
+    if (!ConnectivityService.instance.online) return;
 
     final notif = await supabase
         .from('notificaciones')
@@ -191,8 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final data = notif['data'] as Map<String, dynamic>?;
     final idPedido = data?['id_pedido'] as String?;
     final idTienda = data?['id_tienda'] as String?;
-    if (idPedido == null)
-      return; // notificación mal formada, no bloqueamos al usuario
+    if (idPedido == null) return;
 
     showDialog(
       context: context,
@@ -237,10 +248,6 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // ---- Autoplay del carrusel hero: avanza de tienda cada 5s. Se
-  // pausa mientras el usuario tiene el dedo encima (ver
-  // NotificationListener<ScrollNotification> en _seccionFeaturedStoresHero)
-  // y se reanuda al soltar. ----
   void _iniciarAutoplayHero(int cantidadTiendas) {
     if (_heroAutoplayIniciado || cantidadTiendas <= 1) return;
     _heroAutoplayIniciado = true;
@@ -265,10 +272,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _heroAutoplayTimer?.cancel();
   }
 
-  /// Alias que fuerza un refresco de ambos servicios globales (tienda
-  /// y afiliado). Cada uno es independiente: si uno falla, el otro
-  /// igual se resuelve -- misma garantía que antes tenía la versión
-  /// local de este método.
   Future<void> _cargarRol() async {
     await Future.wait([
       TiendaStateService.instance.refrescar(),
@@ -284,14 +287,11 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     try {
       final pos = await _locationService.obtenerUbicacionActual();
-      // FIX: verificamos `mounted` tras el await, igual que en _cargarRol.
-      // Si el usuario navegó fuera de Home mientras se esperaba la
-      // ubicación, llamar a setState aquí lanzaría una excepción.
       if (!mounted) return;
       _miLat = pos.latitude;
       _miLon = pos.longitude;
 
-      final radio = _filtroDistanciaActivo ? _radioKm : 10.0;
+      final radio = _filtroDistanciaActivo ? _radioKm : 20000.0;
       double? precioMin;
       double? precioMax;
       if (_filtroPrecioActivo && _modo == _ModoCercanos.productos) {
@@ -324,27 +324,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // FIX (logout no funcionaba): el ListTile llamaba a
-  // _handleLogout(innerContext), y esta función hacía
-  // Navigator.of(context).pop() (cerrar el drawer) usando ESE MISMO
-  // context, y luego un `await` (signOut). El drawer se desmonta al
-  // cerrarse, así que cuando el await terminaba, `innerContext.mounted`
-  // ya era false y `context.go('/login')` nunca se ejecutaba.
-  //
-  // Ahora: el pop() del drawer se hace en el onTap (con innerContext,
-  // que sí es válido en ese momento) y la lógica async usa el context/
-  // mounted del propio State, que vive mientras HomeScreen exista.
   Future<void> _cerrarSesion() async {
     try {
       await supabase.auth.signOut();
-      // Cierra el canal de Realtime y limpia la lista en memoria -- si
-      // no, el próximo usuario que inicie sesión en este mismo
-      // dispositivo podría ver por un instante las notificaciones del
-      // anterior mientras se recarga.
       NotificacionesService.instance.limpiar();
+      AnunciosStateService.instance.limpiar();
       if (mounted) {
-        // FIX: '/login' ya no existe (se fusionó con WelcomeScreen).
-        // Ahora se redirige a '/', que es la ruta de WelcomeScreen.
         context.go('/');
       }
     } catch (e) {
@@ -356,12 +341,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // FIX (doble pop): antes estas funciones volvían a hacer
-  // Navigator.of(context).pop() aunque el drawer ya se había cerrado
-  // desde el onTap del ListTile correspondiente. Eso terminaba
-  // haciendo pop() sobre la propia pantalla HomeScreen (sacándola de
-  // la pila, o lanzando un assertion si era la ruta raíz). Se quita
-  // el pop duplicado: el cierre del drawer queda a cargo del onTap.
   void _abrirMiTienda() {
     if (_miTienda == null) return;
     Navigator.of(context).push(
@@ -389,15 +368,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // -----------------------------------------------------------------------
-  // MODAL DE FILTROS (distancia, precio y modo Productos/Tiendas)
-  // -----------------------------------------------------------------------
   Future<void> _abrirFiltro() async {
     _ModoCercanos modoTemp = _modo;
     bool distActivaTemp = _filtroDistanciaActivo;
     double radioTemp = _radioKm;
     bool precioActivoTemp = _filtroPrecioActivo;
     String? categoriaTemp = _categoriaSeleccionada;
+    String? provinciaTemp = _provinciaSeleccionada;
+    String? municipioTemp = _municipioSeleccionado;
 
     await showModalBottomSheet(
       context: context,
@@ -428,8 +406,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text('Filtrar búsqueda',
                       style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 16),
-
-                  // Modo: Productos vs Tiendas
                   SegmentedButton<_ModoCercanos>(
                     segments: const [
                       ButtonSegment(
@@ -448,8 +424,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         setModalState(() => modoTemp = s.first),
                   ),
                   const SizedBox(height: 20),
-
-                  // Filtro de distancia
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Filtrar por distancia'),
@@ -467,8 +441,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       label: '${radioTemp.toStringAsFixed(0)} km',
                       onChanged: (v) => setModalState(() => radioTemp = v),
                     ),
-
-                  // Filtro de categoría (aplica en Productos y Tiendas)
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String?>(
                     value: categoriaTemp,
@@ -492,8 +464,61 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                     onChanged: (v) => setModalState(() => categoriaTemp = v),
                   ),
-
-                  // Filtro de precio (solo en modo Productos)
+                  const SizedBox(height: 16),
+                  Text('Ubicación',
+                      style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String?>(
+                    value: provinciaTemp,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Provincia',
+                      prefixIcon: Icon(Icons.location_city_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Todas las provincias'),
+                      ),
+                      ...kProvinciasCuba.map(
+                        (p) => DropdownMenuItem<String?>(
+                          value: p,
+                          child: Text(p, overflow: TextOverflow.ellipsis),
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) => setModalState(() {
+                      provinciaTemp = v;
+                      municipioTemp = null;
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String?>(
+                    value: municipioTemp,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Municipio',
+                      prefixIcon: Icon(Icons.place_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Todos los municipios'),
+                      ),
+                      if (provinciaTemp != null)
+                        ...municipiosDe(provinciaTemp!).map(
+                          (m) => DropdownMenuItem<String?>(
+                            value: m,
+                            child:
+                                Text(m, overflow: TextOverflow.ellipsis),
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) =>
+                        setModalState(() => municipioTemp = v),
+                  ),
                   if (modoTemp == _ModoCercanos.productos) ...[
                     const SizedBox(height: 8),
                     SwitchListTile(
@@ -548,7 +573,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                     ],
                   ],
-
                   const SizedBox(height: 24),
                   Row(
                     children: [
@@ -559,6 +583,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               distActivaTemp = false;
                               precioActivoTemp = false;
                               categoriaTemp = null;
+                              provinciaTemp = null;
+                              municipioTemp = null;
                               _precioMinCtrl.text = '0';
                               _precioMaxCtrl.clear();
                             });
@@ -577,6 +603,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     _radioKm = radioTemp;
                                     _filtroPrecioActivo = precioActivoTemp;
                                     _categoriaSeleccionada = categoriaTemp;
+                                    _provinciaSeleccionada = provinciaTemp;
+                                    _municipioSeleccionado = municipioTemp;
                                   });
                                   Navigator.of(ctx).pop();
                                   _cargarCercanas();
@@ -596,15 +624,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // -----------------------------------------------------------------------
-  // MODAL "VER TODAS" -- reutilizable para Destacadas/VIP y Más Vendidos.
-  // Cada fila tiene tap completo + botón "Ver tienda" explícito: ambos
-  // caminos llevan a la misma pantalla de tienda.
-  // -----------------------------------------------------------------------
-  Future<void> _abrirModalListaTiendas({
+  /// "Ver todos" de los carruseles (Destacadas y Popular esta semana).
+  /// FIX (2026-08): ahora es un widget con BUSCADOR -- filtra en vivo
+  /// por nombre, municipio, provincia, categoría o descripción.
+  void _abrirModalListaTiendas({
     required Future<List<Map<String, dynamic>>> future,
     required String titulo,
-  }) async {
+  }) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -613,156 +639,25 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (ctx) => DraggableScrollableSheet(
         expand: false,
         initialChildSize: 0.7,
-        builder: (ctx, scrollController) {
-          return FutureBuilder<List<Map<String, dynamic>>>(
-            future: future,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final tiendas = snapshot.data ?? [];
-              return Column(
-                children: [
-                  Container(
-                    margin: const EdgeInsets.only(top: 10),
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Text(titulo,
-                        style: GoogleFonts.inter(
-                            fontSize: 19,
-                            fontWeight: FontWeight.w800,
-                            color: _colorTexto)),
-                  ),
-                  Expanded(
-                    child: tiendas.isEmpty
-                        ? const Center(child: Text('Nada por aquí todavía'))
-                        : ListView.builder(
-                            controller: scrollController,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            itemCount: tiendas.length,
-                            itemBuilder: (context, i) {
-                              final t = Map<String, dynamic>.from(tiendas[i]);
-                              // Igual que en la sección "Popular esta semana":
-                              // si el RPC no trae distancia_km ya calculada,
-                              // la calculamos aquí mismo con la ubicación
-                              // del usuario y la lat/lon de la tienda.
-                              final tLat = (t['latitud'] as num?)?.toDouble();
-                              final tLon = (t['longitud'] as num?)?.toDouble();
-                              if (t['distancia_km'] == null &&
-                                  _miLat != null &&
-                                  _miLon != null &&
-                                  tLat != null &&
-                                  tLon != null) {
-                                t['distancia_km'] =
-                                    _distanciaKm(_miLat!, _miLon!, tLat, tLon);
-                              }
-                              final distancia =
-                                  (t['distancia_km'] as num?)?.toDouble();
-                              final esVip =
-                                  (t['plan'] as String? ?? '').toLowerCase() ==
-                                      'premium';
-
-                              void irATienda() {
-                                Navigator.of(ctx).pop();
-                                context.push('/tienda/${t['id_tienda']}');
-                              }
-
-                              return ListTile(
-                                onTap: irATienda,
-                                leading: Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    ClipOval(
-                                      child: SizedBox(
-                                        width: 40,
-                                        height: 40,
-                                        child: Image.network(
-                                          t['logo_url'] ?? '',
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) =>
-                                              Container(
-                                            color: _colorPlaceholder,
-                                            child: Icon(Icons.storefront,
-                                                size: 18,
-                                                color: _colorTextoSecundario),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    if (esVip)
-                                      Positioned(
-                                        bottom: -2,
-                                        right: -2,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(2),
-                                          decoration: const BoxDecoration(
-                                            color: _kGold,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(Icons.star_rounded,
-                                              size: 10, color: Colors.white),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                title: Text(t['nombre'] ?? '',
-                                    style: GoogleFonts.inter(
-                                        fontWeight: FontWeight.w600)),
-                                subtitle: Text(
-                                  [
-                                    if (t['municipio'] != null)
-                                      '${t['municipio']}',
-                                    if (distancia != null)
-                                      '${distancia.toStringAsFixed(1)} km',
-                                  ].join(' · '),
-                                  style: GoogleFonts.inter(
-                                      fontSize: 12,
-                                      color: _colorTextoSecundario),
-                                ),
-                                trailing: TextButton(
-                                  onPressed: irATienda,
-                                  style: TextButton.styleFrom(
-                                    backgroundColor: _kCoral.withOpacity(0.12),
-                                    foregroundColor: _kCoralDark,
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(20)),
-                                  ),
-                                  child: const Text('Ver tienda'),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              );
-            },
-          );
-        },
+        builder: (ctx, scrollController) => _ModalListaTiendas(
+          future: future,
+          titulo: titulo,
+          scrollController: scrollController,
+          miLat: _miLat,
+          miLon: _miLon,
+        ),
       ),
     );
   }
 
-  Future<void> _abrirModalPremium() =>
+  void _abrirModalPremium() =>
       _abrirModalListaTiendas(future: _premium, titulo: 'Tiendas Destacadas');
 
-  Future<void> _abrirModalTopSellers() =>
+  void _abrirModalTopSellers() =>
       _abrirModalListaTiendas(future: _trending, titulo: 'Popular esta semana');
 
   @override
   Widget build(BuildContext context) {
-    // FIX (persistencia): todo el build queda envuelto escuchando los
-    // dos servicios globales -- así, si otra pantalla crea/edita/
-    // elimina la tienda o el perfil de afiliado, Home se repinta solo
-    // en el mismo frame, sin esperar a que se vuelva a montar.
     return AnimatedBuilder(
       animation: TiendaStateService.instance,
       builder: (context, _) => AnimatedBuilder(
@@ -790,10 +685,6 @@ class _HomeScreenState extends State<HomeScreen> {
             return ListView(
               padding: EdgeInsets.zero,
               children: [
-                // ---------- Header: foto + nombre + email de Google ----------
-                // Tappable en vez de tener una fila "Mi Perfil" aparte --
-                // el chevron en la esquina es la pista visual de que se
-                // puede tocar para entrar al perfil.
                 InkWell(
                   onTap: () {
                     Navigator.of(innerContext).pop();
@@ -864,6 +755,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
+                // NUEVO: acceso directo a "Mis Pedidos" (historial de
+                // compras del usuario) -- antes la ruta '/mis-pedidos'
+                // existía en router.dart pero no estaba enlazada desde
+                // ningún lado de la navegación.
+                if (supabase.auth.currentUser != null)
+                  ListTile(
+                    leading: const Icon(Icons.receipt_long_outlined),
+                    title: const Text('Mis Pedidos'),
+                    onTap: () {
+                      Navigator.of(innerContext).pop();
+                      context.push('/mis-pedidos');
+                    },
+                  ),
+
                 if (!_cargandoRol) ...[
                   if (_esAfiliado)
                     ListTile(
@@ -906,18 +811,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                 ),
                 ListTile(
-                  leading: Icon(
-                      // Cambia el icono dependiendo del estado
-                      Provider.of<ThemeProvider>(context).isDarkMode
-                          ? Icons.dark_mode
-                          : Icons.light_mode),
+                  leading: Icon(Provider.of<ThemeProvider>(context).isDarkMode
+                      ? Icons.dark_mode
+                      : Icons.light_mode),
                   title: Text(Provider.of<ThemeProvider>(context).isDarkMode
                       ? "Modo Oscuro"
                       : "Modo Claro"),
                   trailing: Switch(
                     value: Provider.of<ThemeProvider>(context).isDarkMode,
                     onChanged: (value) {
-                      // Aquí se invoca el cambio de tema
                       Provider.of<ThemeProvider>(context, listen: false)
                           .toggleTheme();
                     },
@@ -929,9 +831,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: const Text('Cerrar Sesión',
                       style: TextStyle(color: Colors.red)),
                   onTap: () {
-                    // Cierra el drawer con el context del drawer (válido
-                    // en este momento) y recién luego dispara la
-                    // lógica async, que usa el context/mounted del State.
                     Navigator.of(innerContext).pop();
                     _cerrarSesion();
                   },
@@ -953,12 +852,6 @@ class _HomeScreenState extends State<HomeScreen> {
               centerTitle: true,
               elevation: 0,
               scrolledUnderElevation: 0,
-              // FIX (vidrio flotante): antes era un color sólido
-              // (_kCoral). Ahora es translúcido -- deja ver el blur
-              // del BackdropFilter de arriba, que difumina lo que
-              // esté scrolleando detrás (el Scaffold tiene
-              // extendBodyBehindAppBar: true para que el contenido
-              // sí pase por detrás y haya algo que difuminar).
               backgroundColor: _kCoral.withOpacity(0.85),
               surfaceTintColor: Colors.transparent,
               shape: const RoundedRectangleBorder(
@@ -980,14 +873,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               actions: [
-                // FIX (choque de campanitas duplicadas): antes esta era
-                // una implementación inline con su propio Stack/Positioned
-                // y Navigator.push() -- distinta de NotificationBell (que
-                // nadie usaba) y con un badge que quedaba demasiado
-                // pegado al ícono de Tasa de Cambio de al lado. Ahora usa
-                // el mismo widget compartido que el resto de la app, con
-                // context.push() de go_router (no Navigator.push suelto)
-                // y un badge con más aire respecto al ícono vecino.
+                // NUEVO: punto de estado online/oscuro -- verde con
+                // wifi si hay conexión, rojo tachado si no. Toque
+                // muestra un mensaje breve, no navega a ningún lado.
+                AnimatedBuilder(
+                  animation: ConnectivityService.instance,
+                  builder: (context, _) {
+                    final online = ConnectivityService.instance.online;
+                    return Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Tooltip(
+                        message: online
+                            ? 'Conectado'
+                            : 'Sin conexión -- viendo datos guardados',
+                        child: Icon(
+                          online ? Icons.wifi_rounded : Icons.wifi_off_rounded,
+                          size: 20,
+                          color: online ? Colors.white : Colors.amber.shade200,
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 const NotificationBell(),
                 IconButton(
                   icon: const Icon(Icons.currency_exchange_rounded),
@@ -1013,6 +920,7 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             _premium = _tiendasService.obtenerCarruselPremium();
             _trending = _tiendasService.obtenerCarruselTrending(limite: 10);
+            _cargarAnuncios();
           });
           await _cargarCercanas();
           await _cargarRol();
@@ -1023,13 +931,321 @@ class _HomeScreenState extends State<HomeScreen> {
             bottom: MediaQuery.of(context).padding.bottom + 96,
           ),
           children: [
+            _seccionAnunciosAdmin(),
             _seccionFeaturedStoresHero(),
             _seccionTopSellers(),
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
+            if (!_busquedaActiva) _bannerCtaNegocio(),
+            const SizedBox(height: 16),
+            if (!_busquedaActiva) _bannerCtaAnuncioIndependiente(),
+            const SizedBox(height: 16),
             _feedProductosCercanos(),
           ],
         ),
       ),
+    );
+  }
+
+  // ¿Hay búsqueda o filtros activos? Mismo criterio que oculta los
+  // anuncios del grid: con intención de compra clara no estorbamos.
+  bool get _busquedaActiva =>
+      _busqueda.trim().isNotEmpty ||
+      _filtroDistanciaActivo ||
+      _filtroPrecioActivo ||
+      _provinciaSeleccionada != null ||
+      _municipioSeleccionado != null;
+
+  Widget _bannerCtaNegocio() {
+    if (!_ctaNegocio) return const SizedBox.shrink();
+    // Si el usuario ya tiene un negocio (en revisión o aprobado), el
+    // banner desaparece: no hay nada que registrar y evitaríamos que
+    // cree duplicados.
+    return AnimatedBuilder(
+      animation: NegocioStateService.instance,
+      builder: (context, _) {
+        if (NegocioStateService.instance.tieneNegocio ||
+            NegocioStateService.instance.cargando) {
+          return const SizedBox.shrink();
+        }
+        return _bannerCtaNegocioContenido();
+      },
+    );
+  }
+
+  Widget _bannerCtaNegocioContenido() {
+    final esOscuro = Theme.of(context).brightness == Brightness.dark;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: GestureDetector(
+        onTap: () => context.push('/registrar-negocio'),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          height: 120,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.warm,
+                const Color(0xFFD94800),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.warm.withOpacity(esOscuro ? 0.35 : 0.25),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
+              BoxShadow(
+                color: Colors.black.withOpacity(esOscuro ? 0.25 : 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned(
+                  bottom: -30,
+                  right: -20,
+                  child: IgnorePointer(
+                    child: Container(
+                      width: 120,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.10),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: -20,
+                  right: 40,
+                  child: IgnorePointer(
+                    child: Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.06),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3.5),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.20),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '🌟  PROMOCIONA TU NEGOCIO',
+                            style: GoogleFonts.inter(
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '¿Quieres darte a conocer?',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w800,
+                            height: 1.2,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'Promociona tu negocio, servicios, eventos, fiestas y mucho más',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 11.5,
+                            height: 1.3,
+                            color: Colors.white.withOpacity(0.82),
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.20),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Registrarme ahora',
+                                style: GoogleFonts.inter(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 3),
+                              const Icon(Icons.arrow_forward_rounded,
+                                  size: 11, color: Colors.white),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 14,
+                  right: 16,
+                  child: Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withOpacity(0.20),
+                    ),
+                    child: const Icon(Icons.storefront_rounded,
+                        size: 16, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _bannerCtaAnuncioIndependiente() {
+    final esOscuro = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const StandaloneAnuncioScreen(),
+            ),
+          );
+        },
+        child: Container(
+          height: 104,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFF97316), Color(0xFFC2410C)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFF97316).withOpacity(esOscuro ? 0.30 : 0.22),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('¿Quieres vender tu moto?',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15.5)),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Crea un anuncio y se lo mostramos a todo el mercado.',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                            color: Colors.white.withOpacity(0.85),
+                            fontSize: 11.5,
+                            height: 1.3),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.22),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Crear',
+                          style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12.5)),
+                      const SizedBox(width: 3),
+                      const Icon(Icons.arrow_forward_rounded,
+                          size: 13, color: Colors.white),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ANUNCIOS ADMIN: carrusel superior (máx 5, rotación aleatoria del
+  // backend). Si no hay anuncios aprobados, la sección desaparece
+  // completa -- no deja hueco.
+  Widget _seccionAnunciosAdmin() {    return FutureBuilder<List<Anuncio>>(
+      future: _anunciosCarrusel,
+      builder: (context, snapshot) {
+        final anuncios = snapshot.data ?? const <Anuncio>[];
+        if (anuncios.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: [
+            SizedBox(
+              height: 150,
+              child: PageView.builder(
+                itemCount: anuncios.length,
+                controller: PageController(viewportFraction: 0.94),
+                itemBuilder: (context, i) =>
+                    TarjetaCarruselAnuncio(anuncio: anuncios[i]),
+              ),
+            ),
+            const SizedBox(height: 4),
+          ],
+        );
+      },
     );
   }
 
@@ -1082,9 +1298,6 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             }
 
-            // Arranca el autoplay una sola vez que ya sabemos cuántas
-            // tiendas hay (después de este primer build, para no
-            // llamar setState/animateToPage en medio de un build).
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _iniciarAutoplayHero(tiendas.length);
             });
@@ -1092,9 +1305,6 @@ class _HomeScreenState extends State<HomeScreen> {
             return AspectRatio(
               aspectRatio: 16 / 9,
               child: NotificationListener<ScrollNotification>(
-                // Pausa el autoplay mientras el usuario arrastra a mano,
-                // y lo reanuda al soltar -- así no "pelean" el gesto del
-                // usuario y el avance automático.
                 onNotification: (notif) {
                   if (notif is ScrollStartNotification &&
                       notif.dragDetails != null) {
@@ -1117,12 +1327,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         tiendasService: _tiendasService,
                         esActiva: i == _heroPaginaActual,
                         onTap: () {
-                          // TODO: acá va el modal de preview (foto,
-                          // nombre, ubicación, estrellas + grilla de 3-4
-                          // productos tocables) -- por ahora, mientras
-                          // se construye ese paso, entra directo a la
-                          // tienda para poder seguir probando el
-                          // carrusel de punta a punta.
                           context.push('/tienda/${t['id_tienda']}');
                         },
                       ),
@@ -1134,7 +1338,6 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
         const SizedBox(height: 10),
-        // ---------- Indicador de puntos (qué tienda está activa) ----------
         FutureBuilder<List<Map<String, dynamic>>>(
           future: _premium,
           builder: (context, snapshot) {
@@ -1204,13 +1407,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 itemCount: tiendas.length,
                 itemBuilder: (context, i) {
-                  // El RPC de "más vendidos" no calcula distancia en el
-                  // servidor (a diferencia de buscar_tiendas_cercanas,
-                  // que sí la trae vía Haversine en SQL). Para no tocar
-                  // el backend, la calculamos aquí mismo con la
-                  // ubicación del usuario y la lat/lon que ya guarda
-                  // cada tienda -- si falta cualquiera de esos datos,
-                  // sencillamente no se agrega el chip de distancia.
                   final t = Map<String, dynamic>.from(tiendas[i]);
                   final tLat = (t['latitud'] as num?)?.toDouble();
                   final tLon = (t['longitud'] as num?)?.toDouble();
@@ -1238,9 +1434,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // -----------------------------------------------------------------------
-  // FEED DE CERCANOS: título + botón filtro + buscador + grid dual
-  // -----------------------------------------------------------------------
   Widget _feedProductosCercanos() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1373,33 +1566,30 @@ class _HomeScreenState extends State<HomeScreen> {
             return nombre.contains(q) || tienda.contains(q);
           }).toList();
         }
-        // FIX: filtro de categoría -- si el resultado del RPC no trae
-        // 'categoria' (columna nueva, agregada después de que este RPC
-        // se escribiera), este filtro no va a poder aplicarse aunque
-        // el usuario elija una. Si eso pasa, hay que agregar la
-        // columna al SELECT de buscar_productos_cercanos en SQL.
         if (_categoriaSeleccionada != null) {
           productos = productos
               .where((p) => p['categoria'] == _categoriaSeleccionada)
               .toList();
+        }
+        if (_provinciaSeleccionada != null ||
+            _municipioSeleccionado != null) {
+          productos = productos.where(_coincideUbicacion).toList();
         }
         if (productos.isEmpty) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: Center(
               child: Text(
-                _busqueda.isEmpty
+                _busqueda.isEmpty &&
+                        _provinciaSeleccionada == null &&
+                        _municipioSeleccionado == null
                     ? 'No hay productos cerca de ti todavía'
-                    : 'Sin resultados para "$_busqueda"',
+                    : 'Sin resultados para los filtros aplicados',
                 style: GoogleFonts.inter(color: _colorTextoSecundario),
               ),
             ),
           );
         }
-        // ---- Agrupar por tienda (id_tienda), ordenar los grupos por
-        // la distancia mínima de cada uno -- así se respeta "más
-        // cerca primero" igual que antes, pero ahora a nivel de
-        // tienda en vez de producto suelto. ----
         final grupos = <String, List<Map<String, dynamic>>>{};
         for (final p in productos) {
           final idT = (p['id_tienda'] ?? '').toString();
@@ -1416,22 +1606,14 @@ class _HomeScreenState extends State<HomeScreen> {
             return da.compareTo(db);
           });
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: entradas.map((entrada) {
+        final bloques = entradas.map((entrada) {
             final idTienda = entrada.key;
             final productosTienda = entrada.value;
             final primero = productosTienda.first;
             final nombreTienda = primero['nombre_tienda'] as String? ?? '';
-            // Riesgo avisado: si el RPC no trae estos dos campos en
-            // el producto, salen null y la UI cae a su fallback
-            // (ícono genérico, sin estrellas) sin romper nada.
             final logoTienda = primero['logo_url'] as String?;
             final estrellasTienda =
                 (primero['promedio_estrellas'] as num?)?.toDouble();
-            // Riesgo avisado también para 'plan': si el RPC no lo trae
-            // en el producto, esto simplemente nunca activa el borde
-            // dorado (no rompe nada).
             final esPremium =
                 (primero['plan'] as String? ?? '').toLowerCase() == 'premium';
             final distanciaMin = productosTienda
@@ -1459,32 +1641,65 @@ class _HomeScreenState extends State<HomeScreen> {
                     itemCount: productosTienda.length,
                     itemBuilder: (context, i) {
                       final p = productosTienda[i];
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: SizedBox(
-                          width: 108,
-                          child: _tarjetaProducto(
-                              p, (p['distancia_km'] as num?)?.toDouble()),
-                        ),
-                      );
-                    },
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: SizedBox(
+                            width: 108,
+                            child: _tarjetaProducto(
+                                p, (p['distancia_km'] as num?)?.toDouble()),
+                          ),
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              );
+            }).toList();
+
+        // ANUNCIOS: sin búsqueda ni filtros activos se intercala una
+        // tarjeta cada 3 bloques de tienda (reglas FASE 0). Cuando el
+        // usuario busca o filtra quiere resultados, no promociones.
+        final buscando = _busqueda.trim().isNotEmpty ||
+            _categoriaSeleccionada != null ||
+            _filtroPrecioActivo;
+        if (buscando) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: bloques,
+          );
+        }
+        return FutureBuilder<List<Anuncio>>(
+          future: _anunciosFeed,
+          builder: (context, snapAds) {
+            final anuncios = snapAds.data ?? const <Anuncio>[];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _intercalarAnuncios(bloques, anuncios),
             );
-          }).toList(),
+          },
         );
       },
     );
   }
 
-  /// Cabecera de cada grupo "tienda" dentro del feed de productos
-  /// cercanos: círculo con la foto real de la tienda (la misma que se
-  /// sube al crear/gestionar la tienda) y, justo debajo, el puntaje en
-  /// estrellas -- bien centrado bajo el círculo, en vez de al lado del
-  /// nombre. Usa _tiendaInfo() como respaldo: si el producto agrupado
-  /// no trajo logo_url/promedio_estrellas embebidos, se completan con
-  /// una consulta a la tienda real (cacheada por id_tienda).
+  /// Intercalado: 1 TarjetaAnuncio cada 3 bloques de tienda completos,
+  /// máximo 3 por sesión (la prioridad admin->negocio->producto y los
+  /// cupos ya los resuelve la RPC en el backend).
+  List<Widget> _intercalarAnuncios(
+      List<Widget> bloques, List<Anuncio> anuncios) {
+    if (anuncios.isEmpty) return bloques;
+    final out = <Widget>[];
+    var iAnuncio = 0;
+    for (var i = 0; i < bloques.length; i++) {
+      out.add(bloques[i]);
+      if ((i + 1) % 3 == 0 && iAnuncio < anuncios.length && iAnuncio < 3) {
+        out.add(TarjetaAnuncio(anuncio: anuncios[iAnuncio]));
+        iAnuncio++;
+      }
+    }
+    return out;
+  }
+
   Widget _headerGrupoTienda({
     required String idTienda,
     required String nombreTiendaFallback,
@@ -1598,6 +1813,35 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// ¿El resultado (producto o tienda) coincide con el filtro de
+  /// provincia/municipio? Lee los campos de ubicación del propio
+  /// registro. Tanto productos_cercanos como buscar_tiendas_cercanas
+  /// incluyen los campos provincia/municipio de la tienda padre en cada
+  /// fila del resultado.
+  bool _coincideUbicacion(Map<String, dynamic> fila) {
+    if (_provinciaSeleccionada == null && _municipioSeleccionado == null) {
+      return true;
+    }
+    final provincia = (fila['provincia'] as String?)?.trim();
+    final municipio = (fila['municipio'] as String?)?.trim();
+
+    if (_provinciaSeleccionada != null &&
+        (provincia == null || provincia.isEmpty)) {
+      return false;
+    }
+    if (_provinciaSeleccionada != null && provincia != _provinciaSeleccionada) {
+      return false;
+    }
+    if (_municipioSeleccionado != null &&
+        (municipio == null || municipio.isEmpty)) {
+      return false;
+    }
+    if (_municipioSeleccionado != null && municipio != _municipioSeleccionado) {
+      return false;
+    }
+    return true;
+  }
+
   Widget _gridTiendas() {
     if (_tiendasCercanas == null) {
       return const Padding(
@@ -1622,21 +1866,25 @@ class _HomeScreenState extends State<HomeScreen> {
                   (t['nombre'] ?? '').toString().toLowerCase().contains(q))
               .toList();
         }
-        // Mismo aviso que en productos: depende de que el RPC
-        // buscar_tiendas_cercanas devuelva la columna 'categoria'.
         if (_categoriaSeleccionada != null) {
           tiendas = tiendas
               .where((t) => t['categoria'] == _categoriaSeleccionada)
               .toList();
+        }
+        if (_provinciaSeleccionada != null ||
+            _municipioSeleccionado != null) {
+          tiendas = tiendas.where(_coincideUbicacion).toList();
         }
         if (tiendas.isEmpty) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: Center(
               child: Text(
-                _busqueda.isEmpty
+                _busqueda.isEmpty &&
+                        _provinciaSeleccionada == null &&
+                        _municipioSeleccionado == null
                     ? 'No hay tiendas cerca de ti todavía'
-                    : 'Sin resultados para "$_busqueda"',
+                    : 'Sin resultados para los filtros aplicados',
                 style: GoogleFonts.inter(color: _colorTextoSecundario),
               ),
             ),
@@ -1659,9 +1907,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Distancia en línea recta (km) entre dos coordenadas, fórmula de
-  /// Haversine -- misma lógica que ya usa buscar_tiendas_cercanas en
-  /// SQL, aquí en Dart porque el RPC de trending no la trae.
   double _distanciaKm(double lat1, double lon1, double lat2, double lon2) {
     const radioTierraKm = 6371.0;
     final dLat = _gradosARadianes(lat2 - lat1);
@@ -1798,9 +2043,6 @@ class _HomeScreenState extends State<HomeScreen> {
           distanciaKm: distanciaKm),
       child: Container(
         decoration: BoxDecoration(
-          // Vidrio flotante: semitransparente en vez de superficie
-          // sólida, con borde sutil que le da el "cristal" -- más
-          // minimalista que antes, pensado para caber 3 por fila.
           color: _colorSuperficie.withOpacity(_esOscuro ? 0.55 : 0.72),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
@@ -1908,13 +2150,7 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ---------------------------------------------------------------------
-// Tarjeta hero de una tienda premium para el carrusel de arriba de
-// Home. Mientras esta tarjeta está "activa" (es la página visible del
-// PageView), rota sola entre el logo de la tienda y las fotos de sus
-// últimos productos disponibles -- un mini-carrusel dentro del
-// carrusel grande, con crossfade. Se pausa cuando deja de ser la
-// tienda activa, para no seguir corriendo un Timer por cada tarjeta
-// fuera de pantalla.
+// Tarjeta hero de una tienda premium para el carrusel de arriba.
 // ---------------------------------------------------------------------
 class _HeroTiendaCard extends StatefulWidget {
   final Map<String, dynamic> tienda;
@@ -1983,10 +2219,6 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(_kCardRadius),
-            // ---- Estilo "vidrio flotante": borde suave translúcido +
-            // sombra grande y difusa (más pronunciada que _kSoftShadow,
-            // que es para tarjetas chicas), para que se sienta como si
-            // la tarjeta flotara sobre el fondo. ----
             border: Border.all(
               color: (esOscuro ? AppColors.borderDark : AppColors.borderLight)
                   .withOpacity(0.6),
@@ -2004,7 +2236,6 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // ---- Foto de fondo: rota entre logo y productos ----
               FutureBuilder<List<Map<String, dynamic>>>(
                 future: _productosFuture,
                 builder: (context, snapshot) {
@@ -2032,7 +2263,6 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                   );
                 },
               ),
-              // ---- Degradado inferior + nombre/ubicación ----
               Container(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -2079,7 +2309,6 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                   ],
                 ),
               ),
-              // ---- Sello VIP (vidrio esmerilado real sobre la foto) ----
               Positioned(
                 top: 16,
                 left: 16,
@@ -2113,10 +2342,6 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                   ),
                 ),
               ),
-              // ---- Puntaje en estrella (vidrio esmerilado, esquina
-              // superior derecha -- simétrico al sello VIP de la
-              // izquierda). Si la tienda todavía no tiene reseñas,
-              // muestra "Nuevo" en vez de dejar el espacio vacío. ----
               Positioned(
                 top: 16,
                 right: 16,
@@ -2155,7 +2380,6 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                   ),
                 ),
               ),
-              // ---- "Ver tienda" affordance, esquina inferior derecha ----
               Positioned(
                 right: 16,
                 bottom: 16,
@@ -2180,6 +2404,230 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Listado completo "Ver todos" de los carruseles del Home
+/// (Tiendas Destacadas y Popular esta semana), con buscador en vivo.
+class _ModalListaTiendas extends StatefulWidget {
+  final Future<List<Map<String, dynamic>>> future;
+  final String titulo;
+  final ScrollController scrollController;
+  final double? miLat;
+  final double? miLon;
+
+  const _ModalListaTiendas({
+    required this.future,
+    required this.titulo,
+    required this.scrollController,
+    this.miLat,
+    this.miLon,
+  });
+
+  @override
+  State<_ModalListaTiendas> createState() => _ModalListaTiendasState();
+}
+
+class _ModalListaTiendasState extends State<_ModalListaTiendas> {
+  String _busqueda = '';
+
+  bool get _esOscuro => Theme.of(context).brightness == Brightness.dark;
+  Color get _colorTexto => _esOscuro ? const Color(0xFFF5F5F4) : _kInk;
+  Color get _colorTextoSecundario =>
+      _esOscuro ? const Color(0xFFA8A29E) : Colors.black54;
+  Color get _colorPlaceholder =>
+      _esOscuro ? const Color(0xFF2A2A2A) : Colors.grey.shade100;
+
+  /// Coincidencia por nombre, ubicación, categoría o descripción.
+  bool _coincide(Map<String, dynamic> t) {
+    if (_busqueda.trim().isEmpty) return true;
+    final q = _busqueda.trim().toLowerCase();
+    return [
+      t['nombre'],
+      t['municipio'],
+      t['provincia'],
+      t['categoria'],
+      t['descripcion'],
+    ].any((c) => c?.toString().toLowerCase().contains(q) ?? false);
+  }
+
+  double _distanciaKm(double lat1, double lon1, double lat2, double lon2) {
+    // Haversine (misma fórmula que el RPC buscar_tiendas_cercanas)
+    const r = 6371.0;
+    final dLat = _rad(lat2 - lat1);
+    final dLon = _rad(lon2 - lon1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_rad(lat1)) *
+            math.cos(_rad(lat2)) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  }
+
+  double _rad(double grados) => grados * math.pi / 180;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: widget.future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final todas = snapshot.data ?? [];
+        final tiendas =
+            todas.where(_coincide).toList(growable: false);
+
+        return Column(
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 10),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(widget.titulo,
+                  style: GoogleFonts.inter(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                      color: _colorTexto)),
+            ),
+            // Buscador
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                onChanged: (v) => setState(() => _busqueda = v),
+                style: GoogleFonts.inter(color: _colorTexto),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Buscar tienda, lugar o categoría...',
+                  hintStyle:
+                      GoogleFonts.inter(color: _colorTextoSecundario),
+                  prefixIcon:
+                      const Icon(Icons.search, color: _kCoral),
+                  filled: true,
+                  fillColor: _colorPlaceholder,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: tiendas.isEmpty
+                  ? Center(
+                      child: Text(
+                        _busqueda.isEmpty
+                            ? 'Nada por aquí todavía'
+                            : 'Sin resultados para "$_busqueda"',
+                        style: GoogleFonts.inter(
+                            color: _colorTextoSecundario),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: widget.scrollController,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      itemCount: tiendas.length,
+                      itemBuilder: (context, i) {
+                        final t = Map<String, dynamic>.from(tiendas[i]);
+                        final tLat = (t['latitud'] as num?)?.toDouble();
+                        final tLon = (t['longitud'] as num?)?.toDouble();
+                        if (t['distancia_km'] == null &&
+                            widget.miLat != null &&
+                            widget.miLon != null &&
+                            tLat != null &&
+                            tLon != null) {
+                          t['distancia_km'] = _distanciaKm(
+                              widget.miLat!, widget.miLon!, tLat, tLon);
+                        }
+                        final distancia =
+                            (t['distancia_km'] as num?)?.toDouble();
+                        final esVip =
+                            (t['plan'] as String? ?? '').toLowerCase() ==
+                                'premium';
+
+                        void irATienda() {
+                          Navigator.of(context).pop();
+                          context.push('/tienda/${t['id_tienda']}');
+                        }
+
+                        return ListTile(
+                          onTap: irATienda,
+                          leading: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              ClipOval(
+                                child: SizedBox(
+                                  width: 40,
+                                  height: 40,
+                                  child: Image.network(
+                                    t['logo_url'] ?? '',
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: _colorPlaceholder,
+                                      child: Icon(Icons.storefront,
+                                          size: 18,
+                                          color: _colorTextoSecundario),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (esVip)
+                                Positioned(
+                                  bottom: -2,
+                                  right: -2,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: const BoxDecoration(
+                                      color: _kGold,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.star_rounded,
+                                        size: 10, color: Colors.white),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          title: Text(t['nombre'] ?? '',
+                              style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.w600,
+                                  color: _colorTexto)),
+                          subtitle: Text(
+                            [
+                              if (t['municipio'] != null)
+                                '${t['municipio']}',
+                              if (distancia != null)
+                                '${distancia.toStringAsFixed(1)} km',
+                            ].join(' · '),
+                            style: GoogleFonts.inter(
+                                fontSize: 12,
+                                color: _colorTextoSecundario),
+                          ),
+                          trailing: TextButton(
+                            onPressed: irATienda,
+                            style: TextButton.styleFrom(
+                              backgroundColor: _kCoral.withOpacity(0.12),
+                              foregroundColor: _kCoralDark,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20)),
+                            ),
+                            child: const Text('Ver tienda'),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

@@ -1,33 +1,11 @@
 // main_shell_screen.dart
 //
-// Contenedor con menú inferior (bottom navigation) para las 5
-// secciones principales: Inicio, Mapa, Favoritos, Mi Tienda y Perfil.
-// Cada pestaña conserva su propio Scaffold/AppBar tal cual ya estaban
-// -- este shell solo decide cuál se muestra y agrega la barra de abajo.
-//
-// La pestaña "Mi Tienda" es la única que depende de un dato async (si
-// el usuario ya tiene tienda registrada): mientras carga muestra un
-// spinner, y una vez resuelto muestra PanelVendedorScreen si ya es
-// vendedor, o una tarjeta invitando a registrarse si no.
-//
-// NAVEGACIÓN "ATRÁS" (FIX): antes el diálogo de "¿Desea salir de la
-// aplicación?" vivía dentro de HomeScreen (con su propio PopScope). El
-// problema es que HomeScreen es una de las pestañas de un IndexedStack
-// acá abajo -- un IndexedStack mantiene TODAS las pestañas montadas en
-// todo momento (solo oculta las que no se ven). Eso significaba que el
-// PopScope de HomeScreen seguía "vivo" sin importar en qué pestaña
-// estuviera el usuario, así que presionar atrás en Favoritos, Mi Tienda
-// o Perfil disparaba igual el diálogo de salir, en vez de comportarse
-// como una navegación normal.
-//
-// Ahora el PopScope vive acá, en el dueño real de las pestañas:
-//   - Si el usuario NO está en la pestaña "Inicio" (índice 0), atrás lo
-//     regresa a Inicio en vez de preguntar si quiere salir.
-//   - Si ya está en "Inicio", ahí sí se muestra el diálogo de salida.
-// Las pantallas que se abren con Navigator.push (Gestionar Tienda,
-// Admin, etc.) no se ven afectadas -- siguen cerrándose normalmente con
-// atrás, ya que son rutas apiladas de verdad, no pestañas del shell.
-
+// OFFLINE (2026-08): se agrega OfflineBanner (main.dart) arriba del
+// contenido, envuelto en su propio AnimatedBuilder escuchando
+// ConnectivityService + PendingActionsQueue -- aparece solo cuando no
+// hay red, y muestra cuántas acciones quedaron en cola para enviarse.
+// No reemplaza el resto de la lógica del shell, solo se agrega una
+// franja arriba del IndexedStack existente.
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -38,7 +16,10 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
 import '../core/auth_guard.dart';
 import '../core/supabase_client.dart';
-import '../services/tiendas_service.dart';
+import '../services/tienda_state_service.dart';
+import '../services/connectivity_service.dart';
+import '../services/pending_actions_queue.dart';
+import '../widgets/offline_banner.dart';
 import 'home_screen.dart';
 import 'mapa_tiendas_screen.dart';
 import 'favoritos_screen.dart';
@@ -54,29 +35,22 @@ class MainShellScreen extends StatefulWidget {
 
 class _MainShellScreenState extends State<MainShellScreen> {
   int _indice = 0;
-  final _tiendasService = TiendasService();
 
-  Map<String, dynamic>? _miTienda;
-  bool _cargandoTienda = true;
+  // ANUNCIOS (opción B): clave para hablar con el Home montado en el
+  // IndexedStack y pedirle que rote el trío de anuncios del feed cada
+  // vez que el usuario vuelve a la pestaña Inicio.
+  final GlobalKey<HomeScreenState> _homeKey = GlobalKey<HomeScreenState>();
 
-  // Canal de presencia para el contador de "usuarios en línea" del
-  // panel admin (pantalla "En vivo"). Solo se trackea si hay sesión
-  // iniciada -- la navegación de invitados (solo lectura) no cuenta.
-  // Se re-evalúa en cada cambio de sesión (login/logout vía el modal
-  // de _irA) porque este shell vive durante toda la vida de la app,
-  // no se remonta al iniciar/cerrar sesión.
+  Map<String, dynamic>? get _miTienda => TiendaStateService.instance.miTienda;
+  bool get _cargandoTienda => TiendaStateService.instance.cargando;
+
   late final RealtimeChannel _canalPresencia;
   late final StreamSubscription<AuthState> _suscripcionAuth;
 
   @override
   void initState() {
     super.initState();
-    _cargarMiTienda();
-    // FIX: desde 2024 Supabase requiere marcar el canal como público
-    // (private: false) para que la presencia se sincronice entre
-    // distintas apps/clientes -- sin esto, cada cliente puede quedar
-    // aislado en su propio canal aunque el código de track() esté
-    // bien armado, y el admin nunca ve la presencia real de la tienda.
+    TiendaStateService.instance.cargar();
     _canalPresencia = supabase.channel(
       'usuarios-online',
       opts: const RealtimeChannelConfig(private: false),
@@ -91,8 +65,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
     });
   }
 
-  /// Trackea la presencia si hay usuario con sesión iniciada, o la
-  /// retira si no (logout, o el canal aún no llegó a "subscribed").
   Future<void> _actualizarPresencia() async {
     final uid = supabase.auth.currentUser?.id;
     try {
@@ -104,10 +76,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
       } else {
         await _canalPresencia.untrack();
       }
-    } catch (_) {
-      // El canal puede no estar listo todavía (p.ej. sin conexión);
-      // no es crítico para la experiencia del usuario, se ignora.
-    }
+    } catch (_) {}
   }
 
   @override
@@ -118,35 +87,27 @@ class _MainShellScreenState extends State<MainShellScreen> {
     super.dispose();
   }
 
-  Future<void> _cargarMiTienda() async {
-    try {
-      final tienda = await _tiendasService.obtenerMiTienda();
-      if (mounted) {
-        setState(() {
-          _miTienda = tienda;
-          _cargandoTienda = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _cargandoTienda = false);
+  /// Cambia de pestaña. Si la destino es Inicio, pide al Home que rote
+  /// los anuncios del feed (nuevo sorteo "menos mostrados primero")
+  /// después del frame, sin recargar el resto del contenido.
+  void _cambiarIndice(int indice) {
+    setState(() => _indice = indice);
+    if (indice == 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _homeKey.currentState?.rotarAnuncios();
+      });
     }
   }
 
-  /// Cambia de pestaña. Favoritos (2), Mi Tienda (3) y Perfil (4)
-  /// requieren sesión: un invitado que toque una de esas ve el modal
-  /// "Debes iniciar sesión" en vez de la pestaña (que solo mostraría el
-  /// estado de invitado / lo mandaría de vuelta a la Welcome).
   Future<void> _irA(int indice) async {
     final requiereSesion = indice == 2 || indice == 3 || indice == 4;
     if (!requiereSesion || supabase.auth.currentUser != null) {
-      setState(() => _indice = indice);
+      _cambiarIndice(indice);
       return;
     }
     await mostrarModalInicioSesion(context);
   }
 
-  /// Diálogo de confirmación de salida -- solo se muestra cuando el
-  /// usuario ya está en la pestaña "Inicio" (índice 0) y presiona atrás.
   Future<bool> _confirmarSalir() async {
     return await showDialog<bool>(
           context: context,
@@ -166,12 +127,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
         false;
   }
 
-  /// Maneja el botón/gesto "atrás" del sistema para todo el shell:
-  ///   1. Si no está en "Inicio", vuelve a "Inicio".
-  ///   2. Si ya está en "Inicio", pregunta si quiere salir de la app.
   Future<void> _manejarAtras() async {
     if (_indice != 0) {
-      setState(() => _indice = 0);
+      _cambiarIndice(0);
       return;
     }
     final salir = await _confirmarSalir();
@@ -180,17 +138,24 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: TiendaStateService.instance,
+      builder: (context, _) => _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     final esOscuro = Theme.of(context).brightness == Brightness.dark;
 
     final paginas = [
-      const HomeScreen(),
+      HomeScreen(key: _homeKey),
       const MapaTiendasScreen(),
       const FavoritosScreen(),
       _cargandoTienda
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : (_miTienda != null
               ? PanelVendedorScreen(tienda: _miTienda!)
-              : _CTAHacerseVendedor(onCreada: _cargarMiTienda)),
+              : const _CTAHacerseVendedor()),
       const MiPerfilScreen(),
     ];
 
@@ -202,7 +167,29 @@ class _MainShellScreenState extends State<MainShellScreen> {
       },
       child: Scaffold(
         extendBody: true,
-        body: IndexedStack(index: _indice, children: paginas),
+        body: Column(
+          children: [
+            // OFFLINE: franja roja que aparece sola sin importar en
+            // qué pestaña esté el usuario -- escucha conexión y cola.
+            AnimatedBuilder(
+              animation: ConnectivityService.instance,
+              builder: (context, _) {
+                if (ConnectivityService.instance.online) {
+                  return const SizedBox.shrink();
+                }
+                return AnimatedBuilder(
+                  animation: PendingActionsQueue.instance,
+                  builder: (context, __) => OfflineBanner(
+                    accionesPendientes: PendingActionsQueue.instance.cantidad,
+                  ),
+                );
+              },
+            ),
+            Expanded(
+              child: IndexedStack(index: _indice, children: paginas),
+            ),
+          ],
+        ),
         bottomNavigationBar: SafeArea(
           minimum: const EdgeInsets.fromLTRB(16, 0, 16, 8),
           child: ClipRRect(
@@ -236,7 +223,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
                         iconoInactivo: Icons.map_outlined,
                         iconoActivo: Icons.map_rounded,
                         label: 'Mapa',
-                        onTap: () => setState(() => _indice = 1),
+                        onTap: () => _cambiarIndice(1),
                       ),
                     ),
                     Expanded(
@@ -254,7 +241,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
                         iconoInactivo: Icons.home_outlined,
                         iconoActivo: Icons.home_rounded,
                         label: 'Inicio',
-                        onTap: () => setState(() => _indice = 0),
+                        onTap: () => _cambiarIndice(0),
                       ),
                     ),
                     Expanded(
@@ -286,10 +273,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 }
 
-/// Un ítem de la barra flotante: el ícono activo crece con un
-/// resorte (Curves.elasticOut) y aparece con un halo azul detrás +
-/// la etiqueta debajo -- los inactivos quedan solo el ícono gris,
-/// sin texto, para que la barra se sienta liviana.
 class _ItemNav extends StatelessWidget {
   final bool activo;
   final IconData iconoInactivo;
@@ -349,13 +332,8 @@ class _ItemNav extends StatelessWidget {
   }
 }
 
-/// Contenido de la pestaña "Mi Tienda" cuando el usuario todavía no
-/// tiene una registrada -- invita a crear una. Al volver del registro,
-/// refresca (onCreada) para que la pestaña pase a mostrar el panel
-/// real sin que el usuario tenga que reabrir la app.
 class _CTAHacerseVendedor extends StatelessWidget {
-  final VoidCallback onCreada;
-  const _CTAHacerseVendedor({required this.onCreada});
+  const _CTAHacerseVendedor();
 
   @override
   Widget build(BuildContext context) {
@@ -386,7 +364,7 @@ class _CTAHacerseVendedor extends StatelessWidget {
                   if (!await requireAuth(context)) return;
                   if (!context.mounted) return;
                   await context.push('/crear-tienda');
-                  onCreada();
+                  await TiendaStateService.instance.refrescar();
                 },
                 child: const Text('Hacerte vendedor'),
               ),

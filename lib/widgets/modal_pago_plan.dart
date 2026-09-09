@@ -8,6 +8,17 @@
 // Requiere que la tienda YA EXISTA en Supabase (necesita tienda['id_tienda']
 // real) -- si se usa en el flujo de registro nuevo, primero hay que crear
 // la tienda y luego abrir este modal con la tienda ya creada.
+//
+// OFFLINE (2026-08): esta acción NUNCA se encola en PendingActionsQueue.
+// A diferencia de otras acciones (marcar vendido, crear producto, etc.),
+// "Verificar Pago" necesita: (1) validar el código de afiliado en vivo
+// contra el servidor, (2) traer el número de WhatsApp del admin
+// ACTUALIZADO, y (3) abrir WhatsApp ahí mismo con el usuario presente --
+// encolarla y disparar WhatsApp solo, minutos después al reconectar sin
+// que el usuario lo espere, sería confuso y potencialmente inseguro
+// (número de contacto desactualizado, código de afiliado sin validar).
+// Por eso, si no hay conexión, se corta con un diálogo claro ANTES de
+// tocar la red -- no hay versión "pendiente de sincronizar" de este flujo.
 
 import 'dart:async';
 
@@ -18,6 +29,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
+import '../services/connectivity_service.dart';
+import '../services/currency_service.dart';
 
 class ModalPagoPlan extends StatefulWidget {
   final Map<String, dynamic> tienda;
@@ -152,10 +165,42 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
   String get _contenidoQr {
     final tarjeta = widget.plan['numero_tarjeta'] ?? 'No configurada';
     final telefono = widget.plan['numero_telefono_pago'] ?? 'No configurado';
-    return 'Tarjeta: $tarjeta\nTeléfono: $telefono\nMonto: \$${_precioFinal.toStringAsFixed(2)} USD';
+    return 'Tarjeta: $tarjeta\nTeléfono: $telefono\nMonto: '
+        '${CurrencyService.instance.formatear(_precioFinal)}';
+  }
+
+  /// Corta el flujo con un diálogo claro si no hay conexión -- ver nota
+  /// OFFLINE al inicio del archivo sobre por qué esta acción no se
+  /// encola. Devuelve true si hay conexión y se puede continuar.
+  Future<bool> _requiereConexion() async {
+    final online = await ConnectivityService.instance.chequearAhora();
+    if (online) return true;
+    if (!mounted) return false;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Sin conexión'),
+        content: const Text(
+          'Necesitas conexión a internet para verificar tu pago -- este '
+          'paso valida tu código de afiliado y abre WhatsApp con los datos '
+          'actualizados del administrador. Intenta de nuevo cuando tengas '
+          'señal.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Entendido'),
+          ),
+        ],
+      ),
+    );
+    return false;
   }
 
   Future<void> _verificarPago() async {
+    if (!await _requiereConexion()) return;
+
     // Código de afiliado a usar: el escrito en vivo en este modal, o el
     // que vino precargado en el widget (si lo hay).
     var codigoAfiliado =
@@ -302,7 +347,8 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
         'Hola, deseo verificar mi plan $nombrePlan. '
         'Tienda: $nombreTienda (Ref: $codigoCorto). '
         '$afiliadoMsg'
-        'Realicé la transferencia de \$${_precioFinal.toStringAsFixed(2)} USD'
+        'Realicé la transferencia de '
+        '${CurrencyService.instance.formatear(_precioFinal)}'
         '${_tieneCupon ? ' (con 10% de descuento aplicado)' : ''}. '
         'Adjunto la captura de pantalla de la transacción.',
       );
@@ -379,53 +425,75 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                 Text('Pagar plan ${widget.plan['nombre']}',
                     style: GoogleFonts.inter(
                         fontSize: 19, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 2),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: CurrencyToggle(),
+                ),
                 const SizedBox(height: 6),
-                if (_tieneCupon) ...[
-                  Row(
-                    children: [
-                      Text(
-                        '\$${_precioOriginal.toStringAsFixed(2)} USD',
+                AnimatedBuilder(
+                  animation: CurrencyService.instance,
+                  builder: (context, _) {
+                    final fmt = CurrencyService.instance.formatear;
+                    if (_tieneCupon) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                fmt(_precioOriginal),
+                                style: GoogleFonts.inter(
+                                  fontSize: 13.5,
+                                  color: colorSecundario,
+                                  decoration: TextDecoration.lineThrough,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(
+                                      esOscuro ? 0.22 : 0.12),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text('-10% cupón',
+                                    style: GoogleFonts.inter(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: esOscuro
+                                            ? Colors.green.shade300
+                                            : Colors.green.shade700)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(fmt(_precioFinal),
+                              style: GoogleFonts.inter(
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.bold,
+                                  color: esOscuro
+                                      ? Colors.green.shade300
+                                      : Colors.green)),
+                          const SizedBox(height: 4),
+                          Text('Usaste un código de afiliado ✅',
+                              style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  color: esOscuro
+                                      ? Colors.green.shade300
+                                      : Colors.green.shade700,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      );
+                    }
+                    return Text(fmt(_precioFinal),
                         style: GoogleFonts.inter(
-                          fontSize: 13.5,
-                          color: colorSecundario,
-                          decoration: TextDecoration.lineThrough,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(esOscuro ? 0.22 : 0.12),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text('-10% cupón',
-                            style: GoogleFonts.inter(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: esOscuro
-                                    ? Colors.green.shade300
-                                    : Colors.green.shade700)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text('\$${_precioFinal.toStringAsFixed(2)} USD',
-                      style: GoogleFonts.inter(
-                          fontSize: 19,
-                          fontWeight: FontWeight.bold,
-                          color: esOscuro ? Colors.green.shade300 : Colors.green)),
-                  const SizedBox(height: 4),
-                  Text('Usaste un código de afiliado ✅',
-                      style: GoogleFonts.inter(
-                          fontSize: 12,
-                          color: esOscuro ? Colors.green.shade300 : Colors.green.shade700,
-                          fontWeight: FontWeight.w600)),
-                ] else
-                  Text('\$${_precioFinal.toStringAsFixed(2)} USD',
-                      style: GoogleFonts.inter(
-                          fontSize: 16,
-                          color: esOscuro ? Colors.green.shade300 : Colors.green)),
+                            fontSize: 16,
+                            color:
+                                esOscuro ? Colors.green.shade300 : Colors.green));
+                  },
+                ),
                 const SizedBox(height: 16),
 
                 // ---------- QR: tarjeta blanca fija -- el QR necesita
@@ -520,7 +588,7 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                               fontWeight: FontWeight.bold, fontSize: 13.5)),
                       const SizedBox(height: 8),
                       _pasoNumerado(1,
-                          'Abre Transfermóvil y transfiere \$${_precioFinal.toStringAsFixed(2)} USD a la tarjeta o número mostrados arriba.'),
+                          'Abre Transfermóvil y transfiere ${CurrencyService.instance.formatear(_precioFinal)} a la tarjeta o número mostrados arriba.'),
                       _pasoNumerado(2,
                           'Toma una captura de pantalla de la confirmación de la transferencia.'),
                       _pasoNumerado(3,

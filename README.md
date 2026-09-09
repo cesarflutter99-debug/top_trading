@@ -1,66 +1,51 @@
-# Top Trading — Starter
+# Top Trading ("Al Lado")
 
-## Cómo montar esto sobre tu proyecto Flutter recién creado
+Marketplace geolocalizado (Flutter + Supabase) con comprador, vendedor, sistema de anuncios y programa de afiliados.
 
-1. Crea el proyecto (si no lo has hecho):
-   ```bash
-   flutter create top_trading
-   cd top_trading
-   code .
-   ```
+## Stack
 
-2. Copia estos archivos dentro de tu proyecto, respetando la ruta:
-   - `pubspec.yaml` → reemplaza el que trae por defecto
-   - `lib/main.dart` → reemplaza el que trae por defecto
-   - `lib/core/supabase_client.dart`
-   - `lib/services/tiendas_service.dart`
-   - `lib/services/whatsapp_service.dart`
-   - `lib/services/location_service.dart`
-   - `lib/screens/home_screen.dart`
+- **Frontend**: Flutter (Material 3), `go_router`, `provider`
+- **Backend**: Supabase (Postgres + RLS + RPC + Realtime + Storage + Edge Functions)
+- **Geolocalización**: `geolocator` + mapa `flutter_map`/OpenStreetMap
+- **Auth**: Google nativo (`google_sign_in`) con fallback OAuth por navegador
+- **Offline**: cache read-through + cola de acciones pendientes + banner de conectividad
+- **Divisas**: precios en USD, toggle USD/CUP con tasa desde `tasas_cambio`
 
-3. Instala las dependencias:
-   ```bash
-   flutter pub get
-   ```
+## Estructura
 
-4. Edita `lib/core/supabase_client.dart` y pon tu **URL** y **anon key**
-   (Supabase → Project Settings → API).
+- `lib/core/`: cliente Supabase, auth guard, colores, provincias, config Google OAuth
+- `lib/services/`: 18 servicios (tienda, negocio, afiliado, anuncios, carrito, notificaciones, ofline, etc.)
+- `lib/screens/`: 27+ pantallas (welcome, home, mapa, favoritos, tienda, carrito, panel vendedor, onboarding, dashboards, anuncios...)
+- `lib/widgets/`: componentes reutilizables (tarjetas anuncio, modales producto, sheets planes/paquetes, etc.)
+- `*.sql` en la raíz: esquema y parches del backend
 
-5. Permisos de ubicación (necesarios para `geolocator`):
-   - **Android**: en `android/app/src/main/AndroidManifest.xml`, dentro de `<manifest>`:
-     ```xml
-     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-     ```
-   - **iOS**: en `ios/Runner/Info.plist`:
-     ```xml
-     <key>NSLocationWhenInUseUsageDescription</key>
-     <string>Usamos tu ubicación para mostrarte tiendas cercanas</string>
-     ```
+## Módulos principales
 
-6. Corre la app:
-   ```bash
-   flutter run
-   ```
+- **Comprador**: feed con anuncios, búsqueda, tiendas cercanas, mapa, carrito (TTL 72h), valoración post-compra, favoritos
+- **Vendedor**: onboarding de tienda (plan gratis/basic/premium), panel con productos/planes/anuncios/analíticas, dashboard
+- **Negocio/Evento**: CTA "promociona tu negocio", onboarding por steps, mini-página, paquetes de anuncios
+- **Anuncios independientes**: vender algo puntual (moto, mueble) sin tienda ni negocio — standalone
+- **Afiliado**: registro con código, comisiones, retiros, tiendas referidas
+- **Admin**: aprobación de tiendas/negocios/planes/anuncios, notificaciones en tiempo real (panel aparte)
 
-## Qué incluye este starter
+## Ranuras de anuncio
 
-- Conexión a Supabase ya inicializada.
-- `TiendasService`: llama a las funciones RPC del esquema
-  (`carrusel_premium`, `carrusel_top_trending`, `buscar_tiendas_cercanas`)
-  y maneja pedidos/valoraciones.
-- `WhatsappService`: arma el link `wa.me` con el desglose del pedido.
-- `LocationService`: pide permiso GPS y devuelve la posición.
-- `HomeScreen`: ya arma los dos carruseles pedidos:
-  - Arriba: **Destacados** (premium, manual).
-  - Abajo: **Lo más caliente de la semana** (top trending, automático).
+El cupo de anuncios de una tienda = ranuras del plan + ranuras extra compradas aparte
+(`permisos_tienda_anuncios`). La UI muestra el desglose ("X de Y · Z del plan + W extra")
+en el panel vendedor y en la tarjeta "Mi Tienda" de Mi Perfil.
 
-## Pendiente de construir (siguiente paso lógico)
+## Configuración
 
-- Pantalla de login/registro (Google Auth vía Supabase).
-- Onboarding de tienda (formulario + GPS + estado 'pending').
-- Vista de tienda individual + carrito local (Provider, TTL 72h).
-- Pantalla de búsqueda por texto usando `buscar_tiendas_cercanas`.
-- Pantalla de valoración post-compra (estrellas + foto opcional).
+1. `flutter pub get`
+2. Edita `lib/core/supabase_client.dart` con tu URL y anon key.
+3. Configura `lib/core/google_auth_config.dart` (webClientId / iosClientId reales).
+4. Permisos de ubicación en Android/iOS (ver `pubspec.yaml` y manifiestos).
+5. Aplica el esquema SQL (`*.sql` en la raíz) y los parches en Supabase.
+6. Crea los buckets de storage públicos (`productos`, `tiendas`, `negocios`, `perfiles`) en Supabase.
 
-Dile a Claude cuál de estos quieres construir primero.
+## Pendiente / en revisión
+
+- Verificación real de pago de paquetes (standalone y anuncios) — hoy los paquetes activos son de libre uso hasta definir la pasarela.
+- Municipios completos de todas las provincias (hoy solo La Habana).
+- Tests unitarios/de widget (solo hay `widget_test.dart` por defecto).
+- Búsqueda por texto general a nivel de app.

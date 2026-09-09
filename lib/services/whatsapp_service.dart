@@ -74,4 +74,19 @@ class WhatsappService {
       throw Exception('No se pudo abrir WhatsApp');
     }
   }
+
+  /// Genérico: abre WhatsApp con un texto ya armado por la pantalla
+  /// que llama (usado por el flujo de registro/pago de negocios).
+  Future<void> abrirTexto({
+    required String telefono,
+    required String mensaje,
+  }) async {
+    final url = Uri.parse(
+        'https://wa.me/$telefono?text=${Uri.encodeComponent(mensaje)}');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } else {
+      throw Exception('No se pudo abrir WhatsApp');
+    }
+  }
 }

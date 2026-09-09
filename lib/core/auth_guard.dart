@@ -37,6 +37,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/notificaciones_service.dart';
+import '../services/anuncios_state_service.dart';
 import 'app_colors.dart';
 import 'google_auth_config.dart';
 import 'supabase_client.dart';
@@ -131,6 +132,8 @@ Future<bool> iniciarSesionConGoogle(BuildContext context) async {
     final sesion = await _iniciarSesionNativa();
     if (sesion != null) {
       await NotificacionesService.instance.iniciar();
+      // Realtime de MIS anuncios (avisos de aprobación/pausa/rechazo)
+      await AnunciosStateService.instance.iniciar();
       if (context.mounted) context.go('/home');
       return true;
     }
@@ -224,6 +227,7 @@ Future<bool> _iniciarSesionConGoogleOAuth(BuildContext context) async {
 
   if (ok) {
     await NotificacionesService.instance.iniciar();
+    await AnunciosStateService.instance.iniciar();
     if (context.mounted) context.go('/home');
   }
   return ok;
