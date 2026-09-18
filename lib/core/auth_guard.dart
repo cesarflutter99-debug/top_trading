@@ -38,6 +38,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/notificaciones_service.dart';
 import '../services/anuncios_state_service.dart';
+import '../services/push_messaging_service.dart';
 import 'app_colors.dart';
 import 'google_auth_config.dart';
 import 'supabase_client.dart';
@@ -134,6 +135,9 @@ Future<bool> iniciarSesionConGoogle(BuildContext context) async {
       await NotificacionesService.instance.iniciar();
       // Realtime de MIS anuncios (avisos de aprobación/pausa/rechazo)
       await AnunciosStateService.instance.iniciar();
+      // Push FCM: registra el token de este dispositivo para la cuenta
+      // recién iniciada (upsert en `dispositivos`).
+      await PushMessagingService.instance.registrarToken();
       if (context.mounted) context.go('/home');
       return true;
     }
@@ -228,6 +232,7 @@ Future<bool> _iniciarSesionConGoogleOAuth(BuildContext context) async {
   if (ok) {
     await NotificacionesService.instance.iniciar();
     await AnunciosStateService.instance.iniciar();
+    await PushMessagingService.instance.registrarToken();
     if (context.mounted) context.go('/home');
   }
   return ok;

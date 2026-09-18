@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'core/app_colors.dart';
@@ -8,6 +10,8 @@ import 'router.dart';
 import 'services/theme_provider.dart';
 import 'services/connectivity_service.dart';
 import 'services/pending_actions_queue.dart';
+import 'services/push_messaging_service.dart';
+import 'services/deep_link_service.dart';
 import 'widgets/offline_banner.dart';
 
 // AppColors y kCardRadius ahora viven en core/app_colors.dart -- se
@@ -16,12 +20,30 @@ import 'widgets/offline_banner.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // FCM: el handler de background DEBE registrarse antes de
+  // initializeApp para que las notificaciones con app cerrada lleguen.
+  FirebaseMessaging.onBackgroundMessage(pushManejadorDeFondo);
+  await Firebase.initializeApp();
+
+  // Foreground presentation: alert+badge+sound aunque la app esté abierta
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
   await initSupabase();
+  await PushMessagingService.instance.inicializar();
   // Offline: carga la cola de acciones pendientes guardadas de una
   // sesión anterior y arranca el monitoreo de conexión -- si ya hay
   // red, procesa la cola de inmediato; si no, queda escuchando.
   await PendingActionsQueue.instance.cargar();
   ConnectivityService.instance.iniciar();
+  // Deep links (io.supabase.toptrading://tienda|anuncio|afiliado/...):
+  // escuchar desde el arranque para navegar cuando tocan un link
+  // compartido. Comparte el singleton de AppLinks con supabase_flutter
+  // (login), así que no interfiere con el callback de auth.
+  DeepLinkService.instance.iniciar();
   // Restaura el tema (claro/oscuro) guardado antes de pintar la app,
   // para que el modo oscuro se preserve entre sesiones sin parpadeo.
   final themeProvider = ThemeProvider();

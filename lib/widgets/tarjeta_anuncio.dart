@@ -48,8 +48,10 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
 import '../services/anuncios_service.dart';
+import 'detalle_anuncio_modal.dart';
 import 'product_detail_modal.dart';
 
 // ---------------------------------------------------------------------
@@ -355,8 +357,27 @@ class _TarjetaAnuncioState extends State<TarjetaAnuncio> {
     final a = widget.anuncio;
     AnunciosService().registrarClic(a.idAnuncio);
 
+    // Tocar la tarjeta ya NO navega directo: abre un modal centrado con
+    // los detalles del anuncio. La navegación real la dispara el botón
+    // "Ver tienda/negocio/Me interesa" del modal (_irAlDestino).
+    mostrarDetalleAnuncio(
+      context: context,
+      anuncio: a,
+      onVerAnunciante: () => _irAlDestino(a),
+    );
+  }
+
+  void _irAlDestino(Anuncio a) {
     if (a.idProducto != null) {
-      showProductDetailModal(context: context, productId: a.idProducto!);
+      final idTienda = a.idTienda;
+      if (idTienda != null) {
+        // Producto POTENCIADO: va directo a la tienda dueña, con el
+        // producto resaltado (StoreScreen lee ?producto= y hace
+        // scroll-to-destacado).
+        context.push('/tienda/$idTienda?producto=${a.idProducto}');
+      } else {
+        showProductDetailModal(context: context, productId: a.idProducto!);
+      }
       return;
     }
     if (a.idTienda != null) {
@@ -367,9 +388,22 @@ class _TarjetaAnuncioState extends State<TarjetaAnuncio> {
       context.push('/negocio/${a.idNegocio}');
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Perfil del negocio próximamente')),
-    );
+    _abrirWhatsApp(a);
+  }
+
+  /// Abre chat de WhatsApp con el mensaje "Me interesa" si el anuncio
+  /// (standalone) trae número de contacto. Si no, no hace nada.
+  Future<void> _abrirWhatsApp(Anuncio a) async {
+    final whatsapp = (a.whatsapp ?? '').trim();
+    if (whatsapp.isEmpty) return;
+    final titulo = a.titulo ?? a.texto ?? 'anuncio';
+    final mensaje = Uri.encodeComponent(
+        'Hola, me interesa tu anuncio "$titulo" publicado en Al Lado.');
+    final url = 'https://wa.me/${whatsapp.replaceAll(RegExp(r'[^0-9]'), '')}'
+        '?text=$mensaje';
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {}
   }
 
   @override
@@ -559,6 +593,45 @@ class _TarjetaAnuncioState extends State<TarjetaAnuncio> {
   }
 
   Widget _botonCta(Anuncio a) {
+    final esStandalone = a.tipo == 'standalone';
+    if (esStandalone) {
+      final precio = a.precioUsd;
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1FAF38),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1FAF38).withOpacity(0.25),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.chat_rounded, size: 11, color: Colors.white),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                precio != null
+                    ? 'Me interesa · \$${_formatoPrecio(precio)}'
+                    : 'Me interesa',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     final label = (a.destinoNombre != null && a.destinoNombre!.isNotEmpty)
         ? 'Ver en ${a.destinoNombre}'
         : 'Ver oferta';
@@ -599,6 +672,11 @@ class _TarjetaAnuncioState extends State<TarjetaAnuncio> {
     );
   }
 
+  static String _formatoPrecio(double p) {
+    if (p == p.roundToDouble()) return p.toInt().toString();
+    return p.toStringAsFixed(2);
+  }
+
   Widget _placeholderImagen(Color color) => Container(
         color: color.withOpacity(0.12),
         alignment: Alignment.center,
@@ -623,8 +701,23 @@ class TarjetaCarruselAnuncio extends StatelessWidget {
     final a = anuncio;
     AnunciosService().registrarClic(a.idAnuncio);
 
+    // Mismo patrón que la tarjeta del feed: el tap abre el modal de
+    // detalle; la navegación sale del botón del modal.
+    mostrarDetalleAnuncio(
+      context: context,
+      anuncio: a,
+      onVerAnunciante: () => _irAlDestino(context, a),
+    );
+  }
+
+  void _irAlDestino(BuildContext context, Anuncio a) {
     if (a.idProducto != null) {
-      showProductDetailModal(context: context, productId: a.idProducto!);
+      final idTienda = a.idTienda;
+      if (idTienda != null) {
+        context.push('/tienda/$idTienda?producto=${a.idProducto}');
+      } else {
+        showProductDetailModal(context: context, productId: a.idProducto!);
+      }
       return;
     }
     if (a.idTienda != null) {

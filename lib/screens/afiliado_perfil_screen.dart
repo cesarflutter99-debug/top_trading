@@ -276,11 +276,12 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
   void _compartirCodigo() {
     if (_afiliado == null) return;
     final codigo = _afiliado!['codigo'] ?? '';
+    final link = 'io.supabase.toptrading://afiliado/$codigo';
     Share.share(
       '¡Únete a Al Lado! 🛍️\n'
       'Usa mi código de afiliado "$codigo" al registrar tu tienda y obtén '
       '10% de descuento en tu primer plan.\n\n'
-      'Descarga la app y regístrate ahora.',
+      '$link',
     );
   }
 

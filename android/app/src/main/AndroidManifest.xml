@@ -12,10 +12,34 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
+    <!-- Notificaciones push (FCM): Android 13+ pide este permiso en
+         runtime; firebase_messaging se encarga de solicitarlo. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
         android:label="Al Lado"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
+        <!-- FCM: canal por defecto y logo de la app como ícono de la
+             notificación (Firebase usa estos meta-data para el push). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="notificaciones" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
+
+        <!-- FIX (push en primer plano): Google Play Services puede
+             "delegar" la entrega de notificaciones y en varios equipos
+             (Samsung, Pixel, Android 12-15) eso hace que los mensajes
+             solo lleguen con la app cerrada: onMessage nunca dispara
+             con la app abierta. Con la delegación OFF, FCM entrega
+             todos los mensajes al SDK y la app decide cómo presentarlos
+             (ver PushMessagingService). -->
+        <meta-data
+            android:name="firebase_messaging_notification_delegation_enabled"
+            android:value="false" />
         
         <activity
             android:name=".MainActivity"
@@ -45,6 +69,36 @@
                 <data
                     android:scheme="io.supabase.toptrading"
                     android:host="login-callback" />
+            </intent-filter>
+
+            <!-- Deep links de compartición: abrir la app en una tienda -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="io.supabase.toptrading"
+                    android:host="tienda" />
+            </intent-filter>
+
+            <!-- Deep links de compartición: abrir la app en un anuncio -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="io.supabase.toptrading"
+                    android:host="anuncio" />
+            </intent-filter>
+
+            <!-- Deep links de compartición: código de afiliado -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="io.supabase.toptrading"
+                    android:host="afiliado" />
             </intent-filter>
             
         </activity>

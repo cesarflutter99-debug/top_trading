@@ -160,13 +160,49 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
   }
 
   // El QR de texto es un respaldo: si el admin todavía no subió la
-  // foto real del QR de pago (plan['qr_url']), generamos uno legible
-  // con los datos de tarjeta/teléfono/monto.
+  // foto real del QR de pago de la tarjeta elegida, generamos uno
+  // legible con los datos de tarjeta/teléfono/monto.
   String get _contenidoQr {
-    final tarjeta = widget.plan['numero_tarjeta'] ?? 'No configurada';
+    final tarjeta = (_cuentaSel?['numero_tarjeta'] as String?) ??
+        widget.plan['numero_tarjeta'] ??
+        'No configurada';
     final telefono = widget.plan['numero_telefono_pago'] ?? 'No configurado';
     return 'Tarjeta: $tarjeta\nTeléfono: $telefono\nMonto: '
         '${CurrencyService.instance.formatear(_precioFinal)}';
+  }
+
+  /// Cuentas de pago del plan (tarjeta/QR) cargadas desde
+  /// `planes_cuentas_pago`. El admin sube un QR POR TARJETA -- así que
+  /// el comprador elige dónde pagar (MLC/CUP/Clásica) y se muestra el
+  /// QR de ESA tarjeta, no un QR único del plan.
+  List<Map<String, dynamic>> _cuentas = [];
+  Map<String, dynamic>? _cuentaSel;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargarCuentas();
+    // Deep link /afiliado/:codigo: pre-rellenar el campo y validarlo
+    // de una vez para que el descuento se aplique sin tocar nada.
+    final codigo = widget.codigoAfiliado?.trim();
+    if (codigo != null && codigo.isNotEmpty) {
+      _codigoAfiliadoCtrl.text = codigo.toUpperCase();
+      _validarCodigoEnSegundoPlano();
+    }
+  }
+
+  Future<void> _cargarCuentas() async {
+    try {
+      final cuentas = await widget.tiendasService
+          .obtenerCuentasDePlan((widget.plan['id_plan'] as String?) ?? '');
+      if (!mounted) return;
+      setState(() {
+        _cuentas = cuentas;
+        if (cuentas.isNotEmpty) _cuentaSel = cuentas.first;
+      });
+    } catch (_) {
+      // Sin cuentas cargadas se cae al QR/fallback del plan.
+    }
   }
 
   /// Corta el flujo con un diálogo claro si no hay conexión -- ver nota
@@ -496,6 +532,28 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                 ),
                 const SizedBox(height: 16),
 
+                // ---------- Selector de tarjeta/cuenta de pago ----------
+                if (_cuentas.length > 1) ...[
+                  Text('¿Dónde vas a pagar?',
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final c in _cuentas)
+                        ChoiceChip(
+                          label: Text(
+                            '${c['tipo']} · '
+                            '${(c['numero_tarjeta'] as String? ?? '').length > 6 ? (c['numero_tarjeta'] as String).substring((c['numero_tarjeta'] as String).length - 4) : c['numero_tarjeta']}',
+                          ),
+                          selected: _cuentaSel == c,
+                          onSelected: (_) => setState(() => _cuentaSel = c),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
                 // ---------- QR: tarjeta blanca fija -- el QR necesita
                 // fondo blanco sólido para seguir siendo escaneable sin
                 // importar el tema del teléfono ----------
@@ -515,7 +573,10 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                       ],
                     ),
                     child: () {
-                      final qrUrl = widget.plan['qr_url'] as String?;
+                      final cuentaQr = _cuentaSel?['qr_url'] as String?;
+                      final qrUrl = (cuentaQr != null && cuentaQr.isNotEmpty)
+                          ? cuentaQr
+                          : widget.plan['qr_url'] as String?;
                       if (qrUrl != null && qrUrl.isNotEmpty) {
                         return ClipRRect(
                           borderRadius: BorderRadius.circular(8),
@@ -561,8 +622,11 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _filaDato('Tarjeta',
-                          widget.plan['numero_tarjeta'] ?? 'No configurada'),
+                      _cuentaSel != null
+                          ? _filaDato('Tarjeta ${_cuentaSel!['tipo']}',
+                              _cuentaSel!['numero_tarjeta'] ?? 'No configurada')
+                          : _filaDato('Tarjeta',
+                              widget.plan['numero_tarjeta'] ?? 'No configurada'),
                       const SizedBox(height: 8),
                       _filaDato('Teléfono',
                           widget.plan['numero_telefono_pago'] ?? 'No configurado'),

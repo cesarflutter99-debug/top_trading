@@ -201,10 +201,18 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
   }
 
   void _shareTienda() {
-    final link = 'https://toptrading.app/tienda/${widget.data.idTienda}';
+    final link = 'io.supabase.toptrading://tienda/${widget.data.idTienda}';
     Share.share(
       'Mira la tienda "${widget.data.nombreTienda}" en Al Lado: $link',
     );
+  }
+
+  void _shareProducto() {
+    final d = widget.data;
+    final link =
+        'io.supabase.toptrading://tienda/${d.idTienda}?producto=${d.idProducto}';
+    Share.share(
+        'Mira este producto: ${d.nombre} - \$${d.precioUsd.toStringAsFixed(2)} USD\n$link');
   }
 
   /// Ir a la tienda dueña del producto SIN pasar por el carrito (el
@@ -354,6 +362,11 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
                   icon: const Icon(Icons.share),
                   tooltip: 'Compartir tienda',
                   onPressed: _shareTienda,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.share_outlined),
+                  tooltip: 'Compartir producto',
+                  onPressed: _shareProducto,
                 ),
               ],
             ),

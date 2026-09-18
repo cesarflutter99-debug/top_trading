@@ -205,7 +205,7 @@ class _StoreScreenState extends State<StoreScreen> {
   void _compartirTienda([Map<String, dynamic>? datos]) {
     final t = datos ?? _tiendaCache;
     final nombre = (t?['nombre'] as String?)?.trim();
-    final link = 'https://toptrading.app/tienda/${widget.idTienda}';
+    final link = 'io.supabase.toptrading://tienda/${widget.idTienda}';
     if (nombre == null || nombre.isEmpty) {
       // Sin nombre todavía cargado (raro, pero por si acaso): igual
       // compartimos el link, mejor que no hacer nada.
@@ -251,6 +251,7 @@ class _StoreScreenState extends State<StoreScreen> {
       ),
       builder: (ctx) => _DetalleProductoModal(
         producto: producto,
+        idTienda: widget.idTienda,
         onAgregar: (cantidad) {
           CartService.instance
               .add(producto['id_producto'], widget.idTienda, cantidad);
@@ -966,10 +967,12 @@ class _ProductoCardChica extends StatelessWidget {
 /// descripción, stock y selector de cantidad + agregar al carrito.
 class _DetalleProductoModal extends StatefulWidget {
   final Map<String, dynamic> producto;
+  final String idTienda;
   final void Function(int cantidad) onAgregar;
 
   const _DetalleProductoModal({
     required this.producto,
+    required this.idTienda,
     required this.onAgregar,
   });
 
@@ -1005,8 +1008,11 @@ class _DetalleProductoModalState extends State<_DetalleProductoModal> {
   void _compartir() {
     final nombre = widget.producto['nombre'] ?? 'producto';
     final precio = (widget.producto['precio_usd'] as num?)?.toStringAsFixed(2);
+    final idProducto = widget.producto['id_producto']?.toString() ?? '';
+    final link =
+        'io.supabase.toptrading://tienda/${widget.idTienda}?producto=$idProducto';
     Share.share(
-        'Mira este producto: $nombre${precio != null ? ' - \$$precio USD' : ''} en Al Lado 🛍️');
+        'Mira este producto: $nombre${precio != null ? ' - \$$precio USD' : ''}\n$link');
   }
 
   @override

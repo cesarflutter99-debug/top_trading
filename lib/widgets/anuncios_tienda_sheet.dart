@@ -37,15 +37,21 @@ import 'paquete_anuncios_tienda_sheet.dart';
 const Color _kVerde = Color(0xFF0D9488);
 
 /// Punto de entrada único para Gestionar Tienda.
+/// [destacarAnuncioId] abre directo la vista "Mis anuncios" resaltando
+/// ese anuncio (flujo: notificación de like/comentario -> tu anuncio).
 Future<void> mostrarAnunciosSheet(
   BuildContext context,
-  Map<String, dynamic> tienda,
-) {
+  Map<String, dynamic> tienda, {
+  String? destacarAnuncioId,
+}) {
   return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _AnunciosSheet(tienda: tienda),
+    builder: (_) => _AnunciosSheet(
+      tienda: tienda,
+      destacarAnuncioId: destacarAnuncioId,
+    ),
   );
 }
 
@@ -56,7 +62,8 @@ enum _OrdenMis { recientes, vistas, estado }
 
 class _AnunciosSheet extends StatefulWidget {
   final Map<String, dynamic> tienda;
-  const _AnunciosSheet({required this.tienda});
+  final String? destacarAnuncioId;
+  const _AnunciosSheet({required this.tienda, this.destacarAnuncioId});
 
   @override
   State<_AnunciosSheet> createState() => _AnunciosSheetState();
@@ -83,6 +90,16 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
   bool _subiendoImagen = false;
 
   String get _idTienda => widget.tienda['id_tienda'] as String;
+
+  @override
+  void initState() {
+    super.initState();
+    final destacar = widget.destacarAnuncioId;
+    if (destacar != null) {
+      _vista = _Vista.misAnuncios;
+      _misAnunciosFuture = _anunciosService.misAnunciosDeTienda(_idTienda);
+    }
+  }
 
   @override
   void dispose() {
@@ -819,6 +836,15 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
                     .compareTo(rango(b['estado'] as String?)));
             break;
         }
+        final destacarId = widget.destacarAnuncioId;
+        if (destacarId != null) {
+          final idx =
+              anuncios.indexWhere((x) => (x['id_anuncio'] as String?) == destacarId);
+          if (idx > 0) {
+            final destacado = anuncios.removeAt(idx);
+            anuncios.insert(0, destacado);
+          }
+        }
         return Column(
           children: [
             if (todas.isNotEmpty)
@@ -866,14 +892,24 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
     final impresiones = (a['veces_mostrado'] as num?)?.toInt() ?? 0;
     final clics = (a['veces_clickeado'] as num?)?.toInt() ?? 0;
     final ctr = impresiones > 0 ? (clics * 100 / impresiones) : 0.0;
+    final totalLikes = (a['total_likes'] as num?)?.toInt() ?? 0;
+    final totalComentarios = (a['total_comentarios'] as num?)?.toInt() ?? 0;
+    final esDestacado =
+        (a['id_anuncio'] as String?) == widget.destacarAnuncioId;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest
-            .withOpacity(theme.brightness == Brightness.dark ? 0.4 : 1),
+        color: esDestacado
+            ? AppColors.primary.withOpacity(
+                theme.brightness == Brightness.dark ? 0.18 : 0.08)
+            : theme.colorScheme.surfaceContainerHighest
+                .withOpacity(theme.brightness == Brightness.dark ? 0.4 : 1),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: theme.dividerColor),
+        border: Border.all(
+          color: esDestacado ? AppColors.primary : theme.dividerColor,
+          width: esDestacado ? 1.6 : 1,
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -919,6 +955,29 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
                         fontWeight: FontWeight.w700,
                         color: _colorEstado(estado)),
                   ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.favorite_rounded,
+                        size: 13, color: Colors.redAccent),
+                    const SizedBox(width: 3),
+                    Text('$totalLikes',
+                        style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: theme.textTheme.bodySmall?.color)),
+                    const SizedBox(width: 14),
+                    Icon(Icons.comment_rounded,
+                        size: 13,
+                        color: theme.textTheme.bodySmall?.color),
+                    const SizedBox(width: 3),
+                    Text('$totalComentarios',
+                        style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: theme.textTheme.bodySmall?.color)),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -1022,6 +1081,10 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
   Future<void> _dialogEditar(Map<String, dynamic> a) async {
     final tituloCtrl = TextEditingController(text: a['titulo'] ?? '');
     final textoCtrl = TextEditingController(text: a['texto'] ?? '');
+    final precioCtrl = TextEditingController(
+        text: (a['precio_usd'] as num?)?.toString() ?? '');
+    final whatsappCtrl =
+        TextEditingController(text: a['whatsapp'] ?? '');
     File? nuevaImagen;
 
     final guardado = await showDialog<bool>(
@@ -1047,6 +1110,44 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
                   maxLines: 3,
                   decoration:
                       const InputDecoration(labelText: 'Texto *'),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Precio y WhatsApp opcionales',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: precioCtrl,
+                        keyboardType:
+                            const TextInputType.numberWithOptions(
+                                decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Precio USD',
+                          prefixText: '\$ ',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: whatsappCtrl,
+                        keyboardType: TextInputType.phone,
+                        maxLength: 15,
+                        decoration: const InputDecoration(
+                          labelText: 'WhatsApp',
+                          hintText: '584120000000',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 GestureDetector(
@@ -1101,6 +1202,16 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
       _snack('Título y texto son obligatorios');
       return;
     }
+    double? precio;
+    final precioTxt = precioCtrl.text.trim().replaceAll(',', '.');
+    if (precioTxt.isNotEmpty) {
+      final n = double.tryParse(precioTxt);
+      if (n == null || n <= 0) {
+        _snack('Poné un precio válido o dejalo vacío');
+        return;
+      }
+      precio = n;
+    }
     try {
       String? url;
       if (nuevaImagen != null) {
@@ -1115,6 +1226,8 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
         titulo: tituloCtrl.text.trim(),
         texto: textoCtrl.text.trim(),
         imagenUrl: url,
+        precioUsd: precio,
+        whatsapp: whatsappCtrl.text.trim(),
       );
       AnunciosStateService.instance.marcarCambioPropio(
           a['id_anuncio'] as String,

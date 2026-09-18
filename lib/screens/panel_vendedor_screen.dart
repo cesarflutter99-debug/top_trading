@@ -28,6 +28,7 @@ import '../services/anuncios_service.dart';
 import '../services/storage_service.dart';
 import '../services/tiendas_service.dart';
 import '../services/tienda_state_service.dart';
+import '../services/push_messaging_service.dart';
 import '../widgets/anuncios_tienda_sheet.dart';
 import '../widgets/product_edit_modal.dart';
 import '../widgets/modal_pago_plan.dart';
@@ -69,6 +70,17 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
   // Menú de acciones del FAB (agregar producto, potenciar, anuncios,
   // analíticas, cambiar plan) -- ver _buildFabMenu() más abajo.
   bool _fabExpandido = false;
+
+  // ---- Adaptive colors (modo oscuro) ----
+  bool get _esOscuro => Theme.of(context).brightness == Brightness.dark;
+  Color get _colorTexto => _esOscuro ? const Color(0xFFF5F5F4) : AppColors.ink;
+  Color get _colorTextoSecundario =>
+      _esOscuro ? const Color(0xFFA8A29E) : Colors.black54;
+  Color get _colorSuperficie => _esOscuro
+      ? const Color(0xFF1E1E1E)
+      : const Color(0xFFF5F5F4);
+  Color get _colorBorde =>
+      (_esOscuro ? AppColors.borderDark : AppColors.borderLight);
 
   @override
   void initState() {
@@ -278,6 +290,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     // La sesión cambió -- limpiamos el estado compartido para que no
     // quede "colgada" la tienda de la cuenta anterior.
     TiendaStateService.instance.limpiar();
+    await PushMessagingService.instance.limpiarToken();
 
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -413,13 +426,13 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: categoriaSeleccionada == null
-                                  ? Colors.black45
+                                  ? _colorTextoSecundario
                                   : null,
                             ),
                           ),
                         ),
-                        const Icon(Icons.expand_more_rounded,
-                            size: 20, color: Colors.black45),
+                        Icon(Icons.expand_more_rounded,
+                            size: 20, color: _colorTextoSecundario),
                       ],
                     ),
                   ),
@@ -545,8 +558,11 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                         child: (p['imagen_url'] as String?)?.isNotEmpty == true
                             ? Image.network(p['imagen_url'], fit: BoxFit.cover)
                             : Container(
-                                color: Colors.grey.shade200,
-                                child: const Icon(Icons.image_outlined)),
+                                color: _esOscuro
+                                    ? const Color(0xFF2A2A2A)
+                                    : Colors.grey.shade200,
+                                child: Icon(Icons.image_outlined,
+                                    color: _colorTextoSecundario)),
                       ),
                     ),
                     title: Text(p['nombre'] ?? '',
@@ -815,7 +831,9 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                             children: [
                               CircleAvatar(
                                 radius: 36,
-                                backgroundColor: Colors.grey[200],
+                                backgroundColor: _esOscuro
+                                    ? const Color(0xFF2A2A2A)
+                                    : Colors.grey[200],
                                 backgroundImage: (_tienda['logo_url'] != null &&
                                         (_tienda['logo_url'] as String)
                                             .isNotEmpty)
@@ -824,8 +842,8 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                     : null,
                                 child: (_tienda['logo_url'] == null ||
                                         (_tienda['logo_url'] as String).isEmpty)
-                                    ? const Icon(Icons.storefront_outlined,
-                                        size: 32, color: Colors.grey)
+                                    ? Icon(Icons.storefront_outlined,
+                                        size: 32, color: _colorTextoSecundario)
                                     : null,
                               ),
                               if (_subiendoLogo)
@@ -901,7 +919,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                               Text(
                                 '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}',
                                 style: GoogleFonts.inter(
-                                    fontSize: 12, color: Colors.black54),
+                                    fontSize: 12, color: _colorTextoSecundario),
                               ),
                             ],
                           ),
@@ -1000,23 +1018,24 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
             ] else
               Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8F5E9),
+                  color: const Color(0xFF2E7D32).withOpacity(_esOscuro ? 0.18 : 0.08),
                   borderRadius: BorderRadius.circular(kCardRadius),
-                  border: Border.all(color: const Color(0xFFA5D6A7)),
+                  border: Border.all(
+                      color: const Color(0xFF2E7D32).withOpacity(_esOscuro ? 0.45 : 0.35)),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
                     children: [
-                      const Icon(Icons.verified_rounded,
-                          color: Color(0xFF2E7D32)),
+                      Icon(Icons.verified_rounded,
+                          color: _esOscuro ? const Color(0xFF81C784) : const Color(0xFF2E7D32)),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           'Tienda activa y visible en el marketplace',
                           style: GoogleFonts.plusJakartaSans(
                               fontWeight: FontWeight.w600,
-                              color: const Color(0xFF2E7D32)),
+                              color: _esOscuro ? const Color(0xFF81C784) : const Color(0xFF2E7D32)),
                         ),
                       ),
                     ],
@@ -1046,7 +1065,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text('Plan',
-                            style: GoogleFonts.inter(color: Colors.black54)),
+                            style: GoogleFonts.inter(color: _colorTextoSecundario)),
                         Text(
                           (_tienda['plan'] as String? ?? 'basic').toUpperCase(),
                           style: GoogleFonts.inter(
@@ -1059,7 +1078,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text('WhatsApp',
-                            style: GoogleFonts.inter(color: Colors.black54)),
+                            style: GoogleFonts.inter(color: _colorTextoSecundario)),
                         Text(_tienda['telefono_whatsapp'] ?? '-'),
                       ],
                     ),
@@ -1068,7 +1087,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text('Ubicación',
-                            style: GoogleFonts.inter(color: Colors.black54)),
+                            style: GoogleFonts.inter(color: _colorTextoSecundario)),
                         Text(
                             '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}'),
                       ],
@@ -1086,7 +1105,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                         fontWeight: FontWeight.w800, fontSize: 18)),
                 Text(
                   'Toca un producto para editarlo',
-                  style: GoogleFonts.inter(fontSize: 12, color: Colors.black45),
+                  style: GoogleFonts.inter(fontSize: 12, color: _colorTextoSecundario),
                 ),
               ],
             ),
@@ -1108,7 +1127,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                       child: Text(
                         'Aún no tienes productos. Toca "Nuevo producto" para agregar el primero.',
                         textAlign: TextAlign.center,
-                        style: GoogleFonts.inter(color: Colors.black54),
+                        style: GoogleFonts.inter(color: _colorTextoSecundario),
                       ),
                     ),
                   );
@@ -1240,10 +1259,10 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                         fontWeight: FontWeight.w600,
                                         fontSize: 13),
                                   ),
-                                  Text(
+Text(
                                     '\$${p['precio_usd']}',
                                     style: GoogleFonts.inter(
-                                        color: Colors.black54, fontSize: 12),
+                                        color: _colorTextoSecundario, fontSize: 12),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
@@ -1256,11 +1275,11 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                                         color: sinStock
                                             ? Colors.red
                                             : ((p['cantidad_disponible']
-                                                            as num? ??
-                                                        0) <
-                                                    10
-                                                ? Colors.orange.shade800
-                                                : Colors.black45)),
+                                                                as num? ??
+                                                            0) <
+                                                        10
+                                                    ? Colors.orange.shade800
+                                                    : _colorTextoSecundario)),
                                   ),
                                 ],
                               ),
@@ -1300,74 +1319,67 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     required double pct,
     required Color color,
   }) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.035),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: color.withOpacity(0.4), width: 1.1),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Icon(icono, size: 14, color: color),
-                      const SizedBox(width: 5),
-                      Text(etiqueta,
-                          style: GoogleFonts.inter(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.black87)),
-                    ],
-                  ),
-                  Text(valorDerecha,
-                      style: GoogleFonts.inter(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800,
-                          color: color)),
-                ],
-              ),
-              const SizedBox(height: 9),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  height: 9,
-                  color: color.withOpacity(0.15),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0, end: pct),
-                      duration: const Duration(milliseconds: 800),
-                      curve: Curves.easeOutCubic,
-                      builder: (context, value, _) => FractionallySizedBox(
-                        widthFactor: value.clamp(0.03, 1.0),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(20),
-                            gradient: LinearGradient(
-                                colors: [color.withOpacity(0.65), color]),
-                          ),
-                        ),
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: (_esOscuro ? Colors.white : Colors.black)
+              .withOpacity(_esOscuro ? 0.05 : 0.03),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(icono, size: 13, color: color),
+                    const SizedBox(width: 5),
+                    Text(etiqueta,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: _colorTexto)),
+                  ],
+                ),
+                Text(valorDerecha,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                        color: color)),
+              ],
+            ),
+            const SizedBox(height: 7),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                height: 7,
+                color: color.withOpacity(0.15),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: pct.clamp(0.03, 1.0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        gradient:
+                            LinearGradient(colors: [color.withOpacity(0.65), color]),
                       ),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 5),
-              Text(detalle,
-                  style:
-                      GoogleFonts.inter(fontSize: 10.5, color: Colors.black54)),
-            ],
-          ),
+            ),
+            const SizedBox(height: 4),
+            Text(detalle,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10, color: _colorTextoSecundario)),
+          ],
         ),
       ),
     );
@@ -1565,7 +1577,7 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style:
-                    GoogleFonts.inter(fontSize: 10.5, color: Colors.black54)),
+                    GoogleFonts.inter(fontSize: 10.5, color: _colorTextoSecundario)),
           ),
         ],
       ),

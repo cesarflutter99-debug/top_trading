@@ -16,6 +16,7 @@ import '../core/supabase_client.dart';
 import '../services/negocios_service.dart';
 import '../services/negocio_state_service.dart';
 import '../services/cache_offline_service.dart';
+import '../services/storage_service.dart';
 import '../widgets/servicios_negocio_sheet.dart';
 
 // Mismo verde que el borde de los anuncios de negocio (tarjeta_anuncio).
@@ -180,6 +181,15 @@ class _NegocioScreenState extends State<NegocioScreen> {
       // al instante (fuente única de verdad).
       await NegocioStateService.instance.refrescar();
       CacheOfflineService.instance.eliminar('negocio_${widget.idNegocio}');
+
+      // Limpia las fotos del negocio (logo/portada) en ImageKit. Best
+      // effort: si falla, la fila ya se borró igual y la red de
+      // seguridad del parche SQL (imagekit_pendientes_limpiar) lo
+      // reintenta después.
+      try {
+        await StorageService().borrarArchivosDeNegocio(widget.idNegocio);
+      } catch (_) {}
+
       if (!mounted) return;
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(

@@ -6,11 +6,14 @@
 // estrellas, escribir un comentario opcional y adjuntar una foto
 // opcional de evidencia.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
+import '../services/storage_service.dart';
 import '../services/tiendas_service.dart';
 
 class ValorarPedidoScreen extends StatefulWidget {
@@ -29,16 +32,24 @@ class ValorarPedidoScreen extends StatefulWidget {
 
 class _ValorarPedidoScreenState extends State<ValorarPedidoScreen> {
   final _tiendasService = TiendasService();
+  final _storageService = StorageService();
   final _comentarioCtrl = TextEditingController();
 
   late Future<_DatosValoracion> _datos;
   int _estrellas = 0;
   bool _enviando = false;
+  File? _fotoSeleccionada;
+  bool _subiendoFoto = false;
 
   @override
   void initState() {
     super.initState();
     _datos = _cargarDatos();
+  }
+
+  Future<void> _elegirFoto() async {
+    final foto = await _storageService.elegirFoto();
+    if (foto != null) setState(() => _fotoSeleccionada = foto);
   }
 
   Future<_DatosValoracion> _cargarDatos() async {
@@ -79,10 +90,20 @@ class _ValorarPedidoScreenState extends State<ValorarPedidoScreen> {
 
     setState(() => _enviando = true);
     try {
+      String? fotoUrl;
+      if (_fotoSeleccionada != null) {
+        setState(() => _subiendoFoto = true);
+        fotoUrl = await _storageService.subirFotoValoracion(
+          archivo: _fotoSeleccionada!,
+          idPedido: widget.idPedido,
+        );
+      }
+
       await _tiendasService.valorarPedido(
         idPedido: widget.idPedido,
         idTienda: widget.idTienda!,
         estrellas: _estrellas,
+        fotoUrl: fotoUrl,
         comentario: _comentarioCtrl.text.trim().isEmpty
             ? null
             : _comentarioCtrl.text.trim(),
@@ -108,6 +129,7 @@ class _ValorarPedidoScreenState extends State<ValorarPedidoScreen> {
       if (mounted) {
         setState(() {
           _enviando = false;
+          _subiendoFoto = false;
         });
       }
     }
@@ -193,6 +215,86 @@ class _ValorarPedidoScreenState extends State<ValorarPedidoScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Comentario (opcional)',
                     hintText: 'Cuéntanos cómo fue la atención...',
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // ---------- Foto opcional de evidencia ----------
+                GestureDetector(
+                  onTap: _enviando ? null : _elegirFoto,
+                  child: Container(
+                    height: 160,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(kCardRadius),
+                      border: Border.all(
+                        color: AppColors.primary.withOpacity(0.25),
+                        width: 1.4,
+                      ),
+                    ),
+                    child: _fotoSeleccionada == null
+                        ? Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.add_a_photo_outlined,
+                                  size: 36, color: AppColors.primary),
+                              const SizedBox(height: 8),
+                              Text('Toca para agregar una foto de evidencia',
+                                  style: GoogleFonts.plusJakartaSans(
+                                      color: AppColors.inkSecundarioLight,
+                                      fontSize: 13)),
+                              Text('(opcional)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                      color: AppColors.inkSecundarioLight,
+                                      fontSize: 11)),
+                            ],
+                          )
+                        : Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius:
+                                    BorderRadius.circular(kCardRadius),
+                                child: Image.file(_fotoSeleccionada!,
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    height: double.infinity),
+                              ),
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: Material(
+                                  color: Colors.black45,
+                                  shape: const CircleBorder(),
+                                  child: InkWell(
+                                    customBorder: const CircleBorder(),
+                                    onTap: () =>
+                                        setState(() => _fotoSeleccionada = null),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(6),
+                                      child: Icon(Icons.close_rounded,
+                                          color: Colors.white, size: 18),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (_subiendoFoto)
+                                Positioned.fill(
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.black38,
+                                      borderRadius:
+                                          BorderRadius.circular(kCardRadius),
+                                    ),
+                                    child: const Center(
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                   ),
                 ),
                 const SizedBox(height: 32),

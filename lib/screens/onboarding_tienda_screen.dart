@@ -19,7 +19,12 @@ import '../services/tiendas_service.dart';
 import '../services/tienda_state_service.dart';
 
 class OnboardingTiendaScreen extends StatefulWidget {
-  const OnboardingTiendaScreen({super.key});
+  /// Código de afiliado recibido por deep link (/afiliado/:codigo) o
+  /// desde una pantalla externa. Se arrastra hasta el pago del plan
+  /// (ModalPagoPlan) para validarlo y registrar el uso.
+  final String? codigoAfiliadoInicial;
+
+  const OnboardingTiendaScreen({super.key, this.codigoAfiliadoInicial});
 
   @override
   State<OnboardingTiendaScreen> createState() => _OnboardingTiendaScreenState();
@@ -201,6 +206,9 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
         context.push('/pago-plan', extra: {
           'idTienda': idTienda,
           'plan': _planElegido,
+          if (widget.codigoAfiliadoInicial != null &&
+              widget.codigoAfiliadoInicial!.trim().isNotEmpty)
+            'codigoAfiliado': widget.codigoAfiliadoInicial!.trim().toUpperCase(),
         });
       }
     } catch (e) {

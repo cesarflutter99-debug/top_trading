@@ -71,8 +71,11 @@ import 'screens/notifications_screen.dart';
 import 'screens/mis_pedidos_screen.dart';
 import 'screens/negocio_screen.dart';
 import 'screens/standalone_anuncio_screen.dart';
+import 'screens/anuncios_social_screen.dart';
 import 'widgets/modal_pago_plan.dart';
 import 'services/tiendas_service.dart';
+import 'services/anuncios_service.dart';
+import 'services/anuncio_likes_service.dart';
 
 class _AuthChangeNotifier extends ChangeNotifier {
   _AuthChangeNotifier() {
@@ -149,7 +152,8 @@ final GoRouter router = GoRouter(
     final esRutaPublica = state.matchedLocation == '/home' ||
         state.matchedLocation == '/mapa' ||
         state.matchedLocation.startsWith('/tienda/') ||
-        state.matchedLocation.startsWith('/negocio/');
+        state.matchedLocation.startsWith('/negocio/') ||
+        state.matchedLocation.startsWith('/anuncio/');
     if (!haySesion && !enWelcome && !esRutaPublica) return '/';
     return null;
   },
@@ -193,6 +197,23 @@ final GoRouter router = GoRouter(
       // URL/deep link con context.push('/anuncio-independiente').
       path: '/anuncio-independiente',
       builder: (context, state) => const StandaloneAnuncioScreen(),
+    ),
+    GoRoute(
+      // Deep link para abrir un anuncio específico desde compartir.
+      // _AnuncioDeepLinkScreen carga el anuncio real (el detalle no
+      // funciona con solo el id).
+      path: '/anuncio/:idAnuncio',
+      builder: (context, state) => _AnuncioDeepLinkScreen(
+        idAnuncio: state.pathParameters['idAnuncio']!,
+      ),
+    ),
+    GoRoute(
+      // Deep link para usar un código de afiliado al crear tienda.
+      // El código se arrastra hasta el pago del plan (ModalPagoPlan).
+      path: '/afiliado/:codigo',
+      builder: (context, state) => OnboardingTiendaScreen(
+        codigoAfiliadoInicial: state.pathParameters['codigo']!,
+      ),
     ),
     GoRoute(
       path: '/carrito/:idTienda',
@@ -402,6 +423,9 @@ class _PagoPlanScreenState extends State<_PagoPlanScreen> {
                 plan: plan,
                 tiendasService: TiendasService(),
                 esPantallaCompleta: true,
+                // Código de afiliado de un deep link /afiliado/:codigo
+                // que se arrastró desde el onboarding de la tienda.
+                codigoAfiliado: widget.extra['codigoAfiliado'] as String?,
                 // FIX: antes context.go('/vendedor/mi-tienda') -- ruta
                 // suelta sin shell ni PopScope, "atrás" salía de la
                 // app. Ahora manda a '/home': el shell principal ya
@@ -413,6 +437,86 @@ class _PagoPlanScreenState extends State<_PagoPlanScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+/// Carga un anuncio completo por id para el deep link
+/// /anuncio/:idAnuncio (todo nace del "compartir"). El detalle
+/// (AnuncioDetalleScreen) necesita el mapa lleno (titulo, texto,
+/// whatsapp, total_likes, nombre_anunciante...), así que acá se hace
+/// la carga y se arma ese mapa antes de mostrar la pantalla.
+class _AnuncioDeepLinkScreen extends StatefulWidget {
+  final String idAnuncio;
+  const _AnuncioDeepLinkScreen({required this.idAnuncio});
+
+  @override
+  State<_AnuncioDeepLinkScreen> createState() => _AnuncioDeepLinkScreenState();
+}
+
+class _AnuncioDeepLinkScreenState extends State<_AnuncioDeepLinkScreen> {
+  late Future<Map<String, dynamic>?> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _cargar();
+  }
+
+  Future<Map<String, dynamic>?> _cargar() async {
+    final row = await AnunciosService().obtenerAnuncioPorId(widget.idAnuncio);
+    if (row == null) return null;
+
+    // nombre_anunciante: el detalle lo pinta como "dueño" del anuncio.
+    // En el feed lo arma el RPC; acá hay que resolverlo según el destino.
+    String? anunciante;
+    if (row['id_tienda'] != null) {
+      final t = await supabase
+          .from('tiendas')
+          .select('nombre')
+          .eq('id_tienda', row['id_tienda'])
+          .maybeSingle();
+      anunciante = t?['nombre'] as String?;
+    } else if (row['id_negocio'] != null) {
+      final n = await supabase
+          .from('negocios')
+          .select('nombre')
+          .eq('id_negocio', row['id_negocio'])
+          .maybeSingle();
+      anunciante = n?['nombre'] as String?;
+    }
+    row['nombre_anunciante'] = anunciante ?? 'Anuncio';
+
+    return row;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: _future,
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final anuncio = snap.data;
+        if (anuncio == null) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Anuncio')),
+            body: const Center(
+              child: Text('No se encontró este anuncio.'),
+            ),
+          );
+        }
+        return FutureBuilder<bool>(
+          future: AnuncioLikesService().yaLeDiLike(widget.idAnuncio),
+          builder: (context, likeSnap) => AnuncioDetalleScreen(
+            anuncio: anuncio,
+            tieneLike: likeSnap.data ?? false,
+          ),
+        );
+      },
     );
   }
 }

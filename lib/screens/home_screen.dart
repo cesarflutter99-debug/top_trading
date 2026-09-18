@@ -29,6 +29,7 @@ import 'panel_vendedor_screen.dart';
 import '../widgets/notification_bell.dart';
 import 'valorar_pedido_screen.dart';
 import '../services/notificaciones_service.dart';
+import '../services/push_messaging_service.dart';
 import 'tasa_cambio_screen.dart';
 import '../core/provincias_cuba.dart';
 
@@ -85,7 +86,11 @@ class HomeScreenState extends State<HomeScreen> {
       _ctaNegocio = false;
       return;
     }
-    _anunciosFeed = _anunciosService.obtenerFeed(cantidad: 3);
+    _anunciosFeed = _anunciosService.obtenerFeed(
+      cantidad: 6,
+      provincia: _provinciaSeleccionada,
+      municipio: _municipioSeleccionado,
+    );
     _anunciosCarrusel = _anunciosService.obtenerCarrusel(limite: 5);
     // Estado del negocio propio (para ocultar el CTA si ya registró
     // uno). El catch interno del servicio lo hace offline-safe.
@@ -307,6 +312,8 @@ class HomeScreenState extends State<HomeScreen> {
             radioKm: radio,
             precioMin: precioMin,
             precioMax: precioMax,
+            provincia: _provinciaSeleccionada,
+            municipio: _municipioSeleccionado,
           );
         } else {
           _tiendasCercanas = _tiendasService.buscarTiendasCercanas(
@@ -329,6 +336,7 @@ class HomeScreenState extends State<HomeScreen> {
       await supabase.auth.signOut();
       NotificacionesService.instance.limpiar();
       AnunciosStateService.instance.limpiar();
+      await PushMessagingService.instance.limpiarToken();
       if (mounted) {
         context.go('/');
       }
@@ -606,8 +614,11 @@ class HomeScreenState extends State<HomeScreen> {
                                     _provinciaSeleccionada = provinciaTemp;
                                     _municipioSeleccionado = municipioTemp;
                                   });
-                                  Navigator.of(ctx).pop();
-                                  _cargarCercanas();
+Navigator.of(ctx).pop();
+                                   _cargarCercanas();
+                                   // El feed de anuncios también se
+                                   // filtra por provincia/municipio.
+                                   _cargarAnuncios();
                                 }
                               : null,
                           child: const Text('Aplicar filtros'),
@@ -1148,9 +1159,9 @@ class HomeScreenState extends State<HomeScreen> {
           );
         },
         child: Container(
-          height: 104,
+          height: 148,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(22),
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -1165,53 +1176,67 @@ class HomeScreenState extends State<HomeScreen> {
             ],
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 2),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.22),
+                  ),
+                  child: const Icon(Icons.sell_rounded,
+                      size: 22, color: Colors.white),
+                ),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('¿Quieres vender tu moto?',
-                          maxLines: 1,
+                      Text('¿Quieres vender algún artículo?',
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.inter(
                               color: Colors.white,
                               fontWeight: FontWeight.w800,
-                              fontSize: 15.5)),
-                      const SizedBox(height: 4),
+                              fontSize: 16)),
+                      const SizedBox(height: 6),
                       Text(
-                        'Crea un anuncio y se lo mostramos a todo el mercado.',
-                        maxLines: 2,
+                        'Una moto, una lavadora o algo en específico. '
+                        'Descubre cómo hacerlo: toca aquí y crea tu propia '
+                        'publicación para que todo el mundo la vea.',
+                        maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.inter(
-                            color: Colors.white.withOpacity(0.85),
-                            fontSize: 11.5,
-                            height: 1.3),
+                            color: Colors.white.withOpacity(0.92),
+                            fontSize: 12,
+                            height: 1.35),
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.22),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('Crear',
-                          style: GoogleFonts.inter(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12.5)),
-                      const SizedBox(width: 3),
-                      const Icon(Icons.arrow_forward_rounded,
-                          size: 13, color: Colors.white),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.24),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Crear mi anuncio',
+                                style: GoogleFonts.inter(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12.5)),
+                            const SizedBox(width: 5),
+                            const Icon(Icons.arrow_forward_rounded,
+                                size: 14, color: Colors.white),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1557,6 +1582,18 @@ class HomeScreenState extends State<HomeScreen> {
             child: Center(child: CircularProgressIndicator()),
           );
         }
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                'No se pudieron cargar los productos: ${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(color: _colorTextoSecundario),
+              ),
+            ),
+          );
+        }
         var productos = snapshot.data ?? [];
         if (_busqueda.trim().isNotEmpty) {
           final q = _busqueda.trim().toLowerCase();
@@ -1682,8 +1719,8 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Intercalado: 1 TarjetaAnuncio cada 3 bloques de tienda completos,
-  /// máximo 3 por sesión (la prioridad admin->negocio->producto y los
+  /// Intercalado: 1 TarjetaAnuncio cada 2 bloques de tienda completos,
+  /// máximo 6 por sesión (la prioridad admin->negocio->producto y los
   /// cupos ya los resuelve la RPC en el backend).
   List<Widget> _intercalarAnuncios(
       List<Widget> bloques, List<Anuncio> anuncios) {
@@ -1692,7 +1729,7 @@ class HomeScreenState extends State<HomeScreen> {
     var iAnuncio = 0;
     for (var i = 0; i < bloques.length; i++) {
       out.add(bloques[i]);
-      if ((i + 1) % 3 == 0 && iAnuncio < anuncios.length && iAnuncio < 3) {
+      if ((i + 1) % 2 == 0 && iAnuncio < anuncios.length && iAnuncio < 6) {
         out.add(TarjetaAnuncio(anuncio: anuncios[iAnuncio]));
         iAnuncio++;
       }

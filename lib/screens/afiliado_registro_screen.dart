@@ -165,7 +165,18 @@ class _AfiliadoRegistroScreenState extends State<AfiliadoRegistroScreen> {
         );
         if (mounted) Navigator.of(context).pop();
       }
-    } catch (e) {
+    } catch (e, st) {
+      // DIAGNÓSTICO TEMPORAL: acá es donde se traga el error real.
+      // Si es un PostgrestException, imprime code/message/details --
+      // eso dice EXACTAMENTE qué falló (columna, tabla, RLS, trigger).
+      debugPrint('ERROR REAL AFILIADO: $e');
+      if (e is PostgrestException) {
+        debugPrint('ERROR REAL AFILIADO -> code: ${e.code}');
+        debugPrint('ERROR REAL AFILIADO -> message: ${e.message}');
+        debugPrint('ERROR REAL AFILIADO -> details: ${e.details}');
+        debugPrint('ERROR REAL AFILIADO -> hint: ${e.hint}');
+      }
+      debugPrint('ERROR REAL AFILIADO -> stacktrace: $st');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_mensajeAmigable(e))),

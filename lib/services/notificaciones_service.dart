@@ -111,13 +111,35 @@ class NotificacionesService extends ChangeNotifier {
     required String mensaje,
     String tipo = 'local',
   }) {
+    agregarPush(titulo: titulo, mensaje: mensaje, tipo: tipo);
+  }
+
+  /// Pinta un push FCM que llegó por onMessage (app en primer plano).
+  /// La fila real ya la disparó el trigger de la tabla `notificaciones`
+  /// y normalmente ya llegó por Realtime -- de hecho, si el push y el
+  /// Realtime llegan casi juntos, la fila ya está en la lista y aquí se
+  /// descarta. Pero si el Realtime está caído (sin conexión a Supabase
+  /// en vivo), el push igual llega y este respaldo evita que la
+  /// notificación "se pierda".
+  void agregarPush({
+    required String titulo,
+    required String mensaje,
+    String tipo = 'general',
+    String? data,
+  }) {
+    final id = 'push_${DateTime.now().microsecondsSinceEpoch}';
+    // Anti-duplicado: la misma notificación ya llegó por Realtime.
+    if (_notificaciones.any(
+        (n) => n['titulo'] == titulo && n['mensaje'] == mensaje)) {
+      return;
+    }
     _notificaciones.insert(0, {
-      'id_notificacion': 'local_${DateTime.now().microsecondsSinceEpoch}',
+      'id_notificacion': id,
       'titulo': titulo,
       'mensaje': mensaje,
       'tipo': tipo,
+      'data': data,
       'leida': false,
-      'data': null,
       'creado_en': DateTime.now().toIso8601String(),
       'local': true,
     });

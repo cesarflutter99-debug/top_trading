@@ -1,8 +1,10 @@
 import 'dart:math';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import '../core/supabase_client.dart';
 import '../widgets/analytics_widgets.dart' show RangoAnalitica;
 import 'cache_offline_service.dart';
+import 'storage_service.dart';
 
 /// Categorías fijas de tienda -- usadas en el onboarding (crear
 /// tienda), en "Gestionar Tienda" (editar categoría) y como filtro en
@@ -118,15 +120,50 @@ class TiendasService {
     return res['id_producto'] as String;
   }
 
-  /// Elimina un producto puntual (usado tanto por el admin como,
-  /// en el futuro, por el propio vendedor desde su panel).
+  /// Elimina un producto puntual (usado tanto por el admin como por el
+  /// propio vendedor desde su panel). Después de borrar la fila, limpia
+  /// sus fotos en ImageKit con borrado por archivo EXACTO (los distintos
+  /// productos de una tienda comparten carpeta, por eso no se borra por
+  /// carpeta). No borra una foto si otro anuncio o producto la sigue
+  /// usando, y nunca lanza por un fallo de limpieza: preferimos el
+  /// producto borrado aunque una foto quede huérfana.
   Future<void> eliminarProducto(String idProducto) async {
+    final urls = <String>[];
+    try {
+      final res = await supabase
+          .from('productos')
+          .select('imagen_url, imagen_url_2, imagen_url_3')
+          .eq('id_producto', idProducto)
+          .maybeSingle();
+      if (res != null) {
+        for (final campo in ['imagen_url', 'imagen_url_2', 'imagen_url_3']) {
+          final u = (res[campo] as String?)?.trim();
+          if (u != null && u.isNotEmpty && !urls.contains(u)) urls.add(u);
+        }
+      }
+    } catch (_) {}
+
     await supabase.from('productos').delete().eq('id_producto', idProducto);
+
+    if (urls.isEmpty) return;
+    final storage = StorageService();
+    for (final url in urls) {
+      try {
+        if (!await _fotoProductoEnUso(url)) {
+          await storage.borrarFoto(url);
+        }
+      } catch (_) {}
+    }
   }
 
   /// Edita un producto existente. Solo actualiza los campos que
   /// vienen distintos de null (mismo patrón que actualizarTienda /
   /// actualizarPlan / actualizarAfiliado).
+  ///
+  /// Limpieza: si una foto fue reemplazada, la VIEJA se borra de
+  /// ImageKit (archivo exacto) DESPUÉS del update exitoso y solo si
+  /// ninguna otra fila la sigue usando -- así un anuncio "potenciado"
+  /// que reusa la foto del producto no se queda sin imagen.
   Future<void> actualizarProducto({
     required String idProducto,
     String? nombre,
@@ -149,11 +186,77 @@ class TiendasService {
       data['cantidad_disponible'] = cantidadDisponible;
     }
     if (categoria != null) data['categoria'] = categoria;
+
+    // Fotos reemplazadas: las recolectamos ANTES del update para borrar
+    // la vieja solo si el update sale bien y nadie más la usa.
+    final reemplazadas = <String>[];
+    if (imagenUrl != null || imagenUrl2 != null || imagenUrl3 != null) {
+      try {
+        final viejo = await supabase
+            .from('productos')
+            .select('imagen_url, imagen_url_2, imagen_url_3')
+            .eq('id_producto', idProducto)
+            .maybeSingle();
+        if (viejo != null) {
+          final pares = [
+            (viejo['imagen_url'] as String?, imagenUrl),
+            (viejo['imagen_url_2'] as String?, imagenUrl2),
+            (viejo['imagen_url_3'] as String?, imagenUrl3),
+          ];
+          for (final (oldUrl, newUrl) in pares) {
+            final o = oldUrl?.trim();
+            final n = newUrl?.trim();
+            if (o != null && o.isNotEmpty && o != n) reemplazadas.add(o);
+          }
+        }
+      } catch (_) {}
+    }
+
     if (data.isNotEmpty) {
       await supabase
           .from('productos')
           .update(data)
           .eq('id_producto', idProducto);
+    }
+
+    if (reemplazadas.isEmpty) return;
+    final storage = StorageService();
+    for (final url in reemplazadas) {
+      try {
+        if (!await _fotoProductoEnUso(url)) {
+          await storage.borrarFoto(url);
+        }
+      } catch (_) {}
+    }
+  }
+
+  /// true si la URL sigue siendo usada por un anuncio (ej. el "potenciado"
+  /// que reusa la foto del producto) o por otro producto. En ese caso NO
+  /// se borra el archivo. Si la consulta falla, devuelve true (criterio
+  /// conservador: mejor una foto huérfana que romper una imagen en vivo).
+  ///
+  /// Nota: se consulta DESPUÉS de que el producto fue actualizado (ya
+  /// apunta a la URL nueva) o eliminado, así un match solo puede venir
+  /// de otra fila que siga usando esta URL.
+  Future<bool> _fotoProductoEnUso(String url) async {
+    try {
+      final enAnuncio = await supabase
+          .from('anuncios')
+          .select('id_anuncio')
+          .eq('imagen_url', url)
+          .limit(1);
+      if ((enAnuncio as List).isNotEmpty) return true;
+      for (final campo in ['imagen_url', 'imagen_url_2', 'imagen_url_3']) {
+        final enProducto = await supabase
+            .from('productos')
+            .select('id_producto')
+            .eq(campo, url)
+            .limit(1);
+        if ((enProducto as List).isNotEmpty) return true;
+      }
+      return false;
+    } catch (_) {
+      return true;
     }
   }
 
@@ -599,7 +702,7 @@ class TiendasService {
 
     final usoConfirmado = await supabase
         .from('usos_afiliado')
-        .select('id_uso')
+        .select('id')
         .eq('id_tienda', idTienda)
         .eq('codigo', codigo)
         .maybeSingle();
@@ -806,6 +909,23 @@ class TiendasService {
         .eq('activo', true)
         .order('precio_usd', ascending: true);
     return List<Map<String, dynamic>>.from(res);
+  }
+
+  /// Cuentas de pago de UN plan (varias tarjetas: MLC/CUP/Clásica, cada
+  /// una con su número y su propio QR de transferencia). El admin las
+  /// gestiona desde planes_cuentas_pago.
+  Future<List<Map<String, dynamic>>> obtenerCuentasDePlan(String idPlan) async {
+    try {
+      final res = await supabase
+          .from('planes_cuentas_pago')
+          .select()
+          .eq('id_plan', idPlan)
+          .order('creado_en');
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('obtenerCuentasDePlan falló: $e');
+      return [];
+    }
   }
 
   Future<bool> validarCodigoAfiliado(String codigo) async {

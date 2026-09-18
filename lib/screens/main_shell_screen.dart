@@ -23,6 +23,7 @@ import '../widgets/offline_banner.dart';
 import 'home_screen.dart';
 import 'mapa_tiendas_screen.dart';
 import 'favoritos_screen.dart';
+import 'anuncios_social_screen.dart';
 import 'mi_perfil_screen.dart';
 import 'panel_vendedor_screen.dart';
 
@@ -100,7 +101,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   Future<void> _irA(int indice) async {
-    final requiereSesion = indice == 2 || indice == 3 || indice == 4;
+    final requiereSesion = indice == 3 || indice == 4 || indice == 5;
     if (!requiereSesion || supabase.auth.currentUser != null) {
       _cambiarIndice(indice);
       return;
@@ -150,6 +151,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
     final paginas = [
       HomeScreen(key: _homeKey),
       const MapaTiendasScreen(),
+      const AnunciosSocialScreen(),
       const FavoritosScreen(),
       _cargandoTienda
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
@@ -229,10 +231,19 @@ class _MainShellScreenState extends State<MainShellScreen> {
                     Expanded(
                       child: _ItemNav(
                         activo: _indice == 2,
+                        iconoInactivo: Icons.campaign_outlined,
+                        iconoActivo: Icons.campaign_rounded,
+                        label: 'Anuncios',
+                        onTap: () => _cambiarIndice(2),
+                      ),
+                    ),
+                    Expanded(
+                      child: _ItemNav(
+                        activo: _indice == 3,
                         iconoInactivo: Icons.favorite_border_rounded,
                         iconoActivo: Icons.favorite_rounded,
                         label: 'Favoritos',
-                        onTap: () => _irA(2),
+                        onTap: () => _irA(3),
                       ),
                     ),
                     Expanded(
@@ -246,20 +257,20 @@ class _MainShellScreenState extends State<MainShellScreen> {
                     ),
                     Expanded(
                       child: _ItemNav(
-                        activo: _indice == 3,
+                        activo: _indice == 4,
                         iconoInactivo: Icons.storefront_outlined,
                         iconoActivo: Icons.storefront_rounded,
                         label: 'Mi Tienda',
-                        onTap: () => _irA(3),
+                        onTap: () => _irA(4),
                       ),
                     ),
                     Expanded(
                       child: _ItemNav(
-                        activo: _indice == 4,
+                        activo: _indice == 5,
                         iconoInactivo: Icons.person_outline_rounded,
                         iconoActivo: Icons.person_rounded,
                         label: 'Perfil',
-                        onTap: () => _irA(4),
+                        onTap: () => _irA(5),
                       ),
                     ),
                   ],

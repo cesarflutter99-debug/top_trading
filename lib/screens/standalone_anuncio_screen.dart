@@ -35,6 +35,7 @@ import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
 import '../services/storage_service.dart';
 import '../services/currency_service.dart';
+import '../widgets/gestionar_anuncios_standalone_sheet.dart';
 
 /// Punto de entrada reutilizable: lista los paquetes standalone
 /// disponibles y, al elegir uno, abre el modal de pago por WhatsApp.
@@ -71,6 +72,11 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
   late Future<({int usados, int max, DateTime? vigenteHasta})> _ranurasFuture;
   late Future<List<Map<String, dynamic>>> _permisosFuture;
   late Future<List<Map<String, dynamic>>> _pendientesFuture;
+  late Future<Map<String, int>> _usosPorPermisoFuture;
+
+  String? _idPermisoElegido;
+  final _precioCtrl = TextEditingController();
+  final _whatsappCtrl = TextEditingController();
 
   File? _imagenFile;
   bool _publicando = false;
@@ -82,16 +88,34 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
     _cargarTodo();
   }
 
-  void _cargarTodo() {
+  Future<void> _cargarTodo() async {
     _ranurasFuture = _anunciosService.ranurasStandalone();
     _permisosFuture = _anunciosService.misPermisosStandalone();
     _pendientesFuture = _anunciosService.comprasPendientesStandalone();
+    _usosPorPermisoFuture = _anunciosService.usadosPorPermisoStandalone();
+
+    if (_idPermisoElegido == null) {
+      final permisos = await _permisosFuture;
+      final usos = await _usosPorPermisoFuture;
+      for (final p in permisos) {
+        final id = (p['id_permiso'] ?? '').toString();
+        if (id.isEmpty) continue;
+        final max = (p['max_anuncios'] as num?)?.toInt() ?? 0;
+        final usados = usos[id] ?? 0;
+        if (usados < max) {
+          if (mounted) setState(() => _idPermisoElegido = id);
+          break;
+        }
+      }
+    }
   }
 
   @override
   void dispose() {
     _tituloCtrl.dispose();
     _textoCtrl.dispose();
+    _precioCtrl.dispose();
+    _whatsappCtrl.dispose();
     super.dispose();
   }
 
@@ -106,6 +130,12 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
       return 'No tienes ranuras libres en este momento. Compra un paquete '
           'o espera a que termine uno de tus anuncios activos.';
     }
+    if (s.contains('PERMISO_INVALIDO')) {
+      return 'Esa ranura ya no está vigente o no tiene cupo. Elige otra.';
+    }
+    if (s.contains('WHATSAPP_REQUERIDO')) {
+      return 'Agrega un número de WhatsApp para poder publicar tu anuncio.';
+    }
     if (s.contains('SESION_REQUERIDA')) {
       return 'Inicia sesión de nuevo e inténtalo otra vez.';
     }
@@ -119,8 +149,32 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
     );
   }
 
+  Future<void> _abrirMisAnuncios() async {
+    await mostrarGestionarAnunciosStandaloneSheet(context);
+    if (mounted) setState(_cargarTodo);
+  }
+
   Future<void> _publicar() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_idPermisoElegido == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Elige de qué ranura quieres publicar tu anuncio.')),
+        );
+      }
+      return;
+    }
+    final precio = double.tryParse(_precioCtrl.text.trim().replaceAll(',', '.'));
+    if (precio == null || precio <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Pon un precio válido en USD para tu anuncio.')),
+        );
+      }
+      return;
+    }
 
     setState(() => _publicando = true);
     try {
@@ -140,6 +194,9 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
         titulo: _tituloCtrl.text.trim(),
         texto: _textoCtrl.text.trim(),
         imagenUrl: imagenUrl,
+        idPermiso: _idPermisoElegido,
+        precioUsd: precio,
+        whatsapp: _whatsappCtrl.text.trim(),
       );
 
       if (mounted) {
@@ -191,6 +248,100 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
     );
   }
 
+  Widget _tarjetaRanura(
+      BuildContext context, Map<String, dynamic> p, Map<String, int> usos) {
+    final id = (p['id_permiso'] ?? '').toString();
+    final max = (p['max_anuncios'] as num?)?.toInt() ?? 0;
+    final usados = usos[id] ?? 0;
+    final restantes = max - usados;
+    final hasta = DateTime.tryParse((p['hasta'] as String?) ?? '');
+    final paquete = p['paquetes_anuncio'] as Map<String, dynamic>?;
+    final nombre = (paquete?['nombre'] as String?) ?? 'Paquete';
+    final vigencia = hasta != null
+        ? 'vence ${hasta.day}/${hasta.month}${hasta.year != DateTime.now().year ? '/${hasta.year}' : ''}'
+        : 'sin fecha de vencimiento';
+    final seleccionada = _idPermisoElegido == id;
+    final agotada = restantes <= 0;
+    final colorAcento = agotada ? _colorTextoSecundario : AppColors.primary;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(kCardRadius),
+        onTap: agotada ? null : () => setState(() => _idPermisoElegido = id),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: seleccionada
+                ? colorAcento.withOpacity(_esOscuro ? 0.16 : 0.08)
+                : _colorSuperficie,
+            borderRadius: BorderRadius.circular(kCardRadius),
+            border: Border.all(
+              color: seleccionada
+                  ? colorAcento.withOpacity(0.7)
+                  : _colorBorde,
+              width: seleccionada ? 1.6 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                seleccionada
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                size: 20,
+                color: agotada ? _colorTextoSecundario : AppColors.primary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text('$nombre  ·  $usados de $max usados',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: _colorTexto)),
+                        ),
+                        if (agotada) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(
+                                  _esOscuro ? 0.25 : 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text('Agotada',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.red.shade400)),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${restantes > 0 ? '$restantes anuncio${restantes == 1 ? '' : 's'} disponible${restantes == 1 ? '' : 's'} · ' : ''}$vigencia',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: _colorTextoSecundario),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Color _colorFraccion(double fracLibre) {
     const verde = Color(0xFF2ECC71);
     const amarillo = Color(0xFFFFC107);
@@ -213,6 +364,11 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
         elevation: 0,
         scrolledUnderElevation: 0,
         actions: [
+          IconButton(
+            onPressed: _abrirMisAnuncios,
+            tooltip: 'Mis anuncios',
+            icon: const Icon(Icons.inventory_2_outlined, size: 20),
+          ),
           TextButton.icon(
             onPressed: _abrirPlanes,
             icon: const Icon(Icons.add_shopping_cart_rounded, size: 17),
@@ -481,6 +637,84 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
 
             const SizedBox(height: 24),
 
+            // ---------- Selector de ranura: el usuario elige de cuál
+            // permiso comprado se descuenta este anuncio. ----------
+            Text('¿De qué ranura lo publicás?',
+                style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    color: _colorTexto)),
+            const SizedBox(height: 4),
+            Text('Mostrá cuántos anuncios te quedan en cada una: elegí '
+                'con qué paquete querés gastar esta publicación.',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    color: _colorTextoSecundario,
+                    height: 1.35)),
+            const SizedBox(height: 10),
+            FutureBuilder<List<Map<String, dynamic>>>(
+              future: _permisosFuture,
+              builder: (context, psnap) {
+                final permisos =
+                    psnap.data?.where((p) {
+                          final hasta = DateTime.tryParse(
+                              (p['hasta'] as String?) ?? '');
+                          return p['activo'] != false &&
+                              (hasta == null || hasta.isAfter(DateTime.now()));
+                        }).toList() ??
+                        const [];
+                if (psnap.connectionState == ConnectionState.waiting) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 14),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                if (permisos.isEmpty) {
+                  return Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _colorSuperficie,
+                      borderRadius: BorderRadius.circular(kCardRadius),
+                      border: Border.all(color: _colorBorde),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.warning_amber_rounded,
+                            size: 17, color: AppColors.warm),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'No tenés ranuras vigentes: comprá un paquete '
+                            'para habilitar tus publicaciones independientes.',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12.5,
+                                color: _colorTextoSecundario,
+                                height: 1.35),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                return FutureBuilder<Map<String, int>>(
+                  future: _usosPorPermisoFuture,
+                  builder: (context, usnap) {
+                    final usos = usnap.data ?? const {};
+                    return Column(
+                      children: [
+                        for (final p in permisos) ...[
+                          _tarjetaRanura(context, p, usos),
+                          const SizedBox(height: 8),
+                        ],
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+
+            const SizedBox(height: 24),
+
             // ---------- Formulario -- solo tiene sentido mostrarlo
             // pintado en detalle si hay (o puede haber) cupo; si no,
             // igual se deja visible pero el botón queda deshabilitado
@@ -536,7 +770,37 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
                       ],
                     ],
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _precioCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    style: GoogleFonts.plusJakartaSans(color: _colorTexto),
+                    decoration: _decoracion(
+                        'Precio en USD (ej: 120)', Icons.attach_money_rounded),
+                    validator: (v) {
+                      final t = (v ?? '').trim().replaceAll(',', '.');
+                      final n = double.tryParse(t);
+                      if (n == null || n <= 0) {
+                        return 'Poné un precio mayor a 0';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 4),
+                  TextFormField(
+                    controller: _whatsappCtrl,
+                    keyboardType: TextInputType.phone,
+                    maxLength: 15,
+                    style: GoogleFonts.plusJakartaSans(color: _colorTexto),
+                    decoration: _decoracion(
+                        'Tu WhatsApp (ej: 584120000000)',
+                        Icons.phone_android_rounded),
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Requerido para recibir "Me interesa"'
+                        : null,
+                  ),
+                  const SizedBox(height: 12),
                   FilledButton.icon(
                     onPressed: _publicando ? null : _publicar,
                     style: FilledButton.styleFrom(

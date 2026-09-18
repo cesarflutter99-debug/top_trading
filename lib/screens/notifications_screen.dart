@@ -27,7 +27,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
+import '../services/anuncios_service.dart';
+import '../services/negocios_service.dart';
 import '../services/notificaciones_service.dart';
+import '../services/tiendas_service.dart';
+import '../widgets/anuncios_negocio_sheet.dart';
+import '../widgets/anuncios_tienda_sheet.dart';
+import '../widgets/gestionar_anuncios_standalone_sheet.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -312,12 +318,18 @@ class _NotificacionTile extends StatelessWidget {
     required this.esOscuro,
   });
 
-  void _navegar(BuildContext context) {
+  Future<void> _navegar(BuildContext context) async {
     final tipo = notificacion['tipo'];
     final data = notificacion['data'] as Map<String, dynamic>?;
     if (data == null) return;
 
     switch (tipo) {
+      case 'anuncio_like':
+      case 'anuncio_comentario':
+        // Lleva a "Mis anuncios" del dueño, resaltando el anuncio que
+        // recibió la interacción (ver _abrirMisAnuncios abajo).
+        await _abrirMisAnuncios(context, data);
+        break;
       case 'nuevo_pedido':
       case 'pedido_por_expirar':
         context.push('/vendedor/pedidos');
@@ -392,6 +404,40 @@ class _NotificacionTile extends StatelessWidget {
         // ella. Se ofrece crear una nueva en su lugar.
         context.push('/crear-tienda');
         break;
+    }
+  }
+
+  /// Notificación de like/comentario -> abre el listado "Mis anuncios"
+  /// de la publicación correspondiente (tienda, negocio o standalone),
+  /// con el anuncio resaltado y sus contadores de likes/comentarios.
+  Future<void> _abrirMisAnuncios(
+      BuildContext context, Map<String, dynamic> data) async {
+    final idAnuncio = data['id_anuncio'] as String?;
+    if (idAnuncio == null) return;
+    try {
+      final anuncio = await AnunciosService().obtenerAnuncioPorId(idAnuncio);
+      if (anuncio == null || !context.mounted) return;
+
+      final idTienda = anuncio['id_tienda'] as String?;
+      final idNegocio = anuncio['id_negocio'] as String?;
+
+      if (idNegocio != null) {
+        final negocio = await NegociosService().obtenerNegocio(idNegocio);
+        if (negocio != null && context.mounted) {
+          mostrarAnunciosNegocioSheet(context,
+              negocio, destacarAnuncioId: idAnuncio);
+        }
+      } else if (idTienda != null) {
+        final tienda = await TiendasService().obtenerTiendaPorId(idTienda);
+        if (tienda != null && context.mounted) {
+          mostrarAnunciosSheet(context, tienda, destacarAnuncioId: idAnuncio);
+        }
+      } else if (context.mounted) {
+        mostrarGestionarAnunciosStandaloneSheet(context,
+            destacarAnuncioId: idAnuncio);
+      }
+    } catch (e) {
+      debugPrint('_abrirMisAnuncios falló: $e');
     }
   }
 

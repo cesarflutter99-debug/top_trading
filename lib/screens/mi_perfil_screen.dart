@@ -45,6 +45,7 @@ import '../services/tienda_state_service.dart';
 import '../services/afiliado_state_service.dart';
 import '../widgets/paquetes_negocio_sheet.dart';
 import '../widgets/servicios_negocio_sheet.dart';
+import '../widgets/gestionar_anuncios_standalone_sheet.dart';
 import 'onboarding_negocio_screen.dart';
 import 'standalone_anuncio_screen.dart';
 
@@ -483,7 +484,12 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
     return RefreshIndicator(
       onRefresh: _cargarTodo,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+        padding: EdgeInsets.fromLTRB(
+          14,
+          12,
+          14,
+          MediaQuery.of(context).padding.bottom + 96,
+        ),
         children: [
           if (_miTienda != null) ...[
             _buildSectionTitle('Mi Tienda', Icons.storefront_rounded),
@@ -1268,7 +1274,12 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
     return RefreshIndicator(
       onRefresh: _recargarAnuncios,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+        padding: EdgeInsets.fromLTRB(
+          14,
+          12,
+          14,
+          MediaQuery.of(context).padding.bottom + 96,
+        ),
         children: [
           Container(
             padding: const EdgeInsets.all(12),
@@ -1532,6 +1543,24 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          await mostrarGestionarAnunciosStandaloneSheet(
+                              context);
+                          await _recargarAnuncios();
+                        },
+                        icon: const Icon(
+                            Icons.inventory_2_outlined, size: 15),
+                        label: const Text('Mis anuncios independientes',
+                            style: TextStyle(fontSize: 11.5)),
+                        style: OutlinedButton.styleFrom(
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 8)),
+                      ),
                     ),
                   ],
                 ),

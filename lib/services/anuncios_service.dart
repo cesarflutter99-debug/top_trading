@@ -27,6 +27,7 @@
 
 import 'package:flutter/foundation.dart';
 import '../core/supabase_client.dart';
+import 'storage_service.dart';
 
 /// Tope de ranuras COMPRADAS por negocio (paquetes acumulados).
 /// Debe coincidir con el `least(..., 5)` del trigger en Supabase
@@ -50,6 +51,8 @@ class Anuncio {
   final String? idNegocio;
   final String? destinoNombre;
   final String? destinoImagen;
+  final double? precioUsd;
+  final String? whatsapp;
 
   const Anuncio({
     required this.idAnuncio,
@@ -63,6 +66,8 @@ class Anuncio {
     this.idNegocio,
     this.destinoNombre,
     this.destinoImagen,
+    this.precioUsd,
+    this.whatsapp,
   });
 
   factory Anuncio.fromJson(Map<String, dynamic> j) => Anuncio(
@@ -77,6 +82,8 @@ class Anuncio {
         idNegocio: j['id_negocio'] as String?,
         destinoNombre: j['destino_nombre'] as String?,
         destinoImagen: j['destino_imagen'] as String?,
+        precioUsd: (j['precio_usd'] as num?)?.toDouble(),
+        whatsapp: j['whatsapp'] as String?,
       );
 
   /// Etiqueta legal fija por tipo -- solo se usa si el admin no puso
@@ -99,11 +106,18 @@ class Anuncio {
 class AnunciosService {
   /// Anuncios para intercalar en el feed (backend prioriza y rota:
   /// admin -> negocio -> producto, máximo de cupos server-side).
-  Future<List<Anuncio>> obtenerFeed({int cantidad = 3}) async {
+  /// Si se proveen [provincia] y/o [municipio], el RPC filtrará los anuncios
+  /// solo de tiendas ubicadas en ese lugar, evitando que mezclen provincias
+  /// (ej. un anuncio de Matanzas no aparezca en el feed de La Habana).
+  Future<List<Anuncio>> obtenerFeed({
+    int cantidad = 3,
+    String? provincia,
+    String? municipio,
+  }) async {
     try {
       final res = await supabase.rpc(
         'obtener_anuncios_feed',
-        params: {'p_cantidad': cantidad},
+        params: {'p_cantidad': cantidad, 'provincia': provincia, 'municipio': municipio},
       );
       final filas = List<Map<String, dynamic>>.from(res as List);
       return filas
@@ -111,7 +125,27 @@ class AnunciosService {
               Map<String, dynamic>.from(f['anuncio'] as Map)))
           .toList();
     } catch (e) {
-      debugPrint('obtener_anuncios_feed falló (¿offline?): $e');
+      debugPrint('obtener_anuncios_feed RPC falló (¿offline o schema?): $e');
+      return _feedDirecto(cantidad);
+    }
+  }
+
+  /// Fallback del feed: consulta directa a la tabla. No reparte cupos ni
+  /// hace la rotación "menos mostrados primero" del RPC, pero garantiza
+  /// que el feed nunca se quede vacío por un error del RPC.
+  Future<List<Anuncio>> _feedDirecto(int cantidad) async {
+    try {
+      final data = await supabase
+          .from('anuncios')
+          .select()
+          .eq('estado', 'aprobado')
+          .order('creado_en', ascending: false)
+          .limit(cantidad.clamp(0, 50));
+      return data
+          .map((r) => Anuncio.fromJson(Map<String, dynamic>.from(r)))
+          .toList();
+    } catch (e) {
+      debugPrint('fallback de feed directo falló (¿offline?): $e');
       return [];
     }
   }
@@ -129,8 +163,40 @@ class AnunciosService {
               Map<String, dynamic>.from(f['anuncio'] as Map)))
           .toList();
     } catch (e) {
-      debugPrint('obtener_anuncios_carrusel falló (¿offline?): $e');
-      return [];
+      debugPrint('obtener_anuncios_carrusel RPC falló (¿offline o schema?): $e');
+      try {
+        final data = await supabase
+            .from('anuncios')
+            .select()
+            .eq('tipo', 'admin')
+            .eq('estado', 'aprobado')
+            .order('creado_en', ascending: false)
+            .limit(limite.clamp(0, 50));
+        return data
+            .map((r) => Anuncio.fromJson(Map<String, dynamic>.from(r)))
+            .toList();
+      } catch (e2) {
+        debugPrint('fallback de carrusel directo falló (¿offline?): $e2');
+        return [];
+      }
+    }
+  }
+
+  /// Un anuncio específico por id (deep link de compartición). Lee la
+  /// tabla `anuncios` directo: la RLS permite a cualquiera leer los
+  /// aprobados/vigentes (misma regla que usa el feed). Devuelve null
+  /// si no existe o no está visible para el público.
+  Future<Map<String, dynamic>?> obtenerAnuncioPorId(String idAnuncio) async {
+    try {
+      final res = await supabase
+          .from('anuncios')
+          .select()
+          .eq('id_anuncio', idAnuncio)
+          .maybeSingle();
+      return res;
+    } catch (e) {
+      debugPrint('obtenerAnuncioPorId falló (¿offline?): $e');
+      return null;
     }
   }
 
@@ -567,14 +633,43 @@ class AnunciosService {
     }
   }
 
-  /// Crea un anuncio independiente (standalone) sin tienda ni negocio.
+  /// Cuántos anuncios independientes ACTIVOS consume hoy cada permiso
+  /// (id_permiso -> cantidad), usando la misma regla del trigger
+  /// anuncios_before_insert (solo cuenta estado='aprobado'). Sirve para
+  /// mostrar "X de Y usados" por ranura en el selector al publicar.
+  Future<Map<String, int>> usadosPorPermisoStandalone() async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return const {};
+    try {
+      final res = await supabase
+          .from('anuncios')
+          .select('id_permiso_usuario')
+          .eq('tipo', 'standalone')
+          .eq('creado_por', uid)
+          .eq('estado', 'aprobado');
+      final conteo = <String, int>{};
+      for (final f in List<Map<String, dynamic>>.from(res)) {
+        final idPermiso = (f['id_permiso_usuario'] ?? '').toString();
+        if (idPermiso.isEmpty) continue;
+        conteo[idPermiso] = (conteo[idPermiso] ?? 0) + 1;
+      }
+      return conteo;
+    } catch (e) {
+      debugPrint('usadosPorPermisoStandalone falló: $e');
+      return const {};
+    }
+  }
   /// El cupo y la vigencia los resuelve el trigger
   /// anuncios_before_insert contra permisos_usuario_anuncios -- si no
-  /// hay ranuras vigentes, el insert lanza 'CUPO_ANUNCIOS'.
+  /// hay ranuras vigentes en el permiso elegido, el insert lanza
+  /// 'CUPO_ANUNCIOS'.
   Future<void> crearAnuncioStandalone({
     required String titulo,
     required String texto,
     String? imagenUrl,
+    String? idPermiso,
+    double? precioUsd,
+    String? whatsapp,
   }) async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) throw Exception('SESION_REQUERIDA');
@@ -583,6 +678,11 @@ class AnunciosService {
       'titulo': titulo,
       'texto': texto,
       if (imagenUrl != null && imagenUrl.isNotEmpty) 'imagen_url': imagenUrl,
+      if (idPermiso != null && idPermiso.isNotEmpty)
+        'id_permiso_usuario': idPermiso,
+      if (precioUsd != null) 'precio_usd': precioUsd,
+      if (whatsapp != null && whatsapp.trim().isNotEmpty)
+        'whatsapp': whatsapp.trim(),
       'creado_por': uid,
     });
   }
@@ -605,6 +705,23 @@ class AnunciosService {
     }
   }
 
+  /// Mis anuncios de negocio (para el sheet de gestión).
+  Future<List<Map<String, dynamic>>> misAnunciosDeNegocio(
+      String idNegocio) async {
+    try {
+      final res = await supabase
+          .from('anuncios')
+          .select()
+          .eq('tipo', 'negocio')
+          .eq('id_negocio', idNegocio)
+          .order('creado_en', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('misAnunciosDeNegocio falló: $e');
+      return [];
+    }
+  }
+
   // ------------------------------------------------------------------
   // ACCIONES COMUNES SOBRE UN ANUNCIO PROPIO (cualquier tipo)
   // ------------------------------------------------------------------
@@ -614,12 +731,18 @@ class AnunciosService {
     required String titulo,
     required String texto,
     String? imagenUrl,
+    double? precioUsd,
+    String? whatsapp,
   }) async {
     final data = <String, dynamic>{
       'titulo': titulo,
       'texto': texto,
     };
     if (imagenUrl != null) data['imagen_url'] = imagenUrl;
+    if (precioUsd != null) data['precio_usd'] = precioUsd;
+    if (whatsapp != null && whatsapp.trim().isNotEmpty) {
+      data['whatsapp'] = whatsapp.trim();
+    }
     await supabase.from('anuncios').update(data).eq('id_anuncio', idAnuncio);
   }
 
@@ -636,7 +759,40 @@ class AnunciosService {
   }
 
   Future<void> eliminarAnuncio(String idAnuncio) async {
+    String? url;
+    try {
+      final res = await supabase
+          .from('anuncios')
+          .select('imagen_url')
+          .eq('id_anuncio', idAnuncio)
+          .maybeSingle();
+      url = (res?['imagen_url'] as String?)?.trim();
+    } catch (_) {}
+
     await supabase.from('anuncios').delete().eq('id_anuncio', idAnuncio);
+
+    // Limpieza de la foto SOLO si es una subida original de anuncio
+    // (carpeta /anuncios/). Un anuncio "potenciado" reusa la foto del
+    // PRODUCTO (carpeta /productos/) -- borrar esa rompería el producto.
+    if (url == null || url.isEmpty) return;
+    if (!Uri.parse(url).pathSegments.contains('anuncios')) return;
+
+    // Red de seguridad: si otro anuncio (improbable) comparte la misma
+    // URL, no la borramos.
+    try {
+      final enUso = await supabase
+          .from('anuncios')
+          .select('id_anuncio')
+          .eq('imagen_url', url)
+          .limit(1);
+      if ((enUso as List).isNotEmpty) return;
+    } catch (_) {
+      return; // no pudimos verificar -> conservador, no borrar
+    }
+
+    try {
+      await StorageService().borrarFoto(url);
+    } catch (_) {}
   }
 
   /// Compras de paquete de este negocio que aún esperan verificación

@@ -30,15 +30,21 @@ import 'tarjeta_anuncio.dart';
 const Color _kVerde = Color(0xFF0D9488);
 
 /// Punto de entrada desde el perfil (negocio activo).
+/// [destacarAnuncioId] abre directo la vista "Mis anuncios" resaltando
+/// ese anuncio (flujo: notificación de like/comentario -> tu anuncio).
 Future<void> mostrarAnunciosNegocioSheet(
   BuildContext context,
-  Map<String, dynamic> negocio,
-) {
+  Map<String, dynamic> negocio, {
+  String? destacarAnuncioId,
+}) {
   return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _AnunciosNegocioSheet(negocio: negocio),
+    builder: (_) => _AnunciosNegocioSheet(
+      negocio: negocio,
+      destacarAnuncioId: destacarAnuncioId,
+    ),
   );
 }
 
@@ -46,7 +52,11 @@ enum _Vista { menu, crear, misAnuncios }
 
 class _AnunciosNegocioSheet extends StatefulWidget {
   final Map<String, dynamic> negocio;
-  const _AnunciosNegocioSheet({required this.negocio});
+  final String? destacarAnuncioId;
+  const _AnunciosNegocioSheet({
+    required this.negocio,
+    this.destacarAnuncioId,
+  });
 
   @override
   State<_AnunciosNegocioSheet> createState() => _AnunciosNegocioSheetState();
@@ -78,6 +88,16 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
   String get _idNegocio => widget.negocio['id_negocio'] as String;
   String get _nombreNegocio =>
       (widget.negocio['nombre'] as String?) ?? 'nuestro negocio';
+
+  @override
+  void initState() {
+    super.initState();
+    final destacar = widget.destacarAnuncioId;
+    if (destacar != null) {
+      _vista = _Vista.misAnuncios;
+      _misAnunciosFuture = _anunciosService.misAnunciosDeNegocio(_idNegocio);
+    }
+  }
 
   @override
   void dispose() {
@@ -797,7 +817,17 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
             ),
           );
         }
-        _ordenar([...todas]);
+        final anuncios = [...todas];
+        _ordenar(anuncios);
+        final destacarId = widget.destacarAnuncioId;
+        if (destacarId != null) {
+          final idx = anuncios
+              .indexWhere((x) => (x['id_anuncio'] as String?) == destacarId);
+          if (idx > 0) {
+            final destacado = anuncios.removeAt(idx);
+            anuncios.insert(0, destacado);
+          }
+        }
         return Column(
           children: [
             Align(
@@ -828,7 +858,7 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
                 ],
               ),
             ),
-            ...todas.map((a) => _tarjetaMiAnuncio(a, theme)),
+            ...anuncios.map((a) => _tarjetaMiAnuncio(a, theme)),
           ],
         );
       },
@@ -842,13 +872,24 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
     final clics = (a['veces_clickeado'] as num?)?.toInt() ?? 0;
     final ctr = impresiones > 0 ? (clics * 100 / impresiones) : 0.0;
     final esAutomatico = a['es_automatico'] == true;
+    final totalLikes = (a['total_likes'] as num?)?.toInt() ?? 0;
+    final totalComentarios = (a['total_comentarios'] as num?)?.toInt() ?? 0;
+    final esDestacado =
+        (a['id_anuncio'] as String?) == widget.destacarAnuncioId;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
+        color: esDestacado
+            ? AppColors.primary.withOpacity(
+                theme.brightness == Brightness.dark ? 0.15 : 0.06)
+            : null,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: theme.dividerColor),
+        border: Border.all(
+          color: esDestacado ? AppColors.primary : theme.dividerColor,
+          width: esDestacado ? 1.6 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -890,6 +931,35 @@ const SizedBox(height: 6),
           Text('$impresiones impresiones · $clics clics (${ctr.toStringAsFixed(1)}%)',
               style: GoogleFonts.inter(
                   fontSize: 11.5, color: theme.textTheme.bodySmall?.color)),
+          if (esDestacado) ...[
+            const SizedBox(height: 6),
+            Text('⬅ Anuncio con nueva interacción',
+                style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary)),
+          ],
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Icons.favorite_rounded, size: 13, color: Colors.redAccent),
+              const SizedBox(width: 3),
+              Text('$totalLikes',
+                  style: GoogleFonts.inter(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: theme.textTheme.bodySmall?.color)),
+              const SizedBox(width: 14),
+              Icon(Icons.comment_rounded,
+                  size: 13, color: theme.textTheme.bodySmall?.color),
+              const SizedBox(width: 3),
+              Text('$totalComentarios',
+                  style: GoogleFonts.inter(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: theme.textTheme.bodySmall?.color)),
+            ],
+          ),
           const SizedBox(height: 10),
           if (esAutomatico)
             Container(
@@ -1002,6 +1072,10 @@ const SizedBox(height: 6),
   Future<void> _dialogEditar(Map<String, dynamic> a) async {
     final tituloCtrl = TextEditingController(text: a['titulo'] ?? '');
     final textoCtrl = TextEditingController(text: a['texto'] ?? '');
+    final precioCtrl = TextEditingController(
+        text: (a['precio_usd'] as num?)?.toString() ?? '');
+    final whatsappCtrl =
+        TextEditingController(text: a['whatsapp'] ?? '');
     File? nuevaImagen;
 
     final guardado = await showDialog<bool>(
@@ -1025,6 +1099,34 @@ const SizedBox(height: 6),
                   maxLines: 3,
                   maxLength: 220,
                   decoration: const InputDecoration(labelText: 'Texto'),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: precioCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Precio USD',
+                          prefixText: '\$ ',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: whatsappCtrl,
+                        keyboardType: TextInputType.phone,
+                        maxLength: 15,
+                        decoration: const InputDecoration(
+                          labelText: 'WhatsApp',
+                          hintText: '584120000000',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
@@ -1071,6 +1173,16 @@ const SizedBox(height: 6),
       _snack('Título y texto son obligatorios');
       return;
     }
+    double? precio;
+    final precioTxt = precioCtrl.text.trim().replaceAll(',', '.');
+    if (precioTxt.isNotEmpty) {
+      final n = double.tryParse(precioTxt);
+      if (n == null || n <= 0) {
+        _snack('Poné un precio válido o dejalo vacío');
+        return;
+      }
+      precio = n;
+    }
     try {
       String? url;
       if (nuevaImagen != null) {
@@ -1085,8 +1197,9 @@ const SizedBox(height: 6),
         titulo: tituloCtrl.text.trim(),
         texto: textoCtrl.text.trim(),
         imagenUrl: url,
+        precioUsd: precio,
+        whatsapp: whatsappCtrl.text.trim(),
       );
-      // Suprimimos el eco del UPDATE (re-moderación -> pendiente).
       // Suprimimos el eco del UPDATE (re-moderación -> pendiente).
       AnunciosStateService.instance.marcarCambioPropio(
           a['id_anuncio'] as String,
