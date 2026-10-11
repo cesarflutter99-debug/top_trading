@@ -20,6 +20,7 @@ import '../services/anuncios_service.dart';
 import '../services/tiendas_service.dart';
 import '../services/currency_service.dart';
 import 'anuncios_negocio_sheet.dart';
+import 'fila_dato_copiable.dart';
 
 const Color _kVerde = Color(0xFF0D9488);
 
@@ -578,6 +579,29 @@ class _ModalPagoPaqueteState extends State<_ModalPagoPaquete> {
   late Map<String, dynamic>? _cuentaSel =
       widget.cuentas.isEmpty ? null : widget.cuentas.first;
 
+  // Teléfono a mostrar/copiar: el del paquete si existe; si no, el
+  // WhatsApp de pagos de anuncios y como último recurso el contacto
+  // genérico de la app.
+  String? _telefonoPago;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.paquete['numero_telefono_pago'];
+    _telefonoPago = t is String ? t : t?.toString();
+    if (_telefonoPago == null || _telefonoPago!.trim().isEmpty) {
+      _cargarTelefonoPago();
+    }
+  }
+
+  Future<void> _cargarTelefonoPago() async {
+    String? numero = await _anunciosService.obtenerWhatsappPagos();
+    numero ??= await _tiendasService.obtenerContactoWhatsappActivo();
+    if (numero != null && numero.trim().isNotEmpty) {
+      if (mounted) setState(() => _telefonoPago = numero);
+    }
+  }
+
   Future<void> _verificarPago() async {
     if (widget.cuentas.isNotEmpty && _cuentaSel == null) return;
     setState(() => _procesando = true);
@@ -765,12 +789,24 @@ class _ModalPagoPaqueteState extends State<_ModalPagoPaquete> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (_cuentaSel != null)
-                        _filaDato('Tarjeta ${_cuentaSel!['tipo']}',
-                            _cuentaSel!['numero_tarjeta'] ?? 'No configurada')
-                      else
-                        _filaDato('Cuentas de pago',
-                            'Sin cuentas configuradas -- coordina con el admin'),
+                      if (_cuentaSel != null) ...[
+                        FilaDatoCopiable(
+                          etiqueta: 'Tarjeta ${_cuentaSel!['tipo']}',
+                          valor: _cuentaSel!['numero_tarjeta'] ??
+                              'No configurada',
+                        ),
+                        const SizedBox(height: 8),
+                        FilaDatoCopiable(
+                          etiqueta: 'Teléfono',
+                          valor: _telefonoPago?.trim().isNotEmpty == true
+                              ? _telefonoPago!
+                              : 'No configurado',
+                        ),
+                      ] else
+                        FilaDatoCopiable(
+                          etiqueta: 'Cuentas de pago',
+                          valor: 'Sin cuentas configuradas -- coordina con el admin',
+                        ),
                     ],
                   ),
                 ),
@@ -835,19 +871,6 @@ class _ModalPagoPaqueteState extends State<_ModalPagoPaquete> {
         ),
       ),
     ),
-    );
-  }
-
-  Widget _filaDato(String etiqueta, String valor) {
-    return Row(
-      children: [
-        Text('$etiqueta: ',
-            style: GoogleFonts.inter(
-                fontWeight: FontWeight.w600, fontSize: 13.5)),
-        Expanded(
-            child: SelectableText(valor,
-                style: GoogleFonts.inter(fontSize: 13.5))),
-      ],
     );
   }
 

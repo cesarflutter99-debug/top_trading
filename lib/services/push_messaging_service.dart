@@ -116,6 +116,16 @@ class PushMessagingService {
     // App arrancada desde una notificación (la app estaba cerrada).
     final inicial = await _messaging.getInitialMessage();
     if (inicial != null) _alTocar(inicial);
+
+    // Cuando Firebase rota el token (reinstalar, expiración, seguridad),
+    // lo re-registramos en `dispositivos` para no quedar huérfano.
+    _messaging.onTokenRefresh.listen((_) => registrarToken());
+
+    // Sesión ya existente al arrancar (la app se cerró y reabrió sin
+    // volver a loguearse): registrarToken solo corría en el LOGIN, así
+    // que el token nunca se guardaba en `dispositivos` y el push no
+    // tenía a quién enviársele.
+    if (supabase.auth.currentSession != null) await registrarToken();
   }
 
   /// Registra este dispositivo para recibir push del usuario SÍ el token

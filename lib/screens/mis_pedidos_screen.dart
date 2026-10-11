@@ -9,8 +9,11 @@
 // backend (fn_autocancelar_pedidos_vencidos, ver
 // sql/cancelacion_pedidos.sql); esta pantalla solo calcula y muestra
 // el tiempo restante localmente, y refresca al hacer pull-to-refresh
-// o abrir la pantalla de nuevo. También permite cancelar manualmente
-// mientras el pedido siga 'pendiente'.
+// o abrir la pantalla de nuevo.
+//
+// SIN EDICIÓN (2026-10): una vez creado el pedido no se puede cancelar
+// ni modificar desde la app -- la única cancelación es la
+// autocancelación automática del backend a las 72h si sigue 'pendiente'.
 
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -32,7 +35,6 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
   final _tiendasService = TiendasService();
   late Future<List<Map<String, dynamic>>> _pedidos;
   Timer? _tick;
-  final Set<String> _cancelando = {};
 
   @override
   void initState() {
@@ -56,47 +58,6 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
     _pedidos = uid == null
         ? Future.value(<Map<String, dynamic>>[])
         : _tiendasService.obtenerPedidosDeCompradorConTienda(uid);
-  }
-
-  Future<void> _cancelar(String idPedido, String numeroPedido) async {
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('¿Cancelar pedido #$numeroPedido?'),
-        content: const Text('Esta acción no se puede deshacer.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Volver'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cancelar pedido'),
-          ),
-        ],
-      ),
-    );
-    if (confirmar != true) return;
-
-    setState(() => _cancelando.add(idPedido));
-    try {
-      await _tiendasService.cancelarPedidoComoComprador(idPedido);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pedido cancelado')),
-        );
-        setState(_cargar);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo cancelar: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _cancelando.remove(idPedido));
-    }
   }
 
   /// Tiempo restante antes de la autocancelación (72h desde
@@ -268,8 +229,6 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
                       Divider(height: 1, color: colorBorde),
                       ...lista.map((p) {
                         final restante = _tiempoRestante(p);
-                        final idPedido = p['id_pedido'] as String;
-                        final cancelandoEste = _cancelando.contains(idPedido);
                         return ListTile(
                           onTap: () => mostrarDetallePedido(context, p),
                           title: Row(
@@ -314,23 +273,6 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
                               ],
                             ],
                           ),
-                          trailing: p['estado'] == 'pendiente'
-                              ? TextButton(
-                                  onPressed: cancelandoEste
-                                      ? null
-                                      : () => _cancelar(
-                                          idPedido, '${p['numero_pedido']}'),
-                                  style: TextButton.styleFrom(
-                                      foregroundColor: Colors.red),
-                                  child: cancelandoEste
-                                      ? const SizedBox(
-                                          height: 16,
-                                          width: 16,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2))
-                                      : const Text('Cancelar'),
-                                )
-                              : null,
                         );
                       }),
                       const SizedBox(height: 4),

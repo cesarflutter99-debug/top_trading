@@ -35,7 +35,9 @@ import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
 import '../services/storage_service.dart';
 import '../services/currency_service.dart';
+import '../services/tiendas_service.dart';
 import '../widgets/gestionar_anuncios_standalone_sheet.dart';
+import '../widgets/fila_dato_copiable.dart';
 
 /// Punto de entrada reutilizable: lista los paquetes standalone
 /// disponibles y, al elegir uno, abre el modal de pago por WhatsApp.
@@ -1032,10 +1034,34 @@ class _ModalPagoStandalone extends StatefulWidget {
 
 class _ModalPagoStandaloneState extends State<_ModalPagoStandalone> {
   final _anunciosService = AnunciosService();
+  final _tiendasService = TiendasService();
   bool _procesando = false;
 
   late Map<String, dynamic>? _cuentaSel =
       widget.cuentas.isEmpty ? null : widget.cuentas.first;
+
+  // Teléfono a mostrar/copiar: el del paquete si existe; si no, el
+  // WhatsApp de pagos de anuncios y como último recurso el contacto
+  // genérico de la app.
+  String? _telefonoPago;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.paquete['numero_telefono_pago'];
+    _telefonoPago = t is String ? t : t?.toString();
+    if (_telefonoPago == null || _telefonoPago!.trim().isEmpty) {
+      _cargarTelefonoPago();
+    }
+  }
+
+  Future<void> _cargarTelefonoPago() async {
+    String? numero = await _anunciosService.obtenerWhatsappPagos();
+    numero ??= await _tiendasService.obtenerContactoWhatsappActivo();
+    if (numero != null && numero.trim().isNotEmpty) {
+      if (mounted) setState(() => _telefonoPago = numero);
+    }
+  }
 
   String _generarCodigoCompra() {
     const alfabeto = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -1136,6 +1162,11 @@ class _ModalPagoStandaloneState extends State<_ModalPagoStandalone> {
                   Text('Pagar ${p['nombre']}',
                       style: GoogleFonts.inter(
                           fontSize: 19, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 2),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: CurrencyToggle(),
+                  ),
                   const SizedBox(height: 6),
                   AnimatedBuilder(
                     animation: CurrencyService.instance,
@@ -1199,24 +1230,30 @@ class _ModalPagoStandaloneState extends State<_ModalPagoStandalone> {
                       borderRadius: BorderRadius.circular(kCardRadius),
                       border: Border.all(color: colorBorde),
                     ),
-                    child: _cuentaSel != null
-                        ? Row(
-                            children: [
-                              Text('Tarjeta ${_cuentaSel!['tipo']}: ',
-                                  style: GoogleFonts.inter(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13.5)),
-                              Expanded(
-                                child: SelectableText(
-                                    _cuentaSel!['numero_tarjeta'] ??
-                                        'No configurada',
-                                    style: GoogleFonts.inter(fontSize: 13.5)),
-                              ),
-                            ],
-                          )
-                        : Text(
-                            'Sin cuentas configuradas -- coordina con el admin',
-                            style: GoogleFonts.inter(fontSize: 13.5)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_cuentaSel != null) ...[
+                          FilaDatoCopiable(
+                            etiqueta: 'Tarjeta ${_cuentaSel!['tipo']}',
+                            valor: _cuentaSel!['numero_tarjeta'] ??
+                                'No configurada',
+                          ),
+                          const SizedBox(height: 8),
+                          FilaDatoCopiable(
+                            etiqueta: 'Teléfono',
+                            valor: _telefonoPago?.trim().isNotEmpty == true
+                                ? _telefonoPago!
+                                : 'No configurado',
+                          ),
+                        ] else
+                          FilaDatoCopiable(
+                            etiqueta: 'Cuentas de pago',
+                            valor:
+                                'Sin cuentas configuradas -- coordina con el admin',
+                          ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 16),
                   SizedBox(

@@ -31,6 +31,7 @@ import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/currency_service.dart';
+import 'fila_dato_copiable.dart';
 
 class ModalPagoPlan extends StatefulWidget {
   final Map<String, dynamic> tienda;
@@ -79,6 +80,12 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
   // no hay forma de acreditarle la comisión al aprobar (widget.idAfiliado
   // ya casi nunca viene precargado, así que hay que capturarlo aquí).
   String? _idAfiliadoEncontrado;
+
+  // Número de teléfono a mostrar para el pago. Primero el que traiga el
+  // plan (numero_telefono_pago); si la BD no lo tiene configurado, se
+  // cae al WhatsApp activo de la app para que siempre haya un número
+  // que copiar.
+  String? _telefonoPago;
 
   bool get _tieneCupon =>
       widget.idAfiliado != null || _codigoEstado == 'valido';
@@ -182,6 +189,15 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
   void initState() {
     super.initState();
     _cargarCuentas();
+    final t = widget.plan['numero_telefono_pago'];
+    _telefonoPago = t is String ? t : t?.toString();
+    if (_telefonoPago == null || _telefonoPago!.trim().isEmpty) {
+      widget.tiendasService.obtenerContactoWhatsappActivo().then((numero) {
+        if (numero != null && numero.trim().isNotEmpty) {
+          if (mounted) setState(() => _telefonoPago = numero);
+        }
+      });
+    }
     // Deep link /afiliado/:codigo: pre-rellenar el campo y validarlo
     // de una vez para que el descuento se aplique sin tocar nada.
     final codigo = widget.codigoAfiliado?.trim();
@@ -623,13 +639,22 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _cuentaSel != null
-                          ? _filaDato('Tarjeta ${_cuentaSel!['tipo']}',
-                              _cuentaSel!['numero_tarjeta'] ?? 'No configurada')
-                          : _filaDato('Tarjeta',
-                              widget.plan['numero_tarjeta'] ?? 'No configurada'),
+                          ? FilaDatoCopiable(
+                              etiqueta: 'Tarjeta ${_cuentaSel!['tipo']}',
+                              valor: _cuentaSel!['numero_tarjeta'] ??
+                                  'No configurada')
+                          : FilaDatoCopiable(
+                              etiqueta: 'Tarjeta',
+                              valor: widget.plan['numero_tarjeta'] ??
+                                  'No configurada'),
                       const SizedBox(height: 8),
-                      _filaDato('Teléfono',
-                          widget.plan['numero_telefono_pago'] ?? 'No configurado'),
+                      FilaDatoCopiable(
+                        etiqueta: 'Teléfono',
+                        valor:
+                            _telefonoPago?.trim().isNotEmpty == true
+                                ? _telefonoPago!
+                                : 'No configurado',
+                      ),
                     ],
                   ),
                 ),
@@ -744,16 +769,6 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _filaDato(String etiqueta, String valor) {
-    return Row(
-      children: [
-        Text('$etiqueta: ',
-            style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13.5)),
-        Expanded(child: SelectableText(valor, style: GoogleFonts.inter(fontSize: 13.5))),
-      ],
     );
   }
 
