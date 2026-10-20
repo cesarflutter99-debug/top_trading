@@ -26,6 +26,7 @@
 //   - Secret IMAGEKIT_PRIVATE_KEY seteado en Supabase (NO en Flutter)
 
 import 'dart:convert';
+import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:http/http.dart' as http;
@@ -365,4 +366,30 @@ class StorageService {
       );
     } catch (_) {}
   }
+}
+
+
+/// Muestra un selector (cámara o galería) y devuelve la fuente elegida.
+/// Devuelve null si el usuario cancela.
+Future<ImageSource?> elegirFuenteFoto(BuildContext context) async {
+  return showModalBottomSheet<ImageSource>(
+    context: context,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.camera_alt_rounded),
+            title: const Text('Tomar foto con la cámara'),
+            onTap: () => Navigator.pop(ctx, ImageSource.camera),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library_rounded),
+            title: const Text('Elegir de la galería'),
+            onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+          ),
+        ],
+      ),
+    ),
+  );
 }

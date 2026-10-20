@@ -72,8 +72,12 @@ import 'screens/mis_pedidos_screen.dart';
 import 'screens/negocio_screen.dart';
 import 'screens/standalone_anuncio_screen.dart';
 import 'screens/anuncios_social_screen.dart';
+import 'screens/gestionar_anuncio_screen.dart';
+import 'screens/assistant_screen.dart';
+import 'screens/onboarding_slides_screen.dart';
 import 'widgets/modal_pago_plan.dart';
 import 'services/tiendas_service.dart';
+import 'services/onboarding_service.dart';
 import 'services/anuncios_service.dart';
 import 'services/anuncio_likes_service.dart';
 
@@ -145,11 +149,22 @@ final GoRouter router = GoRouter(
   initialLocation: '/',
   refreshListenable: _AuthChangeNotifier(),
   redirect: (context, state) {
+    // Fase 1 (Onboarding): en la PRIMERA apertura (fresh install) el
+    // carrusel de bienvenida aparece ANTES de cualquier otra pantalla.
+    // La bandera `onboarding_visto` se precarga en main() para que esta
+    // lectura sea síncrona y sin parpadeos.
+    final enBienvenida = state.matchedLocation == '/bienvenida';
+    if (!OnboardingService.instance.visto && !enBienvenida) {
+      return '/bienvenida';
+    }
+
     final haySesion = supabase.auth.currentSession != null;
     final enWelcome = state.matchedLocation == '/';
 
     if (haySesion && enWelcome) return '/home';
     final esRutaPublica = state.matchedLocation == '/home' ||
+        state.matchedLocation == '/bienvenida' ||
+        state.matchedLocation == '/asistente' ||
         state.matchedLocation == '/mapa' ||
         state.matchedLocation.startsWith('/tienda/') ||
         state.matchedLocation.startsWith('/negocio/') ||
@@ -170,8 +185,23 @@ final GoRouter router = GoRouter(
       builder: (context, state) => const WelcomeScreen(),
     ),
     GoRoute(
+      // Fase 1: slides de bienvenida de la primera apertura. El
+      // redirect manda acá si `onboarding_visto` aún es false; al
+      // saltar/terminar la pantalla hace context.go('/') y continúa el
+      // flujo normal (login -> /home).
+      path: '/bienvenida',
+      builder: (context, state) => const OnboardingSlidesScreen(),
+    ),
+    GoRoute(
       path: '/home',
       builder: (context, state) => const MainShellScreen(),
+    ),
+    GoRoute(
+      // Asistente Guiado (FAQ interactivo, 100% offline) -- se abre
+      // desde "Preguntas frecuentes" del Home. Pública: un invitado
+      // también puede consultarlo.
+      path: '/asistente',
+      builder: (context, state) => const AssistantScreen(),
     ),
     GoRoute(
       path: '/mapa',
@@ -204,6 +234,16 @@ final GoRouter router = GoRouter(
       // funciona con solo el id).
       path: '/anuncio/:idAnuncio',
       builder: (context, state) => _AnuncioDeepLinkScreen(
+        idAnuncio: state.pathParameters['idAnuncio']!,
+      ),
+    ),
+    GoRoute(
+      // Pantalla "Gestionar anuncio" del DUEÑO (editar, pausar, renovar,
+      // eliminar, ver comentarios y me gusta). Va aparte de
+      // /anuncio/:idAnuncio (deep link PÚBLICO de compartir): como NO
+      // está en la lista de rutas públicas del redirect, exige sesión.
+      path: '/mis-anuncios/:idAnuncio',
+      builder: (context, state) => GestionarAnuncioScreen(
         idAnuncio: state.pathParameters['idAnuncio']!,
       ),
     ),

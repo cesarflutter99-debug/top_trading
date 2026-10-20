@@ -811,4 +811,78 @@ class AnunciosService {
       return [];
     }
   }
+
+  // ------------------------------------------------------------------
+  // GESTIÓN DE UN ANUNCIO PROPIO (pantalla GestionarAnuncioScreen)
+  //
+  // Requiere sql/gestion_anuncios_standalone.sql ejecutado en Supabase.
+  // ------------------------------------------------------------------
+
+  /// Anuncio + comentarios + "me gusta" (con nombre y foto) de un
+  /// anuncio del usuario actual, en una sola llamada. Lanza si el
+  /// anuncio no es suyo (NO_AUTORIZADO) o si falla la red.
+  Future<Map<String, dynamic>> obtenerGestionAnuncio(String idAnuncio) async {
+    final res = await supabase.rpc(
+      'anuncio_gestion_detalle',
+      params: {'p_id_anuncio': idAnuncio},
+    );
+    return Map<String, dynamic>.from(res as Map);
+  }
+
+  /// Un anuncio RECHAZADO vuelve a 'pendiente' para que el admin lo
+  /// revise de nuevo (la RPC valida dueño, tipo, estado y vigencia).
+  Future<void> reenviarARevision(String idAnuncio) async {
+    await supabase.rpc(
+      'anuncio_reenviar_revision',
+      params: {'p_id_anuncio': idAnuncio},
+    );
+  }
+
+  /// Reactiva un anuncio standalone VENCIDO con una ranura vigente y
+  /// con espacio. Lanza 'SIN_RANURA_LIBRE' si hay que comprar paquete.
+  Future<void> renovarAnuncioStandalone(String idAnuncio) async {
+    await supabase.rpc(
+      'anuncio_renovar_standalone',
+      params: {'p_id_anuncio': idAnuncio},
+    );
+  }
+
+  /// Guarda la edición de un anuncio independiente. A diferencia de
+  /// editarContenido(), siempre escribe precio y WhatsApp (los
+  /// validó el formulario) y falla si no se actualizó ninguna fila.
+  /// La imagen solo se toca si se manda una URL nueva.
+  Future<void> actualizarAnuncioStandalone({
+    required String idAnuncio,
+    required String titulo,
+    required String texto,
+    required double precioUsd,
+    required String whatsapp,
+    String? imagenUrl,
+  }) async {
+    final data = <String, dynamic>{
+      'titulo': titulo.trim(),
+      'texto': texto.trim(),
+      'precio_usd': precioUsd,
+      'whatsapp': whatsapp.trim(),
+    };
+    if (imagenUrl != null && imagenUrl.isNotEmpty) {
+      data['imagen_url'] = imagenUrl;
+    }
+    final res = await supabase
+        .from('anuncios')
+        .update(data)
+        .eq('id_anuncio', idAnuncio)
+        .select('id_anuncio');
+    if ((res as List).isEmpty) throw Exception('NO_AUTORIZADO');
+  }
+
+  /// El dueño del anuncio borra un comentario hecho en SU anuncio
+  /// (la RLS lo permite con la política
+  /// anuncio_comentarios_delete_dueno_anuncio).
+  Future<void> eliminarComentarioDeMiAnuncio(String idComentario) async {
+    await supabase
+        .from('anuncio_comentarios')
+        .delete()
+        .eq('id_comentario', idComentario);
+  }
 }

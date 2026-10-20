@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -9,10 +10,13 @@ import 'core/supabase_client.dart';
 import 'router.dart';
 import 'services/theme_provider.dart';
 import 'services/connectivity_service.dart';
+import 'services/onboarding_service.dart';
+import 'services/terminos_service.dart';
 import 'services/pending_actions_queue.dart';
 import 'services/push_messaging_service.dart';
 import 'services/deep_link_service.dart';
 import 'widgets/offline_banner.dart';
+import 'widgets/mantenimiento_gate.dart';
 
 // AppColors y kCardRadius ahora viven en core/app_colors.dart -- se
 // mantiene ahí para que home_screen.dart y esta config compartan la
@@ -22,32 +26,48 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // FCM: el handler de background DEBE registrarse antes de
   // initializeApp para que las notificaciones con app cerrada lleguen.
-  FirebaseMessaging.onBackgroundMessage(pushManejadorDeFondo);
-  await Firebase.initializeApp();
+    if (!kIsWeb) {
+    try {
+      FirebaseMessaging.onBackgroundMessage(pushManejadorDeFondo);
+      await Firebase.initializeApp();
 
-  // Foreground presentation: alert+badge+sound aunque la app esté abierta
-  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
-    alert: true,
-    badge: true,
-    sound: true,
-  );
+      // Foreground presentation
+      await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+    } catch (e) {
+      debugPrint('Firebase init falló: $e');
+    }
+  }
 
-  await initSupabase();
-  await PushMessagingService.instance.inicializar();
+  try { await initSupabase(); } catch (e) { debugPrint('initSupabase: $e'); }
+  if (!kIsWeb) {
+    try {
+      await PushMessagingService.instance.inicializar();
+    } catch (e) {
+      debugPrint('Push init falló: $e');
+    }
+  }
   // Offline: carga la cola de acciones pendientes guardadas de una
   // sesión anterior y arranca el monitoreo de conexión -- si ya hay
   // red, procesa la cola de inmediato; si no, queda escuchando.
-  await PendingActionsQueue.instance.cargar();
-  ConnectivityService.instance.iniciar();
+  try { await PendingActionsQueue.instance.cargar(); } catch (e) { debugPrint('PAC cargar: $e'); }
+  try { ConnectivityService.instance.iniciar(); } catch (e) { debugPrint('Connectivity iniciar: $e'); }
   // Deep links (io.supabase.toptrading://tienda|anuncio|afiliado/...):
   // escuchar desde el arranque para navegar cuando tocan un link
   // compartido. Comparte el singleton de AppLinks con supabase_flutter
   // (login), así que no interfiere con el callback de auth.
-  DeepLinkService.instance.iniciar();
+  try { DeepLinkService.instance.iniciar(); } catch (e) { debugPrint('DeepLink iniciar: $e'); }
   // Restaura el tema (claro/oscuro) guardado antes de pintar la app,
   // para que el modo oscuro se preserve entre sesiones sin parpadeo.
   final themeProvider = ThemeProvider();
   await themeProvider.cargar();
+  // Onboarding: precarga `onboarding_visto` para que el redirect de
+  // GoRouter decida de forma síncrona (sin parpadeos) al arrancar.
+  await OnboardingService.instance.cargar();
+  try { await TerminosService.instance.cargar(); } catch (e) { debugPrint('TerminosService cargar: $e'); }
   runApp(
     ChangeNotifierProvider.value(
       value: themeProvider,
@@ -76,6 +96,8 @@ class TopTradingApp extends StatelessWidget {
       darkTheme: _buildTheme(Brightness.dark),
       themeMode: themeProvider.themeMode,
       routerConfig: router,
+      builder: (context, child) =>
+          MantenimientoGate(child: child ?? const SizedBox()),
     );
   }
 }

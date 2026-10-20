@@ -157,8 +157,10 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
   }
 
   Future<void> _cambiarLogo() async {
+    final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return;
     final XFile? archivo = await _picker.pickImage(
-      source: ImageSource.gallery,
+      source: fuente,
       maxWidth: 800,
       imageQuality: 85,
     );
@@ -784,23 +786,85 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
     );
   }
 
+  /// Tarjeta "vidrio" reutilizable para las secciones del panel.
+  Widget _tarjeta({
+    required Widget child,
+    EdgeInsets padding = const EdgeInsets.all(16),
+    Color? color,
+    Color? borde,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: color ??
+            (_esOscuro
+                ? AppColors.cardTransparentDark
+                : AppColors.cardTransparentLight),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: borde ?? _colorBorde.withOpacity(0.7)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(_esOscuro ? 0.30 : 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _chipEstadoTienda(bool activa) {
+    final color = activa ? AppColors.success : AppColors.warm;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(_esOscuro ? 0.18 : 0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(activa ? 'Tienda activa' : 'En revisión',
+              style: GoogleFonts.inter(
+                  fontSize: 11.5, fontWeight: FontWeight.w700, color: color)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
     final estado = _tienda['estado'] as String? ?? 'pending';
     final esPending = estado == 'pending';
+    final esPremium = (_tienda['plan'] as String? ?? 'basic') == 'premium';
+    final colorVerde =
+        _esOscuro ? const Color(0xFF81C784) : const Color(0xFF2E7D32);
 
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: Text(_tienda['nombre'] ?? 'Mi tienda'),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        title: Text('Mi tienda',
+            style: GoogleFonts.inter(
+                fontWeight: FontWeight.w800, fontSize: 20, color: _colorTexto)),
         actions: [
           IconButton(
-            icon: const Icon(Icons.edit_outlined),
+            icon: Icon(Icons.edit_outlined, color: primary),
             tooltip: 'Editar información',
             onPressed: _abrirEdicion,
           ),
           IconButton(
-            icon: const Icon(Icons.logout),
+            icon: Icon(Icons.logout_rounded, color: primary),
             tooltip: 'Cerrar sesión',
             onPressed: _cerrarSesion,
           ),
@@ -815,176 +879,208 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
       body: RefreshIndicator(
         onRefresh: _recargarTodo,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        GestureDetector(
-                          onTap: _subiendoLogo ? null : _cambiarLogo,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              CircleAvatar(
-                                radius: 36,
-                                backgroundColor: _esOscuro
-                                    ? const Color(0xFF2A2A2A)
-                                    : Colors.grey[200],
-                                backgroundImage: (_tienda['logo_url'] != null &&
-                                        (_tienda['logo_url'] as String)
-                                            .isNotEmpty)
-                                    ? NetworkImage(
-                                        _tienda['logo_url'] as String)
-                                    : null,
-                                child: (_tienda['logo_url'] == null ||
-                                        (_tienda['logo_url'] as String).isEmpty)
-                                    ? Icon(Icons.storefront_outlined,
-                                        size: 32, color: _colorTextoSecundario)
-                                    : null,
+            // ---------------- Cabecera de la tienda ----------------
+            _tarjeta(
+              child: Column(
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      GestureDetector(
+                        onTap: _subiendoLogo ? null : _cambiarLogo,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          clipBehavior: Clip.none,
+                          children: [
+                            CircleAvatar(
+                              radius: 36,
+                              backgroundColor: _esOscuro
+                                  ? const Color(0xFF2A2A2A)
+                                  : Colors.grey[200],
+                              backgroundImage: (_tienda['logo_url'] != null &&
+                                      (_tienda['logo_url'] as String)
+                                          .isNotEmpty)
+                                  ? NetworkImage(_tienda['logo_url'] as String)
+                                  : null,
+                              child: (_tienda['logo_url'] == null ||
+                                      (_tienda['logo_url'] as String).isEmpty)
+                                  ? Icon(Icons.storefront_outlined,
+                                      size: 32, color: _colorTextoSecundario)
+                                  : null,
+                            ),
+                            if (_subiendoLogo)
+                              const CircularProgressIndicator(strokeWidth: 2)
+                            else
+                              Positioned(
+                                bottom: -2,
+                                right: -2,
+                                child: Container(
+                                  padding: const EdgeInsets.all(5),
+                                  decoration: BoxDecoration(
+                                    color: primary,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: _esOscuro
+                                            ? AppColors.surfaceDark
+                                            : Colors.white,
+                                        width: 2),
+                                  ),
+                                  child: const Icon(Icons.camera_alt,
+                                      size: 13, color: Colors.white),
+                                ),
                               ),
-                              if (_subiendoLogo)
-                                const CircularProgressIndicator(strokeWidth: 2)
-                              else
-                                Positioned(
-                                  bottom: -2,
-                                  right: -2,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: BoxDecoration(
-                                      color: primary,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                          color: Colors.white, width: 2),
-                                    ),
-                                    child: const Icon(Icons.camera_alt,
-                                        size: 14, color: Colors.white),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    _tienda['nombre'] ?? '',
+                                    style: GoogleFonts.inter(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 18,
+                                        color: _colorTexto),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      _tienda['nombre'] ?? '',
-                                      style: GoogleFonts.inter(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 18),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  if ((_tienda['plan'] as String? ?? 'basic') ==
-                                      'premium') ...[
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        gradient: const LinearGradient(
-                                          colors: [
-                                            Color(0xFFFFD700),
-                                            Color(0xFFB8860B)
-                                          ],
-                                        ),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: const Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(Icons.star_rounded,
-                                              size: 12, color: Colors.white),
-                                          SizedBox(width: 2),
-                                          Text('VIP',
-                                              style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.bold)),
+                                if (!esPending) ...[
+                                  const SizedBox(width: 5),
+                                  Icon(Icons.verified_rounded,
+                                      size: 17, color: AppColors.success),
+                                ],
+                                if (esPremium) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [
+                                          Color(0xFFFFD700),
+                                          Color(0xFFB8860B)
                                         ],
                                       ),
+                                      borderRadius: BorderRadius.circular(6),
                                     ),
-                                  ],
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.star_rounded,
+                                            size: 12, color: Colors.white),
+                                        SizedBox(width: 2),
+                                        Text('VIP',
+                                            style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold)),
+                                      ],
+                                    ),
+                                  ),
                                 ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}',
-                                style: GoogleFonts.inter(
-                                    fontSize: 12, color: _colorTextoSecundario),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    _buildMiniEstadisticasProductos(),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _statChip(
-                            icon: Icons.star_rounded,
-                            color: Colors.amber[700]!,
-                            valor:
-                                (_tienda['promedio_estrellas'] ?? 0).toString(),
-                            etiqueta: 'Estrellas',
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _statChip(
-                            icon: Icons.local_fire_department_rounded,
-                            color: primary,
-                            valor:
-                                (_tienda['puntos_semanales'] ?? 0).toString(),
-                            etiqueta: 'Popular esta semana',
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _statChip(
-                            icon: Icons.bolt_rounded,
-                            color: primary,
-                            valor: (_tienda['puntos_totales'] ?? 0).toString(),
-                            etiqueta: 'Puntos totales',
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () async {
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  GestionarTiendaScreen(tienda: _tienda),
+                              ],
                             ),
-                          );
-                          // Por si se editó/eliminó algo en Gestionar
-                          // Tienda y volvemos con "atrás" en vez de con
-                          // el popUntil de eliminar.
-                          await _recargarTodo();
-                        },
-                        icon: const Icon(Icons.settings_outlined),
-                        label: const Text('Gestionar Tienda'),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(Icons.location_on_rounded,
+                                    size: 14, color: AppColors.success),
+                                const SizedBox(width: 3),
+                                Flexible(
+                                  child: Text(
+                                    '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: _colorTextoSecundario),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            _chipEstadoTienda(!esPending),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildPastillaTotalProductos(primary),
+                    ],
+                  ),
+                  _buildMiniEstadisticasProductos(),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _statChip(
+                          icon: Icons.star_rounded,
+                          color: Colors.amber[700]!,
+                          valor: (_tienda['promedio_estrellas'] ?? 0).toString(),
+                          etiqueta: 'Estrellas',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _statChip(
+                          icon: Icons.local_fire_department_rounded,
+                          color: primary,
+                          valor: (_tienda['puntos_semanales'] ?? 0).toString(),
+                          etiqueta: 'Popular esta semana',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _statChip(
+                          icon: Icons.bolt_rounded,
+                          color: primary,
+                          valor: (_tienda['puntos_totales'] ?? 0).toString(),
+                          etiqueta: 'Puntos totales',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 46,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                GestionarTiendaScreen(tienda: _tienda),
+                          ),
+                        );
+                        // Por si se editó/eliminó algo en Gestionar
+                        // Tienda y volvemos con "atrás" en vez de con
+                        // el popUntil de eliminar.
+                        await _recargarTodo();
+                      },
+                      icon: const Icon(Icons.settings_outlined, size: 19),
+                      label: const Text('Gestionar tienda'),
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        side: BorderSide(color: primary, width: 1.4),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(23)),
+                        textStyle: GoogleFonts.inter(
+                            fontWeight: FontWeight.w700, fontSize: 14.5),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
+
+            // ---------------- Estado de la tienda ----------------
             if (esPending) ...[
               AppBanner(
                 icon: Icons.hourglass_top_rounded,
@@ -1017,95 +1113,184 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
               ),
             ] else
               Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2E7D32).withOpacity(_esOscuro ? 0.18 : 0.08),
-                  borderRadius: BorderRadius.circular(kCardRadius),
+                  color: const Color(0xFF2E7D32)
+                      .withOpacity(_esOscuro ? 0.18 : 0.08),
+                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                      color: const Color(0xFF2E7D32).withOpacity(_esOscuro ? 0.45 : 0.35)),
+                      color: const Color(0xFF2E7D32)
+                          .withOpacity(_esOscuro ? 0.45 : 0.30)),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      Icon(Icons.verified_rounded,
-                          color: _esOscuro ? const Color(0xFF81C784) : const Color(0xFF2E7D32)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Tienda activa y visible en el marketplace',
-                          style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w600,
-                              color: _esOscuro ? const Color(0xFF81C784) : const Color(0xFF2E7D32)),
-                        ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.success.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                    ],
-                  ),
+                      child: Icon(Icons.storefront_rounded,
+                          size: 20, color: colorVerde),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Tienda activa y visible en el marketplace',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13.5,
+                            color: colorVerde),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
+
+            // ---------------- Plan actual + uso del plan ----------------
             FutureBuilder<List<Map<String, dynamic>>>(
               future: _productos,
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const SizedBox.shrink();
                 final seccion = _buildUsoDePlan(snapshot.data!.length);
                 if (seccion is SizedBox) return seccion;
+                final esGratis = _planActual?['es_gratis'] == true;
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: seccion,
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _tarjeta(
+                    child: IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(
+                            width: 92,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Plan actual',
+                                    style: GoogleFonts.inter(
+                                        fontSize: 11.5,
+                                        color: _colorTextoSecundario)),
+                                const SizedBox(height: 2),
+                                Text(
+                                  (_tienda['plan'] as String? ?? 'basic')
+                                      .toUpperCase(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.inter(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 20,
+                                      color: primary),
+                                ),
+                                const SizedBox(height: 8),
+                                if (esPremium)
+                                  _chipPlan('Premium', Icons.workspace_premium,
+                                      const Color(0xFFD4A017))
+                                else if (esGratis)
+                                  _chipPlan('Gratuito', Icons.workspace_premium,
+                                      AppColors.success),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            width: 1,
+                            margin: const EdgeInsets.symmetric(horizontal: 12),
+                            color: _colorBorde,
+                          ),
+                          Expanded(child: seccion),
+                        ],
+                      ),
+                    ),
+                  ),
                 );
               },
             ),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Plan',
-                            style: GoogleFonts.inter(color: _colorTextoSecundario)),
-                        Text(
-                          (_tienda['plan'] as String? ?? 'basic').toUpperCase(),
-                          style: GoogleFonts.inter(
-                              fontWeight: FontWeight.bold, color: primary),
+
+            // ---------------- Ubicación y contacto ----------------
+            _tarjeta(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppColors.success.withOpacity(0.14),
+                          shape: BoxShape.circle,
                         ),
-                      ],
-                    ),
-                    const Divider(height: 24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('WhatsApp',
-                            style: GoogleFonts.inter(color: _colorTextoSecundario)),
-                        Text(_tienda['telefono_whatsapp'] ?? '-'),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Ubicación',
-                            style: GoogleFonts.inter(color: _colorTextoSecundario)),
-                        Text(
-                            '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}'),
-                      ],
-                    ),
-                  ],
-                ),
+                        child: Icon(Icons.location_on_rounded,
+                            size: 20, color: AppColors.success),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Ubicación',
+                                style: GoogleFonts.inter(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                    color: _colorTexto)),
+                            Text(
+                                '${_tienda['municipio'] ?? ''}, ${_tienda['provincia'] ?? ''}',
+                                style: GoogleFonts.inter(
+                                    fontSize: 12, color: _colorTextoSecundario)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  Divider(height: 22, color: _colorBorde),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF25D366).withOpacity(0.14),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.chat_rounded,
+                            size: 20, color: Color(0xFF25D366)),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('WhatsApp',
+                                style: GoogleFonts.inter(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                    color: _colorTexto)),
+                            Text(_tienda['telefono_whatsapp'] ?? '-',
+                                style: GoogleFonts.inter(
+                                    fontSize: 12, color: _colorTextoSecundario)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 22),
+
+            // ---------------- Mis productos ----------------
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('Mis productos',
                     style: GoogleFonts.inter(
-                        fontWeight: FontWeight.w800, fontSize: 18)),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 19,
+                        color: _colorTexto)),
                 Text(
                   'Toca un producto para editarlo',
-                  style: GoogleFonts.inter(fontSize: 12, color: _colorTextoSecundario),
+                  style: GoogleFonts.inter(
+                      fontSize: 11.5, color: _colorTextoSecundario),
                 ),
               ],
             ),
@@ -1139,160 +1324,230 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
                     crossAxisCount: 2,
                     mainAxisSpacing: 12,
                     crossAxisSpacing: 12,
-                    childAspectRatio: 0.8,
+                    childAspectRatio: 0.68,
                   ),
                   itemCount: productos.length,
-                  itemBuilder: (context, i) {
-                    final p = productos[i];
-                    final visible = p['es_visible'] as bool? ?? true;
-                    final sinStock =
-                        (p['cantidad_disponible'] as num? ?? 0) <= 0;
-                    return GestureDetector(
-                      onTap: () => _editarProducto(p),
-                      child: Card(
-                        clipBehavior: Clip.antiAlias,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Expanded(
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  Image.network(
-                                    p['imagen_url'] ?? '',
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Container(
-                                      color: Colors.grey[200],
-                                      child: const Icon(
-                                          Icons.image_not_supported_outlined),
-                                    ),
-                                  ),
-                                  Positioned(
-                                    top: 6,
-                                    left: 6,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(4),
-                                      decoration: const BoxDecoration(
-                                        color: Colors.black54,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.edit,
-                                          size: 14, color: Colors.white),
-                                    ),
-                                  ),
-                                  if (esPending)
-                                    Positioned(
-                                      top: 6,
-                                      right: 6,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black54,
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                        ),
-                                        child: const Text(
-                                          'No público',
-                                          style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10),
-                                        ),
-                                      ),
-                                    ),
-                                  if (!visible && !esPending)
-                                    Positioned(
-                                      top: 6,
-                                      right: 6,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black54,
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                        ),
-                                        child: const Text(
-                                          'Oculto',
-                                          style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10),
-                                        ),
-                                      ),
-                                    ),
-                                  if (sinStock)
-                                    Positioned(
-                                      bottom: 6,
-                                      left: 6,
-                                      right: 6,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            vertical: 3),
-                                        decoration: BoxDecoration(
-                                          color: Colors.red.withOpacity(0.85),
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                        ),
-                                        child: const Text(
-                                          'Sin stock',
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    p['nombre'] ?? '',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.inter(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 13),
-                                  ),
-Text(
-                                    '\$${p['precio_usd']}',
-                                    style: GoogleFonts.inter(
-                                        color: _colorTextoSecundario, fontSize: 12),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    sinStock
-                                        ? 'Sin stock'
-                                        : '${(p['cantidad_disponible'] as num? ?? 0).toInt()} en stock',
-                                    style: GoogleFonts.inter(
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w600,
-                                        color: sinStock
-                                            ? Colors.red
-                                            : ((p['cantidad_disponible']
-                                                                as num? ??
-                                                            0) <
-                                                        10
-                                                    ? Colors.orange.shade800
-                                                    : _colorTextoSecundario)),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+                  itemBuilder: (context, i) =>
+                      _tarjetaProductoPanel(productos[i], esPending, primary),
                 );
               },
             ),
             const SizedBox(height: 80),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chipPlan(String texto, IconData icono, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(_esOscuro ? 0.20 : 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icono, size: 13, color: color),
+          const SizedBox(width: 4),
+          Text(texto,
+              style: GoogleFonts.inter(
+                  fontSize: 10.5, fontWeight: FontWeight.w700, color: color)),
+        ],
+      ),
+    );
+  }
+
+  /// Píldora "N productos" de la cabecera.
+  Widget _buildPastillaTotalProductos(Color primary) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _productos,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox.shrink();
+        final total = snapshot.data!.length;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: primary.withOpacity(0.45)),
+            color: primary.withOpacity(0.06),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.inventory_2_outlined, size: 14, color: primary),
+              const SizedBox(width: 5),
+              Text('$total producto${total == 1 ? '' : 's'}',
+                  style: GoogleFonts.inter(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: primary)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Tarjeta de producto de la grilla del panel (toda la tarjeta y el
+  /// botón "Editar" abren el mismo modal de edición de siempre).
+  Widget _tarjetaProductoPanel(
+      Map<String, dynamic> p, bool esPending, Color primary) {
+    final visible = p['es_visible'] as bool? ?? true;
+    final disponible = (p['cantidad_disponible'] as num? ?? 0).toInt();
+    final sinStock = disponible <= 0;
+    final colorStock = sinStock
+        ? Colors.red
+        : (disponible < 10 ? Colors.orange.shade800 : _colorTextoSecundario);
+
+    late final String etiquetaEstado;
+    late final Color colorEtiqueta;
+    if (esPending) {
+      etiquetaEstado = 'No público';
+      colorEtiqueta = Colors.black54;
+    } else if (!visible) {
+      etiquetaEstado = 'Oculto';
+      colorEtiqueta = Colors.black54;
+    } else {
+      etiquetaEstado = 'Publicado';
+      colorEtiqueta = AppColors.success;
+    }
+
+    return GestureDetector(
+      onTap: () => _editarProducto(p),
+      child: Container(
+        decoration: BoxDecoration(
+          color: _esOscuro
+              ? AppColors.cardTransparentDark
+              : AppColors.cardTransparentLight,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _colorBorde.withOpacity(0.7)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(_esOscuro ? 0.30 : 0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.network(
+                    p['imagen_url'] ?? '',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: Colors.grey[200],
+                      child: const Icon(Icons.image_not_supported_outlined),
+                    ),
+                  ),
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: colorEtiqueta,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(etiquetaEstado,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                  if (sinStock)
+                    Positioned(
+                      bottom: 8,
+                      left: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.85),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'Sin stock',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    p['nombre'] ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13.5,
+                        color: _colorTexto),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '\$${p['precio_usd']}',
+                    style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5,
+                        color: _colorTexto),
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Icon(Icons.inventory_2_outlined,
+                          size: 13, color: colorStock),
+                      const SizedBox(width: 4),
+                      Text(
+                        sinStock ? 'Sin stock' : '$disponible en stock',
+                        style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: colorStock),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 9),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 34,
+                    child: FilledButton.icon(
+                      onPressed: () => _editarProducto(p),
+                      icon: const Icon(Icons.edit_outlined, size: 15),
+                      label: const Text('Editar'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: primary.withOpacity(0.10),
+                        foregroundColor: primary,
+                        elevation: 0,
+                        padding: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(17)),
+                        textStyle: GoogleFonts.inter(
+                            fontSize: 12.5, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -1319,69 +1574,74 @@ Text(
     required double pct,
     required Color color,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: BoxDecoration(
-          color: (_esOscuro ? Colors.white : Colors.black)
-              .withOpacity(_esOscuro ? 0.05 : 0.03),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.35)),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.16),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icono, size: 14, color: color),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(icono, size: 13, color: color),
-                    const SizedBox(width: 5),
-                    Text(etiqueta,
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(
+                    child: Text(etiqueta,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.plusJakartaSans(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w700,
                             color: _colorTexto)),
-                  ],
-                ),
-                Text(valorDerecha,
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                        color: color)),
-              ],
-            ),
-            const SizedBox(height: 7),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Container(
-                height: 7,
-                color: color.withOpacity(0.15),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: FractionallySizedBox(
-                    widthFactor: pct.clamp(0.03, 1.0),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        gradient:
-                            LinearGradient(colors: [color.withOpacity(0.65), color]),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(valorDerecha,
+                      maxLines: 1,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: color)),
+                ],
+              ),
+              const SizedBox(height: 5),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  height: 5,
+                  color: color.withOpacity(0.15),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: pct.clamp(0.03, 1.0),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          gradient: LinearGradient(
+                              colors: [color.withOpacity(0.65), color]),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(detalle,
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 10, color: _colorTextoSecundario)),
-          ],
+              const SizedBox(height: 3),
+              Text(detalle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10, color: _colorTextoSecundario)),
+            ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
@@ -1456,7 +1716,7 @@ Text(
               ? '${r.usados} de ${r.max} ranuras · ${r.maxPlan} del plan + ${r.maxExtra} extra'
               : '${r.usados} de ${r.max} ranuras de tu plan';
           return Padding(
-            padding: const EdgeInsets.only(top: 10),
+            padding: EdgeInsets.zero,
             child: _barraUso(
               icono: Icons.campaign_rounded,
               etiqueta: 'Ranuras de anuncio',
@@ -1477,10 +1737,6 @@ Text(
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Uso de tu plan',
-            style:
-                GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 16)),
-        const SizedBox(height: 10),
         for (int i = 0; i < filas.length; i++) ...[
           filas[i],
           if (i != filas.length - 1) const SizedBox(height: 10),
@@ -1489,35 +1745,26 @@ Text(
     );
   }
 
+  /// Aviso de productos sin stock (el total ahora va en la píldora
+  /// "N productos" de la cabecera).
   Widget _buildMiniEstadisticasProductos() {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _productos,
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const SizedBox.shrink();
-        final productos = snapshot.data!;
-        final total = productos.length;
-        final sinStock = productos
+        final sinStock = snapshot.data!
             .where((p) => (p['cantidad_disponible'] as num? ?? 0) <= 0)
             .length;
+        if (sinStock == 0) return const SizedBox.shrink();
         return Padding(
           padding: const EdgeInsets.only(top: 10),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              _miniStatPill(
-                icon: Icons.inventory_2_outlined,
-                texto: '$total producto${total == 1 ? '' : 's'}',
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              if (sinStock > 0)
-                _miniStatPill(
-                  icon: Icons.warning_amber_rounded,
-                  texto:
-                      '$sinStock producto${sinStock == 1 ? '' : 's'} sin stock',
-                  color: Colors.red,
-                ),
-            ],
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: _miniStatPill(
+              icon: Icons.warning_amber_rounded,
+              texto: '$sinStock producto${sinStock == 1 ? '' : 's'} sin stock',
+              color: Colors.red,
+            ),
           ),
         );
       },
@@ -1559,25 +1806,28 @@ Text(
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(10),
+        color: color.withOpacity(_esOscuro ? 0.16 : 0.09),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(0.12)),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 12),
       child: Column(
         children: [
           Icon(icon, color: color, size: 20),
-          const SizedBox(height: 2),
+          const SizedBox(height: 3),
           Text(valor,
-              style:
-                  GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 15)),
+              style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  color: _colorTexto)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Text(etiqueta,
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style:
-                    GoogleFonts.inter(fontSize: 10.5, color: _colorTextoSecundario)),
+                style: GoogleFonts.inter(
+                    fontSize: 10.5, color: _colorTextoSecundario)),
           ),
         ],
       ),

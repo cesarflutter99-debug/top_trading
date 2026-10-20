@@ -48,6 +48,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
@@ -274,7 +275,9 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
   }
 
   Future<void> _elegirFoto({required bool esPortada}) async {
-    final file = await _pickerHost.elegirFoto();
+    final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return;
+    final file = await _pickerHost.elegirFoto(desdeCamara: fuente == ImageSource.camera);
     if (file == null) return;
     setState(() {
       if (esPortada) {
@@ -1417,5 +1420,6 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
 class ImagePickerHost {
   final StorageService _storage = StorageService();
 
-  Future<File?> elegirFoto() => _storage.elegirFoto();
+  Future<File?> elegirFoto({bool desdeCamara = false}) =>
+      _storage.elegirFoto(desdeCamara: desdeCamara);
 }

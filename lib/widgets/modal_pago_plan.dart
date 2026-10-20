@@ -421,7 +421,7 @@ class _ModalPagoPlanState extends State<ModalPagoPlan> {
   @override
   Widget build(BuildContext context) {
     final esOscuro = Theme.of(context).brightness == Brightness.dark;
-    final colorSecundario = AppColors.inkSecundarioLight;
+    final colorSecundario = esOscuro ? AppColors.inkSecundarioDark : AppColors.inkSecundarioLight;
     final colorSuperficie =
         esOscuro ? AppColors.cardTransparentDark : AppColors.cardTransparentLight;
     final colorBorde =

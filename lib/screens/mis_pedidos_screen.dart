@@ -21,8 +21,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
-import '../widgets/analytics_widgets.dart'
-    show mostrarDetallePedido, EstadoBadge;
+import '../widgets/analytics_widgets.dart' show EstadoBadge;
+import 'detalle_pedido_screen.dart';
 
 class MisPedidosScreen extends StatefulWidget {
   const MisPedidosScreen({super.key});
@@ -230,7 +230,12 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
                       ...lista.map((p) {
                         final restante = _tiempoRestante(p);
                         return ListTile(
-                          onTap: () => mostrarDetallePedido(context, p),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => DetallePedidoScreen(
+                                  pedido: p, esVendedor: false),
+                            ),
+                          ),
                           title: Row(
                             children: [
                               Text('#${p['numero_pedido'] ?? ''}',

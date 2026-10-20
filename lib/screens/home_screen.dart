@@ -31,7 +31,10 @@ import 'valorar_pedido_screen.dart';
 import '../services/notificaciones_service.dart';
 import '../services/push_messaging_service.dart';
 import 'tasa_cambio_screen.dart';
+import 'favoritos_screen.dart';
+import 'soporte_chat_screen.dart';
 import '../core/provincias_cuba.dart';
+import '../core/auth_guard.dart';
 
 // ---------------------------------------------------------------------
 // ESTILO VISUAL -- ver notas originales de paleta.
@@ -62,6 +65,7 @@ class HomeScreen extends StatefulWidget {
 
 class HomeScreenState extends State<HomeScreen> {
   final _tiendasService = TiendasService();
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final _productosService = ProductosService();
   final _locationService = LocationService();
   final _anunciosService = AnunciosService();
@@ -163,6 +167,8 @@ class HomeScreenState extends State<HomeScreen> {
   bool get _esOscuro => Theme.of(context).brightness == Brightness.dark;
   Color get _colorFondo => Theme.of(context).scaffoldBackgroundColor;
   Color get _colorSuperficie => Theme.of(context).colorScheme.surface;
+  Color get _colorBorde => (_esOscuro ? AppColors.borderDark : AppColors.borderLight)
+      .withOpacity(0.6);
   Color get _colorTexto => _esOscuro ? const Color(0xFFF5F5F4) : _kInk;
   Color get _colorTextoSecundario =>
       _esOscuro ? const Color(0xFFA8A29E) : Colors.black54;
@@ -367,14 +373,10 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   void _abrirPreguntasFrecuentes() {
-    showDialog(
-      context: context,
-      builder: (_) => const AlertDialog(
-        title: Text('Preguntas frecuentes'),
-        content: Text('Sección en construcción.'),
-      ),
-    );
+    // Abre el Asistente Guiado (FAQ interactivo, 100% offline).
+    context.push('/asistente');
   }
+
 
   Future<void> _abrirFiltro() async {
     _ModoCercanos modoTemp = _modo;
@@ -680,8 +682,9 @@ Navigator.of(ctx).pop();
 
   Widget _buildScaffold(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: _colorFondo,
-      extendBodyBehindAppBar: true,
+      extendBodyBehindAppBar: false,
       drawer: Drawer(
         child: Builder(
           builder: (BuildContext innerContext) {
@@ -722,7 +725,7 @@ Navigator.of(ctx).pop();
                                       nombre.isNotEmpty
                                           ? nombre[0].toUpperCase()
                                           : '?',
-                                      style: GoogleFonts.inter(
+                                      style: GoogleFonts.plusJakartaSans(
                                           fontSize: 26,
                                           fontWeight: FontWeight.w800,
                                           color: _kCoral),
@@ -733,7 +736,7 @@ Navigator.of(ctx).pop();
                             Text(nombre,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.inter(
+                                style: GoogleFonts.plusJakartaSans(
                                     color: Colors.white,
                                     fontSize: 18,
                                     fontWeight: FontWeight.w800)),
@@ -742,7 +745,7 @@ Navigator.of(ctx).pop();
                               Text(email,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: GoogleFonts.inter(
+                                  style: GoogleFonts.plusJakartaSans(
                                       color: Colors.white.withOpacity(0.85),
                                       fontSize: 12.5)),
                             ],
@@ -777,6 +780,31 @@ Navigator.of(ctx).pop();
                     onTap: () {
                       Navigator.of(innerContext).pop();
                       context.push('/mis-pedidos');
+                    },
+                  ),
+
+                if (supabase.auth.currentUser != null)
+                  ListTile(
+                    leading: const Icon(Icons.favorite_border_rounded),
+                    title: const Text('Favoritos'),
+                    onTap: () {
+                      Navigator.of(innerContext).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const FavoritosScreen()),
+                      );
+                    },
+                  ),
+
+                if (supabase.auth.currentUser != null)
+                  ListTile(
+                    leading: const Icon(Icons.support_agent_rounded),
+                    title: const Text('Soporte'),
+                    subtitle: const Text('Chat con el equipo de Al Lado'),
+                    onTap: () {
+                      Navigator.of(innerContext).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const SoporteChatScreen()),
+                      );
                     },
                   ),
 
@@ -851,82 +879,37 @@ Navigator.of(ctx).pop();
           },
         ),
       ),
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(kToolbarHeight),
-        child: ClipRRect(
-          borderRadius:
-              const BorderRadius.vertical(bottom: Radius.circular(26)),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: AppBar(
-              titleSpacing: 0,
-              centerTitle: true,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              backgroundColor: _kCoral.withOpacity(0.85),
-              surfaceTintColor: Colors.transparent,
-              shape: const RoundedRectangleBorder(
-                borderRadius:
-                    BorderRadius.vertical(bottom: Radius.circular(26)),
-              ),
-              iconTheme: const IconThemeData(color: Colors.white),
-              actionsIconTheme: const IconThemeData(color: Colors.white),
-              title: Image.asset(
-                'assets/logo.png',
-                height: 40,
-                errorBuilder: (context, error, stackTrace) => Text(
-                  'Al Lado',
-                  style: GoogleFonts.inter(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
-                    color: Colors.white,
+      appBar: null,
+      body: Stack(
+        children: [
+          // Resplandor suave arriba, igual que en Anuncios Social.
+          Positioned(
+            top: -90,
+            left: -60,
+            right: -60,
+            child: IgnorePointer(
+              child: Container(
+                height: 280,
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    radius: 0.9,
+                    colors: [
+                      AppColors.primary.withOpacity(_esOscuro ? 0.16 : 0.10),
+                      AppColors.primary.withOpacity(0),
+                    ],
                   ),
                 ),
               ),
-              actions: [
-                // NUEVO: punto de estado online/oscuro -- verde con
-                // wifi si hay conexión, rojo tachado si no. Toque
-                // muestra un mensaje breve, no navega a ningún lado.
-                AnimatedBuilder(
-                  animation: ConnectivityService.instance,
-                  builder: (context, _) {
-                    final online = ConnectivityService.instance.online;
-                    return Padding(
-                      padding: const EdgeInsets.only(left: 4),
-                      child: Tooltip(
-                        message: online
-                            ? 'Conectado'
-                            : 'Sin conexión -- viendo datos guardados',
-                        child: Icon(
-                          online ? Icons.wifi_rounded : Icons.wifi_off_rounded,
-                          size: 20,
-                          color: online ? Colors.white : Colors.amber.shade200,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const NotificationBell(),
-                IconButton(
-                  icon: const Icon(Icons.currency_exchange_rounded),
-                  tooltip: 'Tasa de Cambio',
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (_) => const TasaCambioScreen()),
-                    );
-                  },
-                ),
-                const Padding(
-                  padding: EdgeInsets.only(right: 12, left: 4),
-                  child: Center(child: CurrencyToggle()),
-                ),
-              ],
             ),
           ),
-        ),
-      ),
-      body: RefreshIndicator(
+          Column(
+            children: [
+              SafeArea(
+                bottom: false,
+                child: _cabeceraHome(),
+              ),
+          Expanded(
+            child: RefreshIndicator(
         onRefresh: () async {
           setState(() {
             _premium = _tiendasService.obtenerCarruselPremium();
@@ -938,21 +921,25 @@ Navigator.of(ctx).pop();
         },
         child: ListView(
           padding: EdgeInsets.only(
-            top: MediaQuery.of(context).padding.top + kToolbarHeight,
+            top: 8,
             bottom: MediaQuery.of(context).padding.bottom + 96,
           ),
           children: [
             _seccionAnunciosAdmin(),
             _seccionFeaturedStoresHero(),
             _seccionTopSellers(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 4),
             if (!_busquedaActiva) _bannerCtaNegocio(),
-            const SizedBox(height: 16),
             if (!_busquedaActiva) _bannerCtaAnuncioIndependiente(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 4),
             _feedProductosCercanos(),
           ],
         ),
+      ),
+          ),
+        ],
+      ),
+      ],
       ),
     );
   }
@@ -965,6 +952,103 @@ Navigator.of(ctx).pop();
       _filtroPrecioActivo ||
       _provinciaSeleccionada != null ||
       _municipioSeleccionado != null;
+
+  Widget _cabeceraHome() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.menu_rounded, size: 28),
+            color: AppColors.primary,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'assets/logo.png',
+                  height: 30,
+                  fit: BoxFit.contain,
+                  alignment: Alignment.centerLeft,
+                  errorBuilder: (_, __, ___) => Text('Al Lado',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 24,
+                        height: 1.1,
+                        color: AppColors.primary,
+                      )),
+                ),
+                const SizedBox(height: 1),
+                Text('Compra  ·  Venta',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11.5,
+                      color: _colorTextoSecundario,
+                    )),
+              ],
+            ),
+          ),
+          AnimatedBuilder(
+            animation: ConnectivityService.instance,
+            builder: (context, _) {
+              final online = ConnectivityService.instance.online;
+              if (online) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: Tooltip(
+                  message: 'Sin conexión -- viendo datos guardados',
+                  child: Icon(Icons.wifi_off_rounded,
+                      size: 20, color: Colors.red.shade300),
+                ),
+              );
+            },
+          ),
+          Material(
+            color: AppColors.primary.withOpacity(_esOscuro ? 0.18 : 0.09),
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const TasaCambioScreen()),
+                );
+              },
+              child: const SizedBox(
+                width: 42,
+                height: 42,
+                child: Icon(Icons.currency_exchange_rounded,
+                    color: AppColors.primary, size: 22),
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
+          const NotificationBell(soloPunto: true),
+          const SizedBox(width: 2),
+          const CurrencyDropdownButton(),
+        ],
+      ),
+    );
+  }
+
+  Widget _botonCircularHome({required Widget child, VoidCallback? onTap}) {
+    return Material(
+      color: _colorSuperficie,
+      shape: CircleBorder(side: BorderSide(color: _colorBorde)),
+      elevation: 0,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(width: 46, height: 46, child: Center(child: child)),
+      ),
+    );
+  }
 
   Widget _bannerCtaNegocio() {
     if (!_ctaNegocio) return const SizedBox.shrink();
@@ -1065,7 +1149,7 @@ Navigator.of(ctx).pop();
                           ),
                           child: Text(
                             '🌟  PROMOCIONA TU NEGOCIO',
-                            style: GoogleFonts.inter(
+                            style: GoogleFonts.plusJakartaSans(
                               fontSize: 8.5,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0.4,
@@ -1078,7 +1162,7 @@ Navigator.of(ctx).pop();
                           '¿Quieres darte a conocer?',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
+                          style: GoogleFonts.plusJakartaSans(
                             fontSize: 15.5,
                             fontWeight: FontWeight.w800,
                             height: 1.2,
@@ -1090,7 +1174,7 @@ Navigator.of(ctx).pop();
                           'Promociona tu negocio, servicios, eventos, fiestas y mucho más',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
+                          style: GoogleFonts.plusJakartaSans(
                             fontSize: 11.5,
                             height: 1.3,
                             color: Colors.white.withOpacity(0.82),
@@ -1109,7 +1193,7 @@ Navigator.of(ctx).pop();
                             children: [
                               Text(
                                 'Registrarme ahora',
-                                style: GoogleFonts.inter(
+                                style: GoogleFonts.plusJakartaSans(
                                   fontSize: 10.5,
                                   fontWeight: FontWeight.w700,
                                   color: Colors.white,
@@ -1147,9 +1231,8 @@ Navigator.of(ctx).pop();
   }
 
   Widget _bannerCtaAnuncioIndependiente() {
-    final esOscuro = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
       child: GestureDetector(
         onTap: () {
           Navigator.of(context).push(
@@ -1159,89 +1242,145 @@ Navigator.of(ctx).pop();
           );
         },
         child: Container(
-          height: 148,
+          height: 124,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(20),
             gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFFF97316), Color(0xFFC2410C)],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Color(0xFFF97316), Color(0xFFFB923C)],
             ),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFFF97316).withOpacity(esOscuro ? 0.30 : 0.22),
-                blurRadius: 18,
+                color: const Color(0xFFF97316)
+                    .withOpacity(_esOscuro ? 0.28 : 0.22),
+                blurRadius: 16,
                 offset: const Offset(0, 6),
               ),
             ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  margin: const EdgeInsets.only(top: 2),
-                  padding: const EdgeInsets.all(10),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            children: [
+              // Resplandor difuminado detras del telefono
+              Positioned(
+                right: -30,
+                top: -30,
+                child: Container(
+                  width: 190,
+                  height: 190,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(0.22),
+                    gradient: RadialGradient(colors: [
+                      Colors.white.withOpacity(0.38),
+                      Colors.white.withOpacity(0),
+                    ]),
                   ),
-                  child: const Icon(Icons.sell_rounded,
-                      size: 22, color: Colors.white),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('¿Quieres vender algún artículo?',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
+              ),
+              Positioned(
+                right: 14,
+                bottom: -34,
+                child: Transform.rotate(
+                  angle: 0.14,
+                  child: Container(
+                    width: 82,
+                    height: 128,
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1F2937),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: const Align(
+                        alignment: Alignment(0, -0.45),
+                        child: Icon(Icons.campaign_rounded,
+                            size: 34, color: AppColors.primary),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 104, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.only(top: 2),
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.25),
+                      ),
+                      child: const Icon(Icons.sell_rounded,
+                          size: 20, color: Colors.white),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('¿Quieres vender algún artículo?',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.plusJakartaSans(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.15,
+                                  fontSize: 16)),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Una moto, una lavadora o algo en específico. '
+                            'Publica tu anuncio y llega a más personas.',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.plusJakartaSans(
+                                color: Colors.white.withOpacity(0.95),
+                                fontSize: 10.5,
+                                height: 1.25),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 5),
+                            decoration: BoxDecoration(
                               color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 16)),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Una moto, una lavadora o algo en específico. '
-                        'Descubre cómo hacerlo: toca aquí y crea tu propia '
-                        'publicación para que todo el mundo la vea.',
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inter(
-                            color: Colors.white.withOpacity(0.92),
-                            fontSize: 12,
-                            height: 1.35),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('Publicar anuncio',
+                                    style: GoogleFonts.plusJakartaSans(
+                                        color: const Color(0xFFEA580C),
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 11.5)),
+                                const SizedBox(width: 3),
+                                const Icon(Icons.chevron_right_rounded,
+                                    size: 15, color: Color(0xFFEA580C)),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.24),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('Crear mi anuncio',
-                                style: GoogleFonts.inter(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 12.5)),
-                            const SizedBox(width: 5),
-                            const Icon(Icons.arrow_forward_rounded,
-                                size: 14, color: Colors.white),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1279,22 +1418,30 @@ Navigator.of(ctx).pop();
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
+          padding: const EdgeInsets.fromLTRB(16, 12, 12, 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Tiendas Destacadas',
-                  style: GoogleFonts.inter(
-                      fontSize: 19,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 20,
                       fontWeight: FontWeight.w800,
                       color: _colorTexto)),
               TextButton(
                 onPressed: _abrirModalPremium,
                 style: TextButton.styleFrom(
-                  foregroundColor: _kCoralDark,
-                  textStyle: GoogleFonts.inter(fontWeight: FontWeight.w700),
+                  foregroundColor: AppColors.primary,
+                  textStyle: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w700, fontSize: 13.5),
                 ),
-                child: const Text('Ver todas'),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Ver todas'),
+                    SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded, size: 18),
+                  ],
+                ),
               ),
             ],
           ),
@@ -1304,21 +1451,21 @@ Navigator.of(ctx).pop();
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const AspectRatio(
-                aspectRatio: 16 / 9,
+                aspectRatio: 2.05,
                 child: Center(child: CircularProgressIndicator()),
               );
             }
             if (snapshot.hasError) {
               debugPrint('Error cargando carrusel premium: ${snapshot.error}');
               return const AspectRatio(
-                aspectRatio: 16 / 9,
+                aspectRatio: 2.05,
                 child: Center(child: Text('No se pudo cargar')),
               );
             }
             final tiendas = snapshot.data ?? [];
             if (tiendas.isEmpty) {
               return const AspectRatio(
-                aspectRatio: 16 / 9,
+                aspectRatio: 2.05,
                 child: Center(child: Text('Nada por aquí todavía')),
               );
             }
@@ -1328,7 +1475,7 @@ Navigator.of(ctx).pop();
             });
 
             return AspectRatio(
-              aspectRatio: 16 / 9,
+              aspectRatio: 2.05,
               child: NotificationListener<ScrollNotification>(
                 onNotification: (notif) {
                   if (notif is ScrollStartNotification &&
@@ -1362,7 +1509,7 @@ Navigator.of(ctx).pop();
             );
           },
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         FutureBuilder<List<Map<String, dynamic>>>(
           future: _premium,
           builder: (context, snapshot) {
@@ -1375,11 +1522,11 @@ Navigator.of(ctx).pop();
                 return AnimatedContainer(
                   duration: const Duration(milliseconds: 250),
                   margin: const EdgeInsets.symmetric(horizontal: 3),
-                  width: activo ? 20 : 6,
-                  height: 6,
+                  width: 8,
+                  height: 8,
                   decoration: BoxDecoration(
-                    color: activo ? _kCoral : _kCoral.withOpacity(0.25),
-                    borderRadius: BorderRadius.circular(3),
+                    color: activo ? _kCoral : _kCoral.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 );
               }),
@@ -1395,28 +1542,36 @@ Navigator.of(ctx).pop();
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
+          padding: const EdgeInsets.fromLTRB(16, 12, 12, 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Popular esta semana',
-                  style: GoogleFonts.inter(
-                      fontSize: 19,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 20,
                       fontWeight: FontWeight.w800,
                       color: _colorTexto)),
               TextButton(
                 onPressed: _abrirModalTopSellers,
                 style: TextButton.styleFrom(
-                  foregroundColor: _kCoralDark,
-                  textStyle: GoogleFonts.inter(fontWeight: FontWeight.w700),
+                  foregroundColor: AppColors.primary,
+                  textStyle: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w700, fontSize: 13.5),
                 ),
-                child: const Text('Ver todas'),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Ver todas'),
+                    SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded, size: 18),
+                  ],
+                ),
               ),
             ],
           ),
         ),
         SizedBox(
-          height: 184,
+          height: 176,
           child: FutureBuilder<List<Map<String, dynamic>>>(
             future: _trending,
             builder: (context, snapshot) {
@@ -1464,7 +1619,7 @@ Navigator.of(ctx).pop();
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
+          padding: const EdgeInsets.fromLTRB(16, 12, 12, 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -1472,7 +1627,7 @@ Navigator.of(ctx).pop();
                 _modo == _ModoCercanos.productos
                     ? 'Productos Cercanos'
                     : 'Tiendas Cercanas',
-                style: GoogleFonts.inter(
+                style: GoogleFonts.plusJakartaSans(
                     fontSize: 19,
                     fontWeight: FontWeight.w800,
                     color: _colorTexto),
@@ -1501,12 +1656,12 @@ Navigator.of(ctx).pop();
             child: TextField(
               controller: _busquedaCtrl,
               onChanged: (v) => setState(() => _busqueda = v),
-              style: GoogleFonts.inter(color: _colorTexto),
+              style: GoogleFonts.plusJakartaSans(color: _colorTexto),
               decoration: InputDecoration(
                 hintText: _modo == _ModoCercanos.productos
                     ? 'Buscar producto o tienda...'
                     : 'Buscar tienda...',
-                hintStyle: GoogleFonts.inter(color: _colorTextoSecundario),
+                hintStyle: GoogleFonts.plusJakartaSans(color: _colorTextoSecundario),
                 prefixIcon: const Icon(Icons.search, color: _kCoral),
                 suffixIcon: _busqueda.isEmpty
                     ? null
@@ -1547,7 +1702,7 @@ Navigator.of(ctx).pop();
                   Expanded(
                     child: Text(
                       'No pudimos obtener tu ubicación. Activa el GPS para ver resultados cercanos.',
-                      style: GoogleFonts.inter(fontSize: 12.5),
+                      style: GoogleFonts.plusJakartaSans(fontSize: 12.5),
                     ),
                   ),
                   TextButton(
@@ -1589,7 +1744,7 @@ Navigator.of(ctx).pop();
               child: Text(
                 'No se pudieron cargar los productos: ${snapshot.error}',
                 textAlign: TextAlign.center,
-                style: GoogleFonts.inter(color: _colorTextoSecundario),
+                style: GoogleFonts.plusJakartaSans(color: _colorTextoSecundario),
               ),
             ),
           );
@@ -1622,7 +1777,7 @@ Navigator.of(ctx).pop();
                         _municipioSeleccionado == null
                     ? 'No hay productos cerca de ti todavía'
                     : 'Sin resultados para los filtros aplicados',
-                style: GoogleFonts.inter(color: _colorTextoSecundario),
+                style: GoogleFonts.plusJakartaSans(color: _colorTextoSecundario),
               ),
             ),
           );
@@ -1807,7 +1962,7 @@ Navigator.of(ctx).pop();
                           estrellasTienda != null
                               ? estrellasTienda.toStringAsFixed(1)
                               : 'Nuevo',
-                          style: GoogleFonts.inter(
+                          style: GoogleFonts.plusJakartaSans(
                               fontSize: 10.5,
                               fontWeight: FontWeight.w600,
                               color: _colorTextoSecundario),
@@ -1825,14 +1980,14 @@ Navigator.of(ctx).pop();
                       Text(nombreTienda,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
+                          style: GoogleFonts.plusJakartaSans(
                               fontWeight: FontWeight.w700,
                               fontSize: 14.5,
                               color: _colorTexto)),
                       if (distanciaMin != null) ...[
                         const SizedBox(height: 2),
                         Text('${distanciaMin.toStringAsFixed(1)} km',
-                            style: GoogleFonts.inter(
+                            style: GoogleFonts.plusJakartaSans(
                                 fontSize: 11.5, color: _colorTextoSecundario)),
                       ],
                     ],
@@ -1922,7 +2077,7 @@ Navigator.of(ctx).pop();
                         _municipioSeleccionado == null
                     ? 'No hay tiendas cerca de ti todavía'
                     : 'Sin resultados para los filtros aplicados',
-                style: GoogleFonts.inter(color: _colorTextoSecundario),
+                style: GoogleFonts.plusJakartaSans(color: _colorTextoSecundario),
               ),
             ),
           );
@@ -1962,104 +2117,167 @@ Navigator.of(ctx).pop();
   Widget _tarjetaTienda(Map<String, dynamic> t) {
     final distancia = (t['distancia_km'] as num?)?.toDouble();
     final esVip = (t['plan'] as String? ?? '').toLowerCase() == 'premium';
+    final estrellas = (t['promedio_estrellas'] as num?)?.toDouble();
+    final resenas = (t['total_valoraciones'] as num?)?.toInt();
+    final creado = DateTime.tryParse('${t['creado_en'] ?? ''}');
+    final esNueva =
+        creado != null && DateTime.now().difference(creado).inDays <= 30;
+    final municipio = (t['municipio'] ?? '').toString();
     return GestureDetector(
       onTap: () => context.push('/tienda/${t['id_tienda']}'),
       child: Container(
         decoration: BoxDecoration(
           color: _colorSuperficie,
-          borderRadius: BorderRadius.circular(_kCardRadius),
+          borderRadius: BorderRadius.circular(18),
           boxShadow: _kSoftShadow,
         ),
         clipBehavior: Clip.antiAlias,
+        padding: const EdgeInsets.all(6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.network(
-                    t['logo_url'] ?? '',
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: _colorPlaceholder,
-                      child: Icon(Icons.storefront_outlined,
-                          color: _colorTextoSecundario),
-                    ),
-                  ),
-                  if (distancia != null)
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _kCoral,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.location_on,
-                                size: 11, color: Colors.white),
-                            const SizedBox(width: 3),
-                            Text(
-                              '${distancia.toStringAsFixed(1)} km',
-                              style: GoogleFonts.inter(
-                                  fontSize: 10.5,
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600),
-                            ),
-                          ],
-                        ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(13),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.network(
+                      t['logo_url'] ?? '',
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: _colorPlaceholder,
+                        child: Icon(Icons.storefront_outlined,
+                            color: _colorTextoSecundario),
                       ),
                     ),
-                  if (esVip)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _kGold,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: _kSoftShadow,
+                    if (distancia != null)
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: _kCoral,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.location_on,
+                                  size: 11, color: Colors.white),
+                              const SizedBox(width: 2),
+                              Text(
+                                '${distancia.toStringAsFixed(1).replaceAll('.', ',')} km',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 10,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          ),
                         ),
-                        child: const Icon(Icons.star_rounded,
-                            size: 13, color: Colors.white),
                       ),
+                    Positioned(
+                      top: 5,
+                      right: 5,
+                      child: _CorazonTienda(
+                          idTienda: '${t['id_tienda']}'),
                     ),
-                ],
+                    if (esVip)
+                      Positioned(
+                        bottom: 5,
+                        left: 5,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: _kGold,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.star_rounded,
+                              size: 11, color: Colors.white),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+              padding: const EdgeInsets.fromLTRB(3, 6, 3, 2),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     t['nombre'] ?? '',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13.5,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
                         color: _colorTexto),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      const Icon(Icons.star_rounded, size: 14, color: _kGold),
+                      const SizedBox(width: 2),
+                      Text(
+                        estrellas != null
+                            ? estrellas.toStringAsFixed(1)
+                            : 'Nuevo',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: _colorTexto),
+                      ),
+                      if (estrellas != null && resenas != null) ...[
+                        const SizedBox(width: 3),
+                        Text('($resenas)',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11,
+                                color: _colorTextoSecundario)),
+                      ],
+                      if (esNueva && estrellas != null) ...[
+                        const SizedBox(width: 5),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text('Nuevo',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.primary)),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      const Icon(Icons.star_rounded, size: 14, color: _kGold),
-                      const SizedBox(width: 3),
-                      Text(
-                        t['promedio_estrellas'] != null
-                            ? (t['promedio_estrellas'] as num)
-                                .toStringAsFixed(1)
-                            : 'Nuevo',
-                        style: GoogleFonts.inter(
-                            fontSize: 11, color: _colorTextoSecundario),
+                      Expanded(
+                        child: Text(
+                          municipio,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              color: _colorTextoSecundario),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.10),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.arrow_forward_rounded,
+                            size: 13, color: AppColors.primary),
                       ),
                     ],
                   ),
@@ -2126,7 +2344,7 @@ Navigator.of(ctx).pop();
                         ),
                         child: Text(
                           '${distanciaKm.toStringAsFixed(1)}km',
-                          style: GoogleFonts.inter(
+                          style: GoogleFonts.plusJakartaSans(
                               fontSize: 8.5,
                               color: Colors.white,
                               fontWeight: FontWeight.w600),
@@ -2145,7 +2363,7 @@ Navigator.of(ctx).pop();
                     p['nombre'] ?? '',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(
+                    style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w700,
                         fontSize: 11,
                         color: _colorTexto),
@@ -2157,7 +2375,7 @@ Navigator.of(ctx).pop();
                       Flexible(
                         child: PriceTag(
                           montoUsd: (p['precio_usd'] as num?)?.toDouble() ?? 0,
-                          style: GoogleFonts.inter(
+                          style: GoogleFonts.plusJakartaSans(
                               fontSize: 11.5,
                               fontWeight: FontWeight.bold,
                               color: Colors.green.shade700),
@@ -2312,7 +2530,7 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                     ],
                   ),
                 ),
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(16),
                 alignment: Alignment.bottomLeft,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2321,8 +2539,8 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                     Text(t['nombre'] ?? '',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inter(
-                            fontSize: 22,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 20,
                             fontWeight: FontWeight.w800,
                             color: Colors.white)),
                     const SizedBox(height: 4),
@@ -2337,7 +2555,7 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                             '${t['municipio'] ?? ''}, ${t['provincia'] ?? ''}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.inter(
+                            style: GoogleFonts.plusJakartaSans(
                                 fontSize: 13, color: Colors.white70),
                           ),
                         ),
@@ -2357,19 +2575,19 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.28),
+                        color: AppColors.primary,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                            color: Colors.white.withOpacity(0.4), width: 1),
+                            color: Colors.transparent, width: 0),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(Icons.star_rounded,
-                              size: 15, color: _kGold),
+                              size: 15, color: Colors.white),
                           const SizedBox(width: 4),
                           Text('TIENDA VIP',
-                              style: GoogleFonts.inter(
+                              style: GoogleFonts.plusJakartaSans(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w800,
                                   color: Colors.white)),
@@ -2390,10 +2608,10 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.28),
+                        color: Colors.white,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                            color: Colors.white.withOpacity(0.4), width: 1),
+                            color: Colors.transparent, width: 0),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -2406,10 +2624,10 @@ class _HeroTiendaCardState extends State<_HeroTiendaCard> {
                                 ? (t['promedio_estrellas'] as num)
                                     .toStringAsFixed(1)
                                 : 'Nuevo',
-                            style: GoogleFonts.inter(
+                            style: GoogleFonts.plusJakartaSans(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w800,
-                                color: Colors.white),
+                                color: AppColors.ink),
                           ),
                         ],
                       ),
@@ -2530,8 +2748,8 @@ class _ModalListaTiendasState extends State<_ModalListaTiendas> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Text(widget.titulo,
-                  style: GoogleFonts.inter(
-                      fontSize: 19,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 20,
                       fontWeight: FontWeight.w800,
                       color: _colorTexto)),
             ),
@@ -2540,12 +2758,12 @@ class _ModalListaTiendasState extends State<_ModalListaTiendas> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: TextField(
                 onChanged: (v) => setState(() => _busqueda = v),
-                style: GoogleFonts.inter(color: _colorTexto),
+                style: GoogleFonts.plusJakartaSans(color: _colorTexto),
                 decoration: InputDecoration(
                   isDense: true,
                   hintText: 'Buscar tienda, lugar o categoría...',
                   hintStyle:
-                      GoogleFonts.inter(color: _colorTextoSecundario),
+                      GoogleFonts.plusJakartaSans(color: _colorTextoSecundario),
                   prefixIcon:
                       const Icon(Icons.search, color: _kCoral),
                   filled: true,
@@ -2564,7 +2782,7 @@ class _ModalListaTiendasState extends State<_ModalListaTiendas> {
                         _busqueda.isEmpty
                             ? 'Nada por aquí todavía'
                             : 'Sin resultados para "$_busqueda"',
-                        style: GoogleFonts.inter(
+                        style: GoogleFonts.plusJakartaSans(
                             color: _colorTextoSecundario),
                       ),
                     )
@@ -2634,7 +2852,7 @@ class _ModalListaTiendasState extends State<_ModalListaTiendas> {
                             ],
                           ),
                           title: Text(t['nombre'] ?? '',
-                              style: GoogleFonts.inter(
+                              style: GoogleFonts.plusJakartaSans(
                                   fontWeight: FontWeight.w600,
                                   color: _colorTexto)),
                           subtitle: Text(
@@ -2644,7 +2862,7 @@ class _ModalListaTiendasState extends State<_ModalListaTiendas> {
                               if (distancia != null)
                                 '${distancia.toStringAsFixed(1)} km',
                             ].join(' · '),
-                            style: GoogleFonts.inter(
+                            style: GoogleFonts.plusJakartaSans(
                                 fontSize: 12,
                                 color: _colorTextoSecundario),
                           ),
@@ -2665,6 +2883,71 @@ class _ModalListaTiendasState extends State<_ModalListaTiendas> {
           ],
         );
       },
+    );
+  }
+}
+
+
+/// Corazon de favorito sobre la foto de la tarjeta de tienda. Pide sesion
+/// con requireAuth antes de guardar; los invitados no hacen ninguna consulta.
+class _CorazonTienda extends StatefulWidget {
+  final String idTienda;
+  const _CorazonTienda({required this.idTienda});
+
+  @override
+  State<_CorazonTienda> createState() => _CorazonTiendaState();
+}
+
+class _CorazonTiendaState extends State<_CorazonTienda> {
+  final _service = TiendasService();
+  bool _fav = false;
+  bool _ocupado = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _service.esFavorito(widget.idTienda).then((v) {
+      if (mounted) setState(() => _fav = v);
+    }).catchError((_) {});
+  }
+
+  Future<void> _alternar() async {
+    if (_ocupado) return;
+    if (!await requireAuth(context)) return;
+    setState(() => _ocupado = true);
+    try {
+      if (_fav) {
+        await _service.quitarFavorito(widget.idTienda);
+      } else {
+        await _service.agregarFavorito(widget.idTienda);
+      }
+      if (mounted) setState(() => _fav = !_fav);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo actualizar favoritos')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _ocupado = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _alternar,
+      child: Container(
+        width: 26,
+        height: 26,
+        decoration: const BoxDecoration(
+            color: Colors.white, shape: BoxShape.circle),
+        child: Icon(
+          _fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          size: 16,
+          color: _fav ? Colors.redAccent : AppColors.primary,
+        ),
+      ),
     );
   }
 }

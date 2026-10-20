@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/tiendas_service.dart';
 import '../services/storage_service.dart';
+import '../services/anuncios_service.dart';
 
 class ProductEditModal extends StatefulWidget {
   final Map<String, dynamic> producto;
@@ -37,6 +38,7 @@ class ProductEditModal extends StatefulWidget {
 class _ProductEditModalState extends State<ProductEditModal> {
   final _tiendasService = TiendasService();
   final _storageService = StorageService();
+  final _anunciosService = AnunciosService();
   final _picker = ImagePicker();
   final _formKey = GlobalKey<FormState>();
 
@@ -58,6 +60,7 @@ class _ProductEditModalState extends State<ProductEditModal> {
 
   bool _guardando = false;
   bool _subiendoImagen = false;
+  bool _potenciando = false;
   String? _error;
 
   @override
@@ -89,8 +92,10 @@ class _ProductEditModalState extends State<ProductEditModal> {
   }
 
   Future<void> _elegirImagen() async {
+    final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return;
     final XFile? archivo = await _picker.pickImage(
-      source: ImageSource.gallery,
+      source: fuente,
       maxWidth: 1280,
       imageQuality: 80,
     );
@@ -99,8 +104,10 @@ class _ProductEditModalState extends State<ProductEditModal> {
   }
 
   Future<void> _elegirImagen2() async {
+    final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return;
     final XFile? archivo = await _picker.pickImage(
-      source: ImageSource.gallery,
+      source: fuente,
       maxWidth: 1280,
       imageQuality: 80,
     );
@@ -109,8 +116,10 @@ class _ProductEditModalState extends State<ProductEditModal> {
   }
 
   Future<void> _elegirImagen3() async {
+    final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return;
     final XFile? archivo = await _picker.pickImage(
-      source: ImageSource.gallery,
+      source: fuente,
       maxWidth: 1280,
       imageQuality: 80,
     );
@@ -207,6 +216,69 @@ class _ProductEditModalState extends State<ProductEditModal> {
         _error = 'No se pudo eliminar: $e';
         _guardando = false;
       });
+    }
+  }
+
+  Future<void> _potenciar() async {
+    final nombre = _nombreCtrl.text.trim();
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('¿Potenciar "$nombre"?'),
+        content: const Text(
+            'Se publicará como "Promoción Pagada" en el feed de inicio. '
+            'No pasa por moderación: sale al instante si tu plan tiene '
+            'una ranura libre.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Potenciar')),
+        ],
+      ),
+    );
+    if (confirmar != true || !mounted) return;
+
+    setState(() => _potenciando = true);
+    try {
+      final idTienda = widget.producto['id_tienda'] as String;
+      final r = await _anunciosService.ranurasDeTienda(idTienda);
+      if (r.max > 0 && r.usados >= r.max) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Tu plan no tiene ranuras libres. Sube de plan o '
+                  'pon en pausa otro anuncio desde "Gestionar anuncios".')));
+        }
+        return;
+      }
+      final precio = double.tryParse(_precioCtrl.text.trim());
+      await _anunciosService.potenciarProducto(
+        idTienda: idTienda,
+        idProducto: widget.producto['id_producto'] as String,
+        titulo: nombre,
+        texto: precio != null
+            ? 'Ahora \$${precio.toStringAsFixed(2)} en el catálogo. ¡Pídelo ya!'
+            : '¡Disponible ya! Pídelo desde el catálogo.',
+        imagenUrl: _imagenUrlActual,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('¡Producto potenciado! Ya está corriendo en el feed.')));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final s = e.toString();
+      final msg = s.contains('CUPO_ANUNCIOS')
+          ? 'Tu plan no tiene ranuras libres. Sube de plan o pon en pausa '
+              'otro anuncio.'
+          : 'No se pudo potenciar el producto: '
+              '${s.replaceFirst('Exception: ', '')}';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } finally {
+      if (mounted) setState(() => _potenciando = false);
     }
   }
 
@@ -461,6 +533,33 @@ class _ProductEditModalState extends State<ProductEditModal> {
                   const SizedBox(height: 12),
                   Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
                 ],
+
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        (_guardando || _potenciando) ? null : _potenciar,
+                    style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.all(14)),
+                    icon: _potenciando
+                        ? const SizedBox(
+                            height: 16,
+                            width: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.local_fire_department_outlined),
+                    label: const Text('Potenciar en el feed'),
+                  ),
+                ),
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Publica este producto como "Promoción Pagada" en el inicio.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    ),
+                  ),
+                ),
 
                 const SizedBox(height: 16),
                 SizedBox(

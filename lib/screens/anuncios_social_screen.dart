@@ -37,6 +37,11 @@ import '../core/palabras_prohibidas.dart';
 import '../core/supabase_client.dart';
 import '../services/anuncio_comentarios_service.dart';
 import '../services/anuncio_likes_service.dart';
+import '../services/currency_service.dart';
+import '../services/tienda_state_service.dart';
+import '../widgets/notification_bell.dart';
+import 'agregar_producto_screen.dart';
+import 'onboarding_negocio_screen.dart';
 
 const int _kTamPagina = 15;
 
@@ -62,6 +67,11 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
   int _offset = 0;
   bool _masDatos = true;
   bool _usarInteracciones = true;
+
+  // Estilo nuevo: chips de categoría (se arman con lo ya cargado) y
+  // orden elegido desde el botón de filtros.
+  String _categoriaSel = 'Todos';
+  bool _ordenPopular = true;
 
   @override
   void initState() {
@@ -95,6 +105,7 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
   // del parche SQL; si aún no existe, caemos a creado_en desc.
   Future<List<Map<String, dynamic>>> _consultaPagina(int offset) async {
     final b = _busquedaCtrl.text.trim();
+    if (!_ordenPopular) return _consultaPorFecha(offset);
 
     try {
       var q = supabase
@@ -126,6 +137,19 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
         await transform.range(offset, offset + _kTamPagina - 1),
       );
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _consultaPorFecha(int offset) async {
+    final b = _busquedaCtrl.text.trim();
+    var q = supabase.from('anuncios').select().eq('estado', 'aprobado');
+    if (b.isNotEmpty) {
+      q = q.or('titulo.ilike.%$b%,texto.ilike.%$b%,etiqueta.ilike.%$b%');
+    }
+    return List<Map<String, dynamic>>.from(
+      await q
+          .order('creado_en', ascending: false)
+          .range(offset, offset + _kTamPagina - 1),
+    );
   }
 
   Future<void> _cargar() => _cargarPagina(reset: true);
@@ -285,98 +309,647 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
       (_esOscuro ? AppColors.borderDark : AppColors.borderLight)
           .withOpacity(0.6);
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _colorFondo,
-      appBar: AppBar(
-        title: const Text('Marketplace'),
-        backgroundColor: _colorFondo,
-        foregroundColor: _colorTexto,
-        elevation: 0,
-        scrolledUnderElevation: 0,
+  // ---------------------------------------------------------------
+  // Helpers de datos para el estilo nuevo (todo tolerante a columnas
+  // que quizá no existan: si no hay dato, simplemente no se muestra).
+  // ---------------------------------------------------------------
+  static String? _categoriaDe(Map<String, dynamic> a) {
+    final c = (a['categoria'] ?? a['etiqueta'])?.toString().trim();
+    return (c == null || c.isEmpty) ? null : c;
+  }
+
+  List<String> get _categorias {
+    final set = <String>{};
+    for (final a in _anuncios) {
+      final c = _categoriaDe(a);
+      if (c != null) set.add(c);
+    }
+    return ['Todos', ...set.take(12)];
+  }
+
+  List<Map<String, dynamic>> get _anunciosVisibles {
+    if (_categoriaSel == 'Todos') return _anuncios;
+    return _anuncios.where((a) => _categoriaDe(a) == _categoriaSel).toList();
+  }
+
+  /// "Vender un producto" necesita tienda. Si el usuario ya es vendedor
+  /// vamos directo al formulario de producto; si no, le ofrecemos crear
+  /// la tienda primero.
+  Future<void> _publicarProducto() async {
+    if (!await requireAuth(context,
+        mensaje: 'Inicia sesión para vender productos')) {
+      return;
+    }
+    var tienda = TiendaStateService.instance.miTienda;
+    if (tienda == null) {
+      await TiendaStateService.instance.cargar();
+      tienda = TiendaStateService.instance.miTienda;
+    }
+    if (!mounted) return;
+    if (tienda == null) {
+      final crear = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Primero crea tu tienda'),
+          content: const Text(
+              'Para vender productos necesitas tener tu tienda. ¿Creamos una ahora?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancelar')),
+            FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Crear tienda')),
+          ],
+        ),
+      );
+      if (crear == true && mounted) {
+        await context.push('/crear-tienda');
+      }
+      return;
+    }
+    final idTienda = tienda['id_tienda']?.toString();
+    final plan = tienda['plan'] as String?;
+    if (idTienda == null || idTienda.isEmpty) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => AgregarProductoScreen(
+        idTienda: idTienda,
+        plan: plan,
       ),
-      body: Column(
+    ));
+  }
+
+  Future<void> _abrirFiltros() async {
+    await showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Ordenar anuncios',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w800, fontSize: 17)),
+              const SizedBox(height: 8),
+              RadioListTile<bool>(
+                contentPadding: EdgeInsets.zero,
+                value: true,
+                groupValue: _ordenPopular,
+                title: const Text('Más populares'),
+                subtitle: const Text('Los más comentados y con más likes'),
+                onChanged: (v) {
+                  Navigator.pop(ctx);
+                  if (_ordenPopular != true) {
+                    setState(() => _ordenPopular = true);
+                    _cargar();
+                  }
+                },
+              ),
+              RadioListTile<bool>(
+                contentPadding: EdgeInsets.zero,
+                value: false,
+                groupValue: _ordenPopular,
+                title: const Text('Más recientes'),
+                subtitle: const Text('Lo último que se publicó'),
+                onChanged: (v) {
+                  Navigator.pop(ctx);
+                  if (_ordenPopular != false) {
+                    setState(() => _ordenPopular = false);
+                    _cargar();
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _botonCircular({required Widget child, VoidCallback? onTap}) {
+    return Material(
+      color: _colorSuperficie,
+      shape: CircleBorder(side: BorderSide(color: _colorBorde)),
+      elevation: 0,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(width: 46, height: 46, child: Center(child: child)),
+      ),
+    );
+  }
+
+  Widget _cabecera() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+      child: Row(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: TextField(
-              controller: _busquedaCtrl,
-              onChanged: _onBusquedaCambiada,
-              style: GoogleFonts.plusJakartaSans(color: _colorTexto),
-              decoration: InputDecoration(
-                hintText: 'Buscar en el marketplace…',
-                hintStyle: GoogleFonts.plusJakartaSans(
-                    color: _colorTextoSecundario),
-                prefixIcon: const Icon(Icons.search_rounded,
-                    color: Color(0xFF98A2B3)),
-                isDense: true,
-                filled: true,
-                fillColor: _colorSuperficie,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide(color: _colorBorde),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide(color: AppColors.primary),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Al Lado',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 24,
+                        height: 1.1,
+                        color: AppColors.primary)),
+                Text('Compra  ·  Vende  ·  Cerca de ti',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11.5, color: _colorTextoSecundario)),
+              ],
+            ),
+          ),
+          _botonCircular(
+            child: const NotificationBell(iconColor: AppColors.primary),
+          ),
+          const SizedBox(width: 10),
+          _botonCircular(
+            onTap: () async {
+              if (!await requireAuth(context)) return;
+              if (!mounted) return;
+              context.push('/mi-perfil');
+            },
+            child: const Icon(Icons.person_outline_rounded,
+                color: AppColors.primary, size: 24),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buscador() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.07),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: TextField(
+                controller: _busquedaCtrl,
+                onChanged: _onBusquedaCambiada,
+                style: GoogleFonts.plusJakartaSans(color: _colorTexto),
+                decoration: InputDecoration(
+                  hintText: 'Buscar en anuncios…',
+                  hintStyle: GoogleFonts.plusJakartaSans(
+                      color: _colorTextoSecundario),
+                  prefixIcon: const Icon(Icons.search_rounded,
+                      color: AppColors.primary),
+                  isDense: true,
+                  filled: true,
+                  fillColor: _colorSuperficie,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 15),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(28),
+                    borderSide: BorderSide(color: _colorBorde),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(28),
+                    borderSide:
+                        const BorderSide(color: AppColors.primary, width: 1.4),
+                  ),
                 ),
               ),
             ),
           ),
-          Expanded(
-            child: _cargando && _anuncios.isEmpty
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null && _anuncios.isEmpty
-                    ? _estadoError()
-                    : _anuncios.isEmpty
-                        ? _estadoVacio()
-                        : RefreshIndicator(
-                            onRefresh: _cargar,
-                            child: ListView.builder(
-                              controller: _scrollCtrl,
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              padding:
-                                  const EdgeInsets.fromLTRB(12, 12, 12, 24),
-                              itemCount:
-                                  _anuncios.length + (_cargandoMas ? 1 : 0),
-                              itemBuilder: (context, i) {
-                                if (i >= _anuncios.length) {
-                                  return const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 18),
-                                    child: Center(
-                                      child: SizedBox(
-                                        width: 22,
-                                        height: 22,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2.4),
-                                      ),
-                                    ),
-                                  );
-                                }
-                                final a = _anuncios[i];
-                                final id = a['id_anuncio']?.toString() ?? '';
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 14),
-                                  child: _TarjetaAnuncioSocial(
-                                    anuncio: a,
-                                    tieneLike: _misLikes.contains(id),
-                                    colorSuperficie: _colorSuperficie,
-                                    colorBorde: _colorBorde,
-                                    colorTexto: _colorTexto,
-                                    colorTextoSecundario: _colorTextoSecundario,
-                                    onTap: () => _abrirDetalle(a),
-                                    onLike: () => _alternarLike(a),
-                                    onCompartir: () => _compartir(a),
-                                    onContactar: () => _contactar(a),
-                                    onComentar: () => _abrirDetalle(a),
+          const SizedBox(width: 12),
+          _botonCircular(
+            onTap: _abrirFiltros,
+            child: const Icon(Icons.tune_rounded,
+                color: AppColors.primary, size: 22),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chipsCategorias() {
+    final cats = _categorias;
+    return SizedBox(
+      height: 50,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 4),
+        itemCount: cats.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, i) {
+          final c = cats[i];
+          final activo = c == _categoriaSel;
+          return GestureDetector(
+            onTap: () => setState(() => _categoriaSel = c),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: activo ? AppColors.primary : _colorSuperficie,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                    color: activo ? AppColors.primary : _colorBorde),
+                boxShadow: activo
+                    ? [
+                        BoxShadow(
+                          color: AppColors.primary.withOpacity(0.28),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Text(c,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13.5,
+                      fontWeight: activo ? FontWeight.w700 : FontWeight.w600,
+                      color: activo ? Colors.white : _colorTextoSecundario)),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  bool _fabExpandido = false;
+
+  void _alternarFab() => setState(() => _fabExpandido = !_fabExpandido);
+
+  /// Menú speed-dial estilo vidrio flotante.
+  Widget _buildFabMenu(Color primary) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (_fabExpandido) ...[
+          _miniAccionFab(
+            icono: Icons.storefront_rounded,
+            etiqueta: 'Mi negocio',
+            color: const Color(0xFF0E9F6E),
+            onTap: () async {
+              if (!await requireAuth(context,
+                  mensaje: 'Inicia sesión para crear tu negocio')) {
+                return;
+              }
+              if (!mounted) return;
+              _alternarFab();
+              await Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) =>
+                      const OnboardingNegocioScreen(tipoInicial: 'negocio')));
+              if (mounted) _cargar();
+            },
+          ),
+          _miniAccionFab(
+            icono: Icons.sell_rounded,
+            etiqueta: 'Vender un producto',
+            color: AppColors.primary,
+            onTap: () {
+              _alternarFab();
+              _publicarProducto();
+            },
+          ),
+          _miniAccionFab(
+            icono: Icons.celebration_rounded,
+            etiqueta: 'Evento / Promoción',
+            color: const Color(0xFFD97706),
+            onTap: () async {
+              if (!await requireAuth(context,
+                  mensaje: 'Inicia sesión para publicar un evento')) {
+                return;
+              }
+              if (!mounted) return;
+              _alternarFab();
+              await context.push('/anuncio-independiente');
+              if (mounted) _cargar();
+            },
+          ),
+        ],
+        // Botón principal: vidrio flotante
+        Material(
+          color: Colors.transparent,
+          elevation: 0,
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: _esOscuro
+                    ? [
+                        Colors.white.withOpacity(0.18),
+                        Colors.white.withOpacity(0.06),
+                      ]
+                    : [
+                        Colors.white.withOpacity(0.9),
+                        Colors.white.withOpacity(0.55),
+                      ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              border: Border.all(
+                color: _esOscuro
+                    ? Colors.white.withOpacity(0.25)
+                    : Colors.white.withOpacity(0.6),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(_esOscuro ? 0.35 : 0.12),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+                BoxShadow(
+                  color: Colors.white.withOpacity(_esOscuro ? 0.05 : 0.4),
+                  blurRadius: 2,
+                  offset: const Offset(0, -1),
+                  spreadRadius: -1,
+                ),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _alternarFab,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: AnimatedRotation(
+                    duration: const Duration(milliseconds: 220),
+                    turns: _fabExpandido ? 0.125 : 0,
+                    child: Icon(
+                      _fabExpandido ? Icons.close_rounded : Icons.add_rounded,
+                      color: _esOscuro
+                          ? Colors.white
+                          : AppColors.primary,
+                      size: 26,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _miniAccionFab({
+    required IconData icono,
+    required String etiqueta,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Etiqueta con fondo de vidrio MÁS VISIBLE
+          Material(
+            color: Colors.transparent,
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                gradient: LinearGradient(
+                  colors: _esOscuro
+                      ? [
+                          Colors.white.withOpacity(0.28),
+                          Colors.white.withOpacity(0.18),
+                        ]
+                      : [
+                          Colors.white.withOpacity(0.98),
+                          Colors.white.withOpacity(0.85),
+                        ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                border: Border.all(
+                  color: _esOscuro
+                      ? Colors.white.withOpacity(0.4)
+                      : Colors.white.withOpacity(0.9),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(_esOscuro ? 0.4 : 0.15),
+                    blurRadius: 16,
+                    offset: const Offset(0, 5),
+                  ),
+                  BoxShadow(
+                    color: Colors.white.withOpacity(_esOscuro ? 0.08 : 0.5),
+                    blurRadius: 2,
+                    offset: const Offset(0, -1),
+                    spreadRadius: -1,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(_esOscuro ? 0.35 : 0.22),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(icono, color: color, size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      etiqueta,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14.5,
+                        color: _esOscuro
+                            ? Colors.white
+                            : AppColors.ink,
+                        letterSpacing: 0.2,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Botón circular acción MÁS GRANDE
+          Material(
+            color: Colors.transparent,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    color,
+                    Color.lerp(color, Colors.black, 0.18) ?? color,
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withOpacity(0.5),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onTap,
+                  child: const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: Icon(Icons.chevron_right_rounded,
+                        color: Colors.white, size: 22),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visibles = _anunciosVisibles;
+    return Scaffold(
+      backgroundColor: _colorFondo,
+      floatingActionButton: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom + 84,
+        ),
+        child: _buildFabMenu(AppColors.primary),
+      ),
+      body: Stack(
+        children: [
+          // Resplandor suave arriba, como en la referencia.
+          Positioned(
+            top: -90,
+            left: -60,
+            right: -60,
+            child: IgnorePointer(
+              child: Container(
+                height: 280,
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    radius: 0.9,
+                    colors: [
+                      AppColors.primary.withOpacity(_esOscuro ? 0.16 : 0.10),
+                      AppColors.primary.withOpacity(0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            bottom: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _cabecera(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+                  child: Text('Anuncios',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 30,
+                          height: 1.1,
+                          color: _colorTexto)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 0),
+                  child: Text('Descubre lo que tu comunidad tiene para ofrecer',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13.5, color: _colorTextoSecundario)),
+                ),
+                _buscador(),
+                if (_anuncios.isNotEmpty) _chipsCategorias(),
+                Expanded(
+                  child: _cargando && _anuncios.isEmpty
+                      ? const Center(child: CircularProgressIndicator())
+                      : _error != null && _anuncios.isEmpty
+                          ? _estadoError()
+                          : visibles.isEmpty
+                              ? _estadoVacio()
+                              : RefreshIndicator(
+                                  onRefresh: _cargar,
+                                  child: ListView.builder(
+                                    controller: _scrollCtrl,
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    padding: const EdgeInsets.fromLTRB(
+                                        16, 10, 16, 120),
+                                    itemCount: visibles.length +
+                                        (_cargandoMas ? 1 : 0),
+                                    itemBuilder: (context, i) {
+                                      if (i >= visibles.length) {
+                                        return const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                              vertical: 18),
+                                          child: Center(
+                                            child: SizedBox(
+                                              width: 22,
+                                              height: 22,
+                                              child: CircularProgressIndicator(
+                                                  strokeWidth: 2.4),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      final a = visibles[i];
+                                      final id =
+                                          a['id_anuncio']?.toString() ?? '';
+                                      return Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 14),
+                                        child: _TarjetaAnuncioSocial(
+                                          anuncio: a,
+                                          tieneLike: _misLikes.contains(id),
+                                          colorSuperficie: _colorSuperficie,
+                                          colorBorde: _colorBorde,
+                                          colorTexto: _colorTexto,
+                                          colorTextoSecundario:
+                                              _colorTextoSecundario,
+                                          onTap: () => _abrirDetalle(a),
+                                          onLike: () => _alternarLike(a),
+                                          onCompartir: () => _compartir(a),
+                                          onContactar: () => _contactar(a),
+                                          onComentar: () => _abrirDetalle(a),
+                                        ),
+                                      );
+                                    },
                                   ),
-                                );
-                              },
-                            ),
-                          ),
+                                ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -438,7 +1011,21 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
   }
 }
 
-/// Tarjeta grande estilo publicación de red social.
+/// "hace 2 h", "hace 3 d"... para el pie de la tarjeta.
+String _haceCorto(DateTime? fecha) {
+  if (fecha == null) return '';
+  final d = DateTime.now().toUtc().difference(fecha.toUtc());
+  if (d.inMinutes < 1) return 'Ahora mismo';
+  if (d.inHours < 1) return 'Hace ${d.inMinutes} min';
+  if (d.inDays < 1) return 'Hace ${d.inHours} h';
+  if (d.inDays < 30) return 'Hace ${d.inDays} d';
+  return 'Hace ${(d.inDays / 30).floor()} m';
+}
+
+/// Tarjeta horizontal: foto a la izquierda con insignia, datos a la
+/// derecha (título, categoría · lugar, precio, descripción, tiempo y
+/// distancia) y una franja inferior con like / comentar / compartir /
+/// contactar. Toda la información y acciones de antes se conservan.
 class _TarjetaAnuncioSocial extends StatelessWidget {
   final Map<String, dynamic> anuncio;
   final bool tieneLike;
@@ -468,219 +1055,304 @@ class _TarjetaAnuncioSocial extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final esOscuro = Theme.of(context).brightness == Brightness.dark;
     final titulo = (anuncio['titulo'] as String?) ?? '';
     final texto = (anuncio['texto'] as String?) ?? '';
     final imagen = anuncio['imagen_url'] as String?;
     final precio = (anuncio['precio_usd'] as num?)?.toDouble();
     final totalLikes = (anuncio['total_likes'] as num?)?.toInt() ?? 0;
-    final totalComentarios = (anuncio['total_comentarios'] as num?)?.toInt() ?? 0;
-    final nombreAnunciante =
-        (anuncio['nombre_anunciante'] as String?) ?? 'Anuncio';
+    final totalComentarios =
+        (anuncio['total_comentarios'] as num?)?.toInt() ?? 0;
+    final nombreAnunciante = (anuncio['nombre_anunciante'] as String?)?.trim();
     final whatsapp = (anuncio['whatsapp'] as String?)?.trim();
+    final tieneWhatsapp = whatsapp != null && whatsapp.isNotEmpty;
+
+    final categoria =
+        (anuncio['categoria'] ?? anuncio['etiqueta'])?.toString().trim();
+    final lugar = (anuncio['municipio'] ?? anuncio['ubicacion'])
+        ?.toString()
+        .trim();
+    final distancia = (anuncio['distancia_km'] as num?)?.toDouble();
+    final creado = DateTime.tryParse((anuncio['creado_en'] as String?) ?? '');
+    final hace = _haceCorto(creado);
+
+    // Insignia: potenciados/admin = Destacado; publicados hace < 48 h = Nuevo.
+    String? insignia;
+    final tipo = anuncio['tipo']?.toString();
+    if (tipo == 'admin' || anuncio['id_producto'] != null) {
+      insignia = 'Destacado';
+    } else if (creado != null &&
+        DateTime.now().toUtc().difference(creado.toUtc()).inHours < 48) {
+      insignia = 'Nuevo';
+    }
+
+    final subtitulo = [
+      if (categoria != null && categoria.isNotEmpty) categoria,
+      if (lugar != null && lugar.isNotEmpty) lugar,
+      if ((categoria == null || categoria.isEmpty) &&
+          (lugar == null || lugar.isEmpty) &&
+          nombreAnunciante != null &&
+          nombreAnunciante.isNotEmpty)
+        nombreAnunciante,
+    ].join('  ·  ');
 
     return Container(
       decoration: BoxDecoration(
         color: colorSuperficie,
-        borderRadius: BorderRadius.circular(kCardRadiusLarge),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: colorBorde),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ---- Header: avatar + nombre ----
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: AppColors.primary.withOpacity(0.12),
-                  child: const Icon(Icons.storefront_rounded,
-                      size: 18, color: AppColors.primary),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(nombreAnunciante,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13.5,
-                          color: colorTexto)),
-                ),
-              ],
-            ),
-          ),
-
-          // ---- Foto grande (tocar abre el detalle) ----
-          GestureDetector(
-            onTap: onTap,
-            child: AspectRatio(
-              aspectRatio: 4 / 3,
-              child: (imagen != null && imagen.isNotEmpty)
-                  ? Image.network(
-                      imagen,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: colorBorde.withOpacity(0.3),
-                        child: Icon(Icons.image_not_supported_outlined,
-                            size: 40, color: colorTextoSecundario),
-                      ),
-                    )
-                  : Container(
-                      color: colorBorde.withOpacity(0.3),
-                      child: Icon(Icons.campaign_outlined,
-                          size: 40, color: colorTextoSecundario),
-                    ),
-            ),
-          ),
-
-          // ---- Título + texto + precio ----
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (titulo.isNotEmpty)
-                  Text(titulo,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                          color: colorTexto)),
-                if (precio != null) ...[
-                  const SizedBox(height: 4),
-                  Text('\$${precio.toStringAsFixed(2)} USD',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                          color: AppColors.success)),
-                ],
-                if (texto.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(texto,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13.5,
-                          height: 1.4,
-                          color: colorTextoSecundario)),
-                ],
-              ],
-            ),
-          ),
-
-          // ---- Contador de likes (arriba de los botones, como FB) ----
-          if (totalLikes > 0)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: const BoxDecoration(
-                      color: Colors.redAccent,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.favorite_rounded,
-                        size: 10, color: Colors.white),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    totalLikes == 1
-                        ? '1 persona le dio like'
-                        : '$totalLikes personas le dieron like',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11.5, color: colorTextoSecundario),
-                  ),
-                  if (totalComentarios > 0) ...[
-                    const SizedBox(width: 14),
-                    const Icon(Icons.mode_comment_outlined,
-                        size: 13, color: Color(0xFF98A2B3)),
-                    const SizedBox(width: 5),
-                    Text(
-                      totalComentarios == 1
-                          ? '1 comentario'
-                          : '$totalComentarios comentarios',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11.5, color: colorTextoSecundario),
-                    ),
-                  ],
-                ],
-              ),
-            )
-          else if (totalComentarios > 0)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-              child: Row(
-                children: [
-                  const Icon(Icons.mode_comment_outlined,
-                      size: 13, color: Color(0xFF98A2B3)),
-                  const SizedBox(width: 5),
-                  Text(
-                    totalComentarios == 1
-                        ? '1 comentario'
-                        : '$totalComentarios comentarios',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11.5, color: colorTextoSecundario),
-                  ),
-                ],
-              ),
-            ),
-
-          Padding(
-            padding: const EdgeInsets.fromLTRB(6, 6, 6, 4),
-            child: Divider(height: 1, color: colorBorde),
-          ),
-
-          // ---- Botones de acción: Like / Compartir / Comentar / Contactar ----
-          Padding(
-            padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _botonAccion(
-                    icono: tieneLike
-                        ? Icons.favorite_rounded
-                        : Icons.favorite_border_rounded,
-                    color: tieneLike ? Colors.redAccent : colorTextoSecundario,
-                    texto: 'Me gusta',
-                    onTap: onLike,
-                    compacto: whatsapp != null && whatsapp.isNotEmpty,
-                  ),
-                ),
-                Expanded(
-                  child: _botonAccion(
-                    icono: Icons.mode_comment_outlined,
-                    color: colorTextoSecundario,
-                    texto: 'Comentar',
-                    onTap: onComentar ?? onTap,
-                    compacto: whatsapp != null && whatsapp.isNotEmpty,
-                  ),
-                ),
-                Expanded(
-                  child: _botonAccion(
-                    icono: Icons.share_outlined,
-                    color: colorTextoSecundario,
-                    texto: 'Compartir',
-                    onTap: onCompartir,
-                    compacto: whatsapp != null && whatsapp.isNotEmpty,
-                  ),
-                ),
-                if (whatsapp != null && whatsapp.isNotEmpty)
-                  Expanded(
-                    child: _botonAccion(
-                      icono: Icons.chat_rounded,
-                      color: const Color(0xFF25D366),
-                      texto: 'Contactar',
-                      onTap: onContactar,
-                      compacto: true,
-                    ),
-                  ),
-              ],
-            ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(esOscuro ? 0.10 : 0.07),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
           ),
         ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+            child: Column(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ---- Foto con insignia ----
+                    SizedBox(
+                      width: 138,
+                      height: 176,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            (imagen != null && imagen.isNotEmpty)
+                                ? Image.network(
+                                    imagen,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: colorBorde.withOpacity(0.3),
+                                      child: Icon(
+                                          Icons.image_not_supported_outlined,
+                                          size: 34,
+                                          color: colorTextoSecundario),
+                                    ),
+                                  )
+                                : Container(
+                                    color: colorBorde.withOpacity(0.3),
+                                    child: Icon(Icons.campaign_outlined,
+                                        size: 34, color: colorTextoSecundario),
+                                  ),
+                            if (insignia != null)
+                              Positioned(
+                                top: 8,
+                                left: 8,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 9, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    borderRadius: BorderRadius.circular(20),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.18),
+                                        blurRadius: 6,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.star_rounded,
+                                          size: 12, color: Colors.white),
+                                      const SizedBox(width: 3),
+                                      Text(insignia,
+                                          style: GoogleFonts.plusJakartaSans(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                              color: Colors.white)),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+
+                    // ---- Datos ----
+                    Expanded(
+                      child: SizedBox(
+                        height: 176,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      titulo.isEmpty ? 'Anuncio' : titulo,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 16,
+                                          height: 1.2,
+                                          color: colorTexto),
+                                    ),
+                                  ),
+                                ),
+                                PopupMenuButton<String>(
+                                  tooltip: 'Más opciones',
+                                  padding: EdgeInsets.zero,
+                                  icon: Icon(Icons.more_horiz_rounded,
+                                      size: 22, color: colorTextoSecundario),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14)),
+                                  onSelected: (v) {
+                                    if (v == 'ver') onTap();
+                                    if (v == 'compartir') onCompartir();
+                                    if (v == 'contactar') onContactar();
+                                  },
+                                  itemBuilder: (_) => [
+                                    const PopupMenuItem(
+                                        value: 'ver',
+                                        child: Text('Ver detalle')),
+                                    const PopupMenuItem(
+                                        value: 'compartir',
+                                        child: Text('Compartir')),
+                                    if (tieneWhatsapp)
+                                      const PopupMenuItem(
+                                          value: 'contactar',
+                                          child: Text('Contactar')),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            if (subtitulo.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(subtitulo,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12.5,
+                                      color: colorTextoSecundario)),
+                            ],
+                            if (precio != null) ...[
+                              const SizedBox(height: 6),
+                              PriceTag(
+                                montoUsd: precio,
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 19,
+                                    color: AppColors.primary),
+                              ),
+                            ],
+                            if (texto.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(texto,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      height: 1.35,
+                                      color: colorTextoSecundario)),
+                            ],
+                            const Spacer(),
+                            Row(
+                              children: [
+                                if (hace.isNotEmpty) ...[
+                                  Icon(Icons.schedule_rounded,
+                                      size: 14, color: colorTextoSecundario),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(hace,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 11.5,
+                                            color: colorTextoSecundario)),
+                                  ),
+                                ],
+                                if (distancia != null) ...[
+                                  const SizedBox(width: 12),
+                                  const Icon(Icons.location_on_rounded,
+                                      size: 14, color: AppColors.primary),
+                                  const SizedBox(width: 3),
+                                  Text('A ${distancia.toStringAsFixed(1)} km',
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 11.5,
+                                          color: colorTextoSecundario)),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                // ---- Franja de acciones ----
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Divider(height: 1, color: colorBorde),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _botonAccion(
+                        icono: tieneLike
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        color: tieneLike
+                            ? Colors.redAccent
+                            : colorTextoSecundario,
+                        texto: totalLikes > 0 ? '$totalLikes' : 'Me gusta',
+                        onTap: onLike,
+                      ),
+                    ),
+                    Expanded(
+                      child: _botonAccion(
+                        icono: Icons.mode_comment_outlined,
+                        color: colorTextoSecundario,
+                        texto: totalComentarios > 0
+                            ? '$totalComentarios'
+                            : 'Comentar',
+                        onTap: onComentar ?? onTap,
+                      ),
+                    ),
+                    Expanded(
+                      child: _botonAccion(
+                        icono: Icons.share_outlined,
+                        color: colorTextoSecundario,
+                        texto: 'Compartir',
+                        onTap: onCompartir,
+                      ),
+                    ),
+                    if (tieneWhatsapp)
+                      Expanded(
+                        child: _botonAccion(
+                          icono: Icons.chat_rounded,
+                          color: const Color(0xFF25D366),
+                          texto: 'Contactar',
+                          onTap: onContactar,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -690,31 +1362,27 @@ class _TarjetaAnuncioSocial extends StatelessWidget {
     required Color color,
     required String texto,
     required VoidCallback onTap,
-    bool compacto = false,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 9),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icono, size: compacto ? 15 : 18, color: color),
-              SizedBox(width: compacto ? 3 : 6),
-              Flexible(
-                child: Text(texto,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: compacto ? 11 : 12.5,
-                        fontWeight: FontWeight.w700,
-                        color: color)),
-              ),
-            ],
-          ),
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icono, size: 17, color: color),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(texto,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: color)),
+            ),
+          ],
         ),
       ),
     );

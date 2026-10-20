@@ -31,7 +31,11 @@ class NotificationBell extends StatelessWidget {
   /// según el tema en el resto de pantallas).
   final Color? iconColor;
 
-  const NotificationBell({super.key, this.iconColor});
+  /// true = en vez del contador numerico muestra solo un puntito azul
+  /// (estilo del nuevo Home). Por defecto false: el resto de la app sigue igual.
+  final bool soloPunto;
+
+  const NotificationBell({super.key, this.iconColor, this.soloPunto = false});
 
   @override
   Widget build(BuildContext context) {
@@ -56,7 +60,29 @@ class NotificationBell extends StatelessWidget {
                 tooltip: 'Notificaciones',
                 onPressed: () => context.push('/notificaciones'),
               ),
-              if (noLeidas > 0)
+              if (noLeidas > 0 && soloPunto)
+                Positioned(
+                  top: 10,
+                  right: 11,
+                  child: IgnorePointer(
+                    child: Container(
+                      width: 11,
+                      height: 11,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Theme.of(context).brightness ==
+                                  Brightness.dark
+                              ? AppColors.backgroundDark
+                              : Colors.white,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (noLeidas > 0 && !soloPunto)
                 Positioned(
                   // Ligeramente más adentro que antes (10/10 en vez de
                   // 6/6) para que el badge quede sobre el ícono y no

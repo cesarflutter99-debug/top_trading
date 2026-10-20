@@ -159,6 +159,13 @@ Future<bool> iniciarSesionConGoogle(BuildContext context) async {
 /// Nunca abre el navegador. Retorna la sesión, o lanza
 /// [_CanceladoInicioSesion] si el usuario cierra el selector de cuentas.
 Future<Session?> _iniciarSesionNativa() async {
+  // Si el webClientId sigue siendo el placeholder, el login nativo no
+  // puede funcionar: saltamos directo al fallback OAuth para no colgar
+  // al usuario en un spinner o en un error confuso.
+  if (GoogleAuthConfig.webClientId == 'YOUR_WEB_CLIENT_ID_HERE' ||
+      GoogleAuthConfig.webClientId.trim().isEmpty) {
+    return null;
+  }
   final signIn = GoogleSignIn(
     clientId: GoogleAuthConfig.iosClientId.isEmpty
         ? null

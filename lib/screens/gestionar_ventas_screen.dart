@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
 import '../services/tiendas_service.dart';
 import '../widgets/analytics_widgets.dart';
+import 'detalle_pedido_screen.dart';
 
 class GestionarVentasScreen extends StatefulWidget {
   final Map<String, dynamic> tienda;
@@ -329,7 +330,15 @@ class _GestionarVentasScreenState extends State<GestionarVentasScreen>
                     borderRadius: BorderRadius.circular(kCardRadius)),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(kCardRadius),
-                  onTap: () => mostrarDetallePedido(context, p),
+                  onTap: () async {
+                    final cambio = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => DetallePedidoScreen(
+                            pedido: p, esVendedor: true),
+                      ),
+                    );
+                    if (cambio == true && mounted) setState(_cargar);
+                  },
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(

@@ -29,6 +29,7 @@ import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
 import '../services/anuncios_state_service.dart';
 import '../services/storage_service.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/tiendas_service.dart';
 import '../screens/gestionar_planes_screen.dart';
 import 'tarjeta_anuncio.dart';
@@ -688,7 +689,9 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
             children: [
               GestureDetector(
                 onTap: () async {
-                  final f = await _pickerHost.elegirFoto();
+                  final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return;
+    final f = await _pickerHost.elegirFoto(desdeCamara: fuente == ImageSource.camera);
                   if (f != null) setState(() => _imagenFile = f);
                 },
                 child: Container(
@@ -1152,7 +1155,9 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
                 const SizedBox(height: 8),
                 GestureDetector(
                   onTap: () async {
-                    final f = await _pickerHost.elegirFoto();
+                    final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return;
+    final f = await _pickerHost.elegirFoto(desdeCamara: fuente == ImageSource.camera);
                     if (f != null) setDialogState(() => nuevaImagen = f);
                   },
                   child: Row(
@@ -1244,5 +1249,6 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
 class ImagePickerHost {
   final StorageService _storage = StorageService();
 
-  Future<File?> elegirFoto() => _storage.elegirFoto();
+  Future<File?> elegirFoto({bool desdeCamara = false}) =>
+      _storage.elegirFoto(desdeCamara: desdeCamara);
 }

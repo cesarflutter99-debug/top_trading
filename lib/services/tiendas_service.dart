@@ -471,7 +471,9 @@ class TiendasService {
       final res = await supabase
           .from('tiendas')
           .select(
-              'id_tienda, nombre, logo_url, latitud, longitud, promedio_estrellas, plan, plan_expira_en')
+              'id_tienda, nombre, logo_url, imagen_portada, latitud, longitud, '
+                  'promedio_estrellas, total_valoraciones, plan, plan_expira_en, '
+                  'categoria, municipio')
           .eq('estado', 'active')
           .not('latitud', 'is', null)
           .not('longitud', 'is', null);

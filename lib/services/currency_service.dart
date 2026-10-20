@@ -87,8 +87,8 @@ class CurrencyToggle extends StatelessWidget {
     final theme = Theme.of(context);
     final esOscuro = theme.brightness == Brightness.dark;
     final fondoPill = esOscuro
-        ? Colors.white.withOpacity(0.10)
-        : Colors.black.withOpacity(0.05);
+        ? Colors.white.withOpacity(0.06)
+        : Colors.black.withOpacity(0.03);
     final activoBg = theme.cardTheme.color ?? theme.colorScheme.surface;
     final textoActivo = theme.textTheme.bodyMedium?.color ??
         (esOscuro ? Colors.white : Colors.black);
@@ -137,7 +137,7 @@ class CurrencyToggle extends StatelessWidget {
         boxShadow: activo
             ? [
                 BoxShadow(
-                  color: Colors.black.withOpacity(esOscuro ? 0.4 : 0.12),
+                  color: Colors.black.withOpacity(esOscuro ? 0.25 : 0.06),
                   blurRadius: 4,
                 ),
               ]
@@ -151,6 +151,76 @@ class CurrencyToggle extends StatelessWidget {
           color: activo ? textoActivo : textoInactivo,
         ),
       ),
+    );
+  }
+}
+
+/// Boton compacto "USD ⌄" para la cabecera del Home: al tocarlo abre un
+/// menu con USD / CUP. Ocupa menos espacio que el CurrencyToggle (que se
+/// mantiene tal cual para carrito, tienda y modales).
+class CurrencyDropdownButton extends StatelessWidget {
+  const CurrencyDropdownButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final esOscuro = theme.brightness == Brightness.dark;
+    final color = theme.colorScheme.primary;
+    return AnimatedBuilder(
+      animation: CurrencyService.instance,
+      builder: (context, _) {
+        final actual = CurrencyService.instance.moneda;
+        return PopupMenuButton<Moneda>(
+          tooltip: 'Moneda',
+          position: PopupMenuPosition.under,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          onSelected: (m) {
+            if (m != CurrencyService.instance.moneda) {
+              CurrencyService.instance.toggle();
+            }
+          },
+          itemBuilder: (_) => [
+            for (final m in Moneda.values)
+              PopupMenuItem<Moneda>(
+                value: m,
+                child: Row(
+                  children: [
+                    Text(m == Moneda.usd ? 'USD' : 'CUP',
+                        style: TextStyle(
+                            fontWeight: m == actual
+                                ? FontWeight.w800
+                                : FontWeight.w500)),
+                    const Spacer(),
+                    if (m == actual)
+                      Icon(Icons.check_rounded, size: 18, color: color),
+                  ],
+                ),
+              ),
+          ],
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: esOscuro ? Colors.white.withOpacity(0.06) : Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: color.withOpacity(0.35)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  actual == Moneda.usd ? 'USD' : 'CUP',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13.5,
+                      color: theme.textTheme.bodyMedium?.color),
+                ),
+                const SizedBox(width: 2),
+                Icon(Icons.expand_more_rounded, size: 18, color: color),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

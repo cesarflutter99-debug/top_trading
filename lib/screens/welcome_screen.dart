@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/auth_guard.dart';
+import '../services/terminos_service.dart';
+import 'terminos_screen.dart';
 
 /// Pantalla de entrada única. Todo usuario puede ENTRAR sin cuenta y
 /// mirar el marketplace libremente (botón "Explorar sin iniciar
@@ -32,7 +34,17 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       // Login nativo con fallback a OAuth -- comparte el mismo flujo
       // que el modal de core/auth_guard.dart, así que el login es
       // idéntico desde la Welcome o desde cualquier pantalla.
-      await iniciarSesionConGoogle(context);
+      final ok = await iniciarSesionConGoogle(context);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo iniciar sesión. Revisa tu conexión o intenta '
+              'de nuevo.',
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -49,6 +61,14 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!TerminosService.instance.aceptado) {
+      return TerminosScreen(
+        onAceptar: () async {
+          await TerminosService.instance.aceptar();
+          if (mounted) setState(() {});
+        },
+      );
+    }
     final primary = Theme.of(context).colorScheme.primary;
     final fondo = Theme.of(context).scaffoldBackgroundColor;
 

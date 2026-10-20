@@ -182,8 +182,10 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
   }
 
   Future<void> _cambiarFotoPerfil() async {
+    final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return;
     final XFile? archivo = await _picker.pickImage(
-      source: ImageSource.gallery,
+      source: fuente,
       maxWidth: 800,
       imageQuality: 85,
     );
