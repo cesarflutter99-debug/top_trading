@@ -100,7 +100,7 @@ class _EditarAnuncioStandaloneScreenState
   }
 
   Future<void> _elegirImagen() async {
-    final foto = await _storageService.elegirFoto();
+    final foto = await _storageService.elegirFotoConFuente(context);
     if (foto != null && mounted) setState(() => _imagenNueva = foto);
   }
 

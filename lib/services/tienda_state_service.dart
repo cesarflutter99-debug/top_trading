@@ -22,6 +22,8 @@
 // que el usuario tenga que hacer nada.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/supabase_client.dart';
 import 'tiendas_service.dart';
@@ -46,14 +48,14 @@ class TiendaStateService extends ChangeNotifier {
   /// tienda como si no (para que el "Cargando..." desaparezca igual).
   Future<void> cargar() async {
     _cargando = true;
-    notifyListeners();
+    _notificarSeguro();
     try {
       _miTienda = await _tiendasService.obtenerMiTienda();
     } catch (_) {
       _miTienda = null;
     }
     _cargando = false;
-    notifyListeners();
+    _notificarSeguro();
 
     final uid = supabase.auth.currentUser?.id;
     if (uid != null) _escucharCambiosRemotos(uid);
@@ -69,7 +71,7 @@ class TiendaStateService extends ChangeNotifier {
   void actualizarLocal(Map<String, dynamic> datos) {
     if (_miTienda == null) return;
     _miTienda = {..._miTienda!, ...datos};
-    notifyListeners();
+    _notificarSeguro();
   }
 
   /// Se llama INMEDIATAMENTE después de borrar la tienda en Supabase.
@@ -81,7 +83,7 @@ class TiendaStateService extends ChangeNotifier {
     _canal?.unsubscribe();
     _canal = null;
     _uidEscuchado = null;
-    notifyListeners();
+    _notificarSeguro();
   }
 
   void _escucharCambiosRemotos(String uid) {
@@ -117,4 +119,22 @@ class TiendaStateService extends ChangeNotifier {
     _canal?.unsubscribe();
     super.dispose();
   }
+
+  /// Notifica a los listeners SIN romper la app si el aviso cae dentro
+  /// de un build. Un ChangeNotifier que llama notifyListeners() durante
+  /// la fase de build hace que el AnimatedBuilder que lo escucha
+  /// llame setState() -> "setState() or markNeedsBuild() called during
+  /// build". Pasa, por ejemplo, cuando cargar() se llama desde el
+  /// initState de una pantalla que vive dentro de un IndexedStack.
+  /// En ese caso el aviso se aplaza al siguiente frame.
+  void _notificarSeguro() {
+    final fase = SchedulerBinding.instance.schedulerPhase;
+    if (fase == SchedulerPhase.persistentCallbacks ||
+        fase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => notifyListeners());
+    } else {
+      notifyListeners();
+    }
+  }
+
 }

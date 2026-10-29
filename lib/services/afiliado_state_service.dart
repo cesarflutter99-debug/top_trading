@@ -16,6 +16,8 @@
 // entera al instante, sin reiniciar nada.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart';
 import '../core/supabase_client.dart';
 import 'tiendas_service.dart';
 
@@ -37,7 +39,7 @@ class AfiliadoStateService extends ChangeNotifier {
   /// afiliado como si no (para que el "Cargando..." desaparezca igual).
   Future<void> cargar() async {
     _cargando = true;
-    notifyListeners();
+    _notificarSeguro();
     try {
       if (supabase.auth.currentUser == null) {
         _miAfiliado = null;
@@ -48,7 +50,7 @@ class AfiliadoStateService extends ChangeNotifier {
       _miAfiliado = null;
     }
     _cargando = false;
-    notifyListeners();
+    _notificarSeguro();
   }
 
   /// Alias explícito para usar después de registrar/editar/dar de baja
@@ -61,7 +63,7 @@ class AfiliadoStateService extends ChangeNotifier {
   void actualizarLocal(Map<String, dynamic> datos) {
     if (_miAfiliado == null) return;
     _miAfiliado = {..._miAfiliado!, ...datos};
-    notifyListeners();
+    _notificarSeguro();
   }
 
   /// Se llama INMEDIATAMENTE después de dar de baja al afiliado en
@@ -70,6 +72,24 @@ class AfiliadoStateService extends ChangeNotifier {
   void limpiar() {
     _miAfiliado = null;
     _cargando = false;
-    notifyListeners();
+    _notificarSeguro();
   }
+
+  /// Notifica a los listeners SIN romper la app si el aviso cae dentro
+  /// de un build. Un ChangeNotifier que llama notifyListeners() durante
+  /// la fase de build hace que el AnimatedBuilder que lo escucha
+  /// llame setState() -> "setState() or markNeedsBuild() called during
+  /// build". Pasa, por ejemplo, cuando cargar() se llama desde el
+  /// initState de una pantalla que vive dentro de un IndexedStack.
+  /// En ese caso el aviso se aplaza al siguiente frame.
+  void _notificarSeguro() {
+    final fase = SchedulerBinding.instance.schedulerPhase;
+    if (fase == SchedulerPhase.persistentCallbacks ||
+        fase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => notifyListeners());
+    } else {
+      notifyListeners();
+    }
+  }
+
 }

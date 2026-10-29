@@ -16,6 +16,10 @@
 // autocancelación automática del backend a las 72h si sigue 'pendiente'.
 
 import 'dart:async';
+import '../services/tutorial_service.dart';
+import '../widgets/coach_marks_widget.dart';
+import '../widgets/tour_runner.dart';
+import '../widgets/tour_anchor.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
@@ -39,6 +43,24 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await TourRunner.mostrarSiNoVisto(
+        context,
+        clave: TutorialService.clavePedidos,
+        titulo: 'Tus pedidos',
+        pasos: const [
+          CoachStep(
+            titulo: 'Seguimiento en vivo',
+            descripcion:
+                'Acá ves todos tus pedidos con su estado actual. Los pedidos '
+                'pendientes muestran cuánto tiempo te queda para '
+                'confirmarlos.',
+            ancla: TourAnclas.pedidosLista,
+          ),
+        ],
+      );
+    });
     _cargar();
     // Refresca la UI cada minuto para que la cuenta regresiva avance
     // en pantalla sin necesitar pull-to-refresh.
@@ -180,7 +202,9 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
               grupos.putIfAbsent(idTienda, () => []).add(p);
             }
 
-            return ListView(
+            return TourAnchor(
+              id: TourAnclas.pedidosLista,
+              child: ListView(
               padding: const EdgeInsets.all(16),
               children: grupos.entries.map((entrada) {
                 final lista = entrada.value;
@@ -285,6 +309,7 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
                   ),
                 );
               }).toList(),
+              ),
             );
           },
         ),

@@ -35,6 +35,7 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/app_colors.dart';
 import '../core/auth_guard.dart';
+import '../widgets/tour_anchor.dart';
 import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
 import '../services/negocio_state_service.dart';
@@ -364,47 +365,50 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
       ),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: _subiendoAvatar ? null : _cambiarFotoPerfil,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: AppColors.primary.withOpacity(0.1),
-                  backgroundImage:
-                      _fotoUrl().isNotEmpty ? NetworkImage(_fotoUrl()) : null,
-                  child: _fotoUrl().isEmpty
-                      ? const Icon(Icons.person,
-                          size: 26, color: AppColors.primary)
-                      : null,
-                ),
-                if (_subiendoAvatar)
-                  const SizedBox(
-                    width: 26,
-                    height: 26,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                else
-                  Positioned(
-                    bottom: -1,
-                    right: -1,
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                            color: _esOscuro
-                                ? AppColors.surfaceDark
-                                : Colors.white,
-                            width: 1.5),
-                      ),
-                      child: const Icon(Icons.camera_alt,
-                          size: 10, color: Colors.white),
-                    ),
+          TourAnchor(
+            id: TourAnclas.perfilAvatar,
+            child: GestureDetector(
+              onTap: _subiendoAvatar ? null : _cambiarFotoPerfil,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  CircleAvatar(
+                    radius: 26,
+                    backgroundColor: AppColors.primary.withOpacity(0.1),
+                    backgroundImage:
+                        _fotoUrl().isNotEmpty ? NetworkImage(_fotoUrl()) : null,
+                    child: _fotoUrl().isEmpty
+                        ? const Icon(Icons.person,
+                            size: 26, color: AppColors.primary)
+                        : null,
                   ),
-              ],
+                  if (_subiendoAvatar)
+                    const SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Positioned(
+                      bottom: -1,
+                      right: -1,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: _esOscuro
+                                  ? AppColors.surfaceDark
+                                  : Colors.white,
+                              width: 1.5),
+                        ),
+                        child: const Icon(Icons.camera_alt,
+                            size: 10, color: Colors.white),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 12),

@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import '../core/app_colors.dart';
+import '../widgets/tour_anchor.dart';
 import '../core/supabase_client.dart';
 import '../main.dart' show AppBanner;
 import '../services/anuncios_service.dart';
@@ -261,7 +262,6 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
       ),
       builder: (_) => ProductEditModal(
         producto: producto,
-        esPremium: (_tienda['plan'] as String? ?? 'basic') == 'premium',
       ),
     );
     if (actualizado == true && mounted) {
@@ -870,11 +870,14 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
           ),
         ],
       ),
-      floatingActionButton: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).padding.bottom + 70,
+      floatingActionButton: TourAnchor(
+        id: TourAnclas.miTiendaNuevo,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).padding.bottom + 70,
+          ),
+          child: _buildFabMenu(primary),
         ),
-        child: _buildFabMenu(primary),
       ),
       body: RefreshIndicator(
         onRefresh: _recargarTodo,

@@ -27,6 +27,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
+import '../screens/gestionar_anuncio_screen.dart';
 import '../services/anuncios_state_service.dart';
 import '../services/storage_service.dart';
 import 'package:image_picker/image_picker.dart';
@@ -87,6 +88,7 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
   final _formKeyCrear = GlobalKey<FormState>();
   final _tituloCtrl = TextEditingController();
   final _textoCtrl = TextEditingController();
+  final _whatsappCtrl = TextEditingController();
   File? _imagenFile;
   bool _subiendoImagen = false;
 
@@ -106,6 +108,7 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
   void dispose() {
     _tituloCtrl.dispose();
     _textoCtrl.dispose();
+    _whatsappCtrl.dispose();
     super.dispose();
   }
 
@@ -273,6 +276,7 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
         idTienda: _idTienda,
         titulo: _tituloCtrl.text.trim(),
         texto: _textoCtrl.text.trim(),
+        whatsapp: _whatsappCtrl.text.trim(),
         imagenUrl: imagenUrl,
       );
       if (!mounted) return;
@@ -685,6 +689,18 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
                 (v == null || v.trim().isEmpty) ? 'Requerido' : null,
           ),
           const SizedBox(height: 12),
+          TextFormField(
+            controller: _whatsappCtrl,
+            keyboardType: TextInputType.phone,
+            maxLength: 15,
+            style: GoogleFonts.inter(color: theme.textTheme.bodyLarge?.color),
+            decoration: _decoracion(
+                theme, 'Tu WhatsApp *', Icons.phone_android_rounded),
+            validator: (v) => (v == null || v.trim().isEmpty)
+                ? 'Requerido: es el número al que te escriben'
+                : null,
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               GestureDetector(
@@ -986,6 +1002,15 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
                 Row(
                   children: [
                     _iconoAccion(
+                      icono: Icons.manage_search_rounded,
+                      tooltip: 'Ver y gestionar',
+                      onTap: () async {
+                        await abrirGestionarAnuncio(
+                            context, a['id_anuncio'] as String);
+                        _recargarMisAnuncios();
+                      },
+                    ),
+                    _iconoAccion(
                       icono: Icons.edit_rounded,
                       tooltip: 'Editar',
                       onTap: () => _dialogEditar(a),
@@ -1118,7 +1143,7 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Precio y WhatsApp opcionales',
+                    'WhatsApp obligatorio · precio opcional',
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 12, fontWeight: FontWeight.w600),
                   ),
@@ -1145,7 +1170,7 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
                         keyboardType: TextInputType.phone,
                         maxLength: 15,
                         decoration: const InputDecoration(
-                          labelText: 'WhatsApp',
+                          labelText: 'WhatsApp *',
                           hintText: '584120000000',
                         ),
                       ),
@@ -1205,6 +1230,10 @@ class _AnunciosSheetState extends State<_AnunciosSheet> {
     if (guardado != true || !mounted) return;
     if (tituloCtrl.text.trim().isEmpty || textoCtrl.text.trim().isEmpty) {
       _snack('Título y texto son obligatorios');
+      return;
+    }
+    if (whatsappCtrl.text.trim().isEmpty) {
+      _snack('El WhatsApp es obligatorio: es al número que te escriben');
       return;
     }
     double? precio;

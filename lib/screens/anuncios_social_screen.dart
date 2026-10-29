@@ -31,6 +31,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
+import '../widgets/tour_anchor.dart';
 import '../core/app_links_config.dart';
 import '../core/auth_guard.dart';
 import '../core/palabras_prohibidas.dart';
@@ -544,7 +545,9 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
 
   Widget _chipsCategorias() {
     final cats = _categorias;
-    return SizedBox(
+    return TourAnchor(
+      id: TourAnclas.anunciosChips,
+      child: SizedBox(
       height: 50,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
@@ -583,6 +586,7 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
             ),
           );
         },
+      ),
       ),
     );
   }
@@ -840,11 +844,14 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
     final visibles = _anunciosVisibles;
     return Scaffold(
       backgroundColor: _colorFondo,
-      floatingActionButton: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).padding.bottom + 84,
+      floatingActionButton: TourAnchor(
+        id: TourAnclas.anunciosFab,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).padding.bottom + 84,
+          ),
+          child: _buildFabMenu(AppColors.primary),
         ),
-        child: _buildFabMenu(AppColors.primary),
       ),
       body: Stack(
         children: [

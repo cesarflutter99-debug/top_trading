@@ -25,6 +25,7 @@
 // misPermisosStandalone(), crearCompraPendienteStandalone() y
 // comprasPendientesStandalone() más abajo.
 
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import '../core/supabase_client.dart';
 import 'storage_service.dart';
@@ -133,6 +134,12 @@ class AnunciosService {
   /// Fallback del feed: consulta directa a la tabla. No reparte cupos ni
   /// hace la rotación "menos mostrados primero" del RPC, pero garantiza
   /// que el feed nunca se quede vacío por un error del RPC.
+  ///
+  /// AUNQUE el RPC falle, este fallback rota igual: guarda en memoria
+  /// los ids que ya mostró y da prioridad a los que NO ha mostrado
+  /// todavía. Así el usuario nunca ve siempre los mismos anuncios.
+  static final Set<String> _idsMostradosFallback = {};
+
   Future<List<Anuncio>> _feedDirecto(int cantidad) async {
     try {
       final data = await supabase
@@ -140,10 +147,27 @@ class AnunciosService {
           .select()
           .eq('estado', 'aprobado')
           .order('creado_en', ascending: false)
-          .limit(cantidad.clamp(0, 50));
-      return data
+          .limit((cantidad.clamp(0, 50) * 4).clamp(1, 100));
+      final todos = data
           .map((r) => Anuncio.fromJson(Map<String, dynamic>.from(r)))
           .toList();
+      if (todos.isEmpty) return const [];
+
+      // 1) Los que todavía NO se mostraron van primero.
+      final nuevos = todos
+          .where((a) => !_idsMostradosFallback.contains(a.idAnuncio))
+          .toList();
+      // 2) Si no hay nuevos, se rota el orden de los ya vistos.
+      final vistos = todos
+          .where((a) => _idsMostradosFallback.contains(a.idAnuncio))
+          .toList()
+        ..shuffle(math.Random());
+      final ordenados = [...nuevos, ...vistos];
+      // 3) Se marcan como vistos para la próxima vuelta.
+      for (final a in ordenados.take(cantidad)) {
+        _idsMostradosFallback.add(a.idAnuncio);
+      }
+      return ordenados.take(cantidad).toList();
     } catch (e) {
       debugPrint('fallback de feed directo falló (¿offline?): $e');
       return [];
@@ -480,15 +504,19 @@ class AnunciosService {
     required String idTienda,
     required String titulo,
     required String texto,
+    required String whatsapp,
     String? imagenUrl,
   }) async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) throw Exception('SESION_REQUERIDA');
+    final tel = whatsapp.trim();
+    if (tel.isEmpty) throw Exception('WHATSAPP_REQUERIDO');
     await supabase.from('anuncios').insert({
       'tipo': 'producto',
       'id_tienda': idTienda,
       'titulo': titulo,
       'texto': texto,
+      'whatsapp': tel,
       if (imagenUrl != null && imagenUrl.isNotEmpty) 'imagen_url': imagenUrl,
       'creado_por': uid,
     });
@@ -553,15 +581,19 @@ class AnunciosService {
     required String idNegocio,
     required String titulo,
     required String texto,
+    required String whatsapp,
     String? imagenUrl,
   }) async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) throw Exception('SESION_REQUERIDA');
+    final tel = whatsapp.trim();
+    if (tel.isEmpty) throw Exception('WHATSAPP_REQUERIDO');
     await supabase.from('anuncios').insert({
       'tipo': 'negocio',
       'id_negocio': idNegocio,
       'titulo': titulo,
       'texto': texto,
+      'whatsapp': tel,
       if (imagenUrl != null && imagenUrl.isNotEmpty) 'imagen_url': imagenUrl,
       'creado_por': uid,
     });
@@ -666,23 +698,24 @@ class AnunciosService {
   Future<void> crearAnuncioStandalone({
     required String titulo,
     required String texto,
+    required String whatsapp,
     String? imagenUrl,
     String? idPermiso,
     double? precioUsd,
-    String? whatsapp,
   }) async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) throw Exception('SESION_REQUERIDA');
+    final tel = whatsapp.trim();
+    if (tel.isEmpty) throw Exception('WHATSAPP_REQUERIDO');
     await supabase.from('anuncios').insert({
       'tipo': 'standalone',
       'titulo': titulo,
       'texto': texto,
+      'whatsapp': tel,
       if (imagenUrl != null && imagenUrl.isNotEmpty) 'imagen_url': imagenUrl,
       if (idPermiso != null && idPermiso.isNotEmpty)
         'id_permiso_usuario': idPermiso,
       if (precioUsd != null) 'precio_usd': precioUsd,
-      if (whatsapp != null && whatsapp.trim().isNotEmpty)
-        'whatsapp': whatsapp.trim(),
       'creado_por': uid,
     });
   }
@@ -730,19 +763,19 @@ class AnunciosService {
     required String idAnuncio,
     required String titulo,
     required String texto,
+    required String whatsapp,
     String? imagenUrl,
     double? precioUsd,
-    String? whatsapp,
   }) async {
+    final tel = whatsapp.trim();
+    if (tel.isEmpty) throw Exception('WHATSAPP_REQUERIDO');
     final data = <String, dynamic>{
       'titulo': titulo,
       'texto': texto,
+      'whatsapp': tel,
     };
     if (imagenUrl != null) data['imagen_url'] = imagenUrl;
     if (precioUsd != null) data['precio_usd'] = precioUsd;
-    if (whatsapp != null && whatsapp.trim().isNotEmpty) {
-      data['whatsapp'] = whatsapp.trim();
-    }
     await supabase.from('anuncios').update(data).eq('id_anuncio', idAnuncio);
   }
 
@@ -859,6 +892,7 @@ class AnunciosService {
     required String whatsapp,
     String? imagenUrl,
   }) async {
+    if (whatsapp.trim().isEmpty) throw Exception('WHATSAPP_REQUERIDO');
     final data = <String, dynamic>{
       'titulo': titulo.trim(),
       'texto': texto.trim(),

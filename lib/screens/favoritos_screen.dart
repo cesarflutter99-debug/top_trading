@@ -12,10 +12,15 @@
 // aparecía al abrir esta pestaña). Se envuelve el texto de municipio
 // en Flexible + ellipsis para que se recorte en vez de desbordar.
 
+import '../services/tutorial_service.dart';
+import '../widgets/coach_marks_widget.dart';
+import '../widgets/tour_runner.dart';
+import '../widgets/tour_anchor.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
+import '../widgets/tour_anchor.dart';
 import '../core/auth_guard.dart';
 import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
@@ -34,6 +39,23 @@ class _FavoritosScreenState extends State<FavoritosScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await TourRunner.mostrarSiNoVisto(
+        context,
+        clave: TutorialService.claveFavoritos,
+        titulo: 'Tus guardados',
+        pasos: const [
+            CoachStep(
+              titulo: 'Tus guardados',
+              descripcion:
+                  'Acá quedan las tiendas que marcaste con el corazón, '
+                  'para encontrarlas rápido después.',
+              ancla: TourAnclas.favoritosLista,
+            ),
+        ],
+      );
+    });
     _cargar();
   }
 
@@ -144,7 +166,9 @@ class _FavoritosScreenState extends State<FavoritosScreen> {
                 ],
               );
             }
-            return ListView.builder(
+            return TourAnchor(
+              id: TourAnclas.favoritosLista,
+              child: ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: favoritos.length,
               itemBuilder: (context, i) {
@@ -218,6 +242,7 @@ class _FavoritosScreenState extends State<FavoritosScreen> {
                   ),
                 );
               },
+            ),
             );
           },
         ),

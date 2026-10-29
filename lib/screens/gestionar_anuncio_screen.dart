@@ -142,6 +142,18 @@ class _GestionarAnuncioScreenState extends State<GestionarAnuncioScreen> {
 
   bool get _esStandalone => _anuncio?['tipo'] == 'standalone';
 
+  /// Etiqueta del tipo de anuncio (independiente / de tienda / de negocio).
+  String get _etiquetaTipo {
+    switch (_anuncio?['tipo'] as String?) {
+      case 'standalone':
+        return 'Anuncio independiente';
+      case 'negocio':
+        return 'Anuncio de negocio';
+      default:
+        return 'Anuncio de producto';
+    }
+  }
+
   DateTime? _fecha(dynamic v) =>
       DateTime.tryParse(v?.toString() ?? '')?.toLocal();
 
@@ -491,19 +503,6 @@ class _GestionarAnuncioScreenState extends State<GestionarAnuncioScreen> {
         ),
       );
     }
-    if (!_esStandalone) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Text(
-            'Este tipo de anuncio se gestiona desde su tienda o negocio.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.plusJakartaSans(color: _texto),
-          ),
-        ),
-      );
-    }
-
     final a = _anuncio!;
     final titulo = (a['titulo'] as String?)?.trim() ?? '';
     final texto = (a['texto'] as String?)?.trim() ?? '';
@@ -542,7 +541,7 @@ class _GestionarAnuncioScreenState extends State<GestionarAnuncioScreen> {
             spacing: 8,
             runSpacing: 6,
             children: [
-              _chip('Anuncio independiente', AppColors.primary),
+              _chip(_etiquetaTipo, AppColors.primary),
               if (precio != null)
                 _chip(CurrencyService.instance.formatear(precio),
                     AppColors.success),

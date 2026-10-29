@@ -3,9 +3,14 @@
 // Chat de soporte entre el usuario y el equipo de Al Lado.
 import 'dart:async';
 
+import '../services/tutorial_service.dart';
+import '../widgets/coach_marks_widget.dart';
+import '../widgets/tour_runner.dart';
+import '../widgets/tour_anchor.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
+import '../widgets/tour_anchor.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/soporte_service.dart';
 
@@ -30,6 +35,24 @@ class _SoporteChatScreenState extends State<SoporteChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await TourRunner.mostrarSiNoVisto(
+        context,
+        clave: TutorialService.claveSoporte,
+        titulo: 'Chat de soporte',
+        pasos: const [
+            CoachStep(
+              titulo: 'Habla con el equipo',
+              descripcion:
+                  'Escribí tu mensaje y te respondemos por acá mismo. '
+                  'Guardamos el historial, así que podés volver cuando '
+                  'quieras.',
+              ancla: TourAnclas.soporteEntrada,
+            ),
+        ],
+      );
+    });
     _iniciar();
   }
 
@@ -156,7 +179,9 @@ class _SoporteChatScreenState extends State<SoporteChatScreen> {
                     },
                   ),
                 ),
-                SafeArea(
+                TourAnchor(
+                  id: TourAnclas.soporteEntrada,
+                  child: SafeArea(
                   top: false,
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
@@ -197,6 +222,7 @@ class _SoporteChatScreenState extends State<SoporteChatScreen> {
                       ],
                     ),
                   ),
+                ),
                 ),
               ],
             ),

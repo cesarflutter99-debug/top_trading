@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import '../core/supabase_client.dart';
 import '../services/location_service.dart';
 import '../services/tiendas_service.dart';
+import '../widgets/tour_anchor.dart';
 import '../services/productos_service.dart';
 import '../services/currency_service.dart';
 import 'package:provider/provider.dart';
@@ -167,8 +168,6 @@ class HomeScreenState extends State<HomeScreen> {
   bool get _esOscuro => Theme.of(context).brightness == Brightness.dark;
   Color get _colorFondo => Theme.of(context).scaffoldBackgroundColor;
   Color get _colorSuperficie => Theme.of(context).colorScheme.surface;
-  Color get _colorBorde => (_esOscuro ? AppColors.borderDark : AppColors.borderLight)
-      .withOpacity(0.6);
   Color get _colorTexto => _esOscuro ? const Color(0xFFF5F5F4) : _kInk;
   Color get _colorTextoSecundario =>
       _esOscuro ? const Color(0xFFA8A29E) : Colors.black54;
@@ -958,12 +957,15 @@ Navigator.of(ctx).pop();
       padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.menu_rounded, size: 28),
-            color: AppColors.primary,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          TourAnchor(
+            id: TourAnclas.homeHamburguesa,
+            child: IconButton(
+              icon: const Icon(Icons.menu_rounded, size: 28),
+              color: AppColors.primary,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1033,19 +1035,6 @@ Navigator.of(ctx).pop();
           const SizedBox(width: 2),
           const CurrencyDropdownButton(),
         ],
-      ),
-    );
-  }
-
-  Widget _botonCircularHome({required Widget child, VoidCallback? onTap}) {
-    return Material(
-      color: _colorSuperficie,
-      shape: CircleBorder(side: BorderSide(color: _colorBorde)),
-      elevation: 0,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: SizedBox(width: 46, height: 46, child: Center(child: child)),
       ),
     );
   }

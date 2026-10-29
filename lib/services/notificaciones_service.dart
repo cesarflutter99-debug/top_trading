@@ -13,6 +13,8 @@
 
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/supabase_client.dart';
 
@@ -55,7 +57,7 @@ class NotificacionesService extends ChangeNotifier {
 
   Future<void> _cargarHistorial(String userId) async {
     _cargando = true;
-    notifyListeners();
+    _notificarSeguro();
     try {
       final res = await supabase
           .from('notificaciones')
@@ -68,7 +70,7 @@ class NotificacionesService extends ChangeNotifier {
         ..addAll(List<Map<String, dynamic>>.from(res));
     } finally {
       _cargando = false;
-      notifyListeners();
+      _notificarSeguro();
     }
   }
 
@@ -96,7 +98,7 @@ class NotificacionesService extends ChangeNotifier {
               return;
             }
             _notificaciones.insert(0, nuevo);
-            notifyListeners();
+            _notificarSeguro();
           },
         )
         .subscribe();
@@ -143,7 +145,7 @@ class NotificacionesService extends ChangeNotifier {
       'creado_en': DateTime.now().toIso8601String(),
       'local': true,
     });
-    notifyListeners();
+    _notificarSeguro();
   }
 
   Future<void> marcarLeida(String idNotificacion) async {
@@ -152,7 +154,7 @@ class NotificacionesService extends ChangeNotifier {
     if (i == -1 || _notificaciones[i]['leida'] == true) return;
 
     _notificaciones[i] = {..._notificaciones[i], 'leida': true};
-    notifyListeners();
+    _notificarSeguro();
 
     // Los avisos locales (offline sincronizados) no existen en la
     // tabla remota -- no hay nada que actualizar en el servidor.
@@ -170,7 +172,7 @@ class NotificacionesService extends ChangeNotifier {
     for (var i = 0; i < _notificaciones.length; i++) {
       _notificaciones[i] = {..._notificaciones[i], 'leida': true};
     }
-    notifyListeners();
+    _notificarSeguro();
 
     await supabase
         .from('notificaciones')
@@ -186,6 +188,24 @@ class NotificacionesService extends ChangeNotifier {
     _canal = null;
     _uidCargado = null;
     _notificaciones.clear();
-    notifyListeners();
+    _notificarSeguro();
   }
+
+  /// Notifica a los listeners SIN romper la app si el aviso cae dentro
+  /// de un build. Un ChangeNotifier que llama notifyListeners() durante
+  /// la fase de build hace que el AnimatedBuilder que lo escucha
+  /// llame setState() -> "setState() or markNeedsBuild() called during
+  /// build". Pasa, por ejemplo, cuando cargar() se llama desde el
+  /// initState de una pantalla que vive dentro de un IndexedStack.
+  /// En ese caso el aviso se aplaza al siguiente frame.
+  void _notificarSeguro() {
+    final fase = SchedulerBinding.instance.schedulerPhase;
+    if (fase == SchedulerPhase.persistentCallbacks ||
+        fase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => notifyListeners());
+    } else {
+      notifyListeners();
+    }
+  }
+
 }

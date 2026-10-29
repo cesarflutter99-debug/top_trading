@@ -16,11 +16,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
+import '../screens/gestionar_anuncio_screen.dart';
 import '../services/anuncios_state_service.dart';
 import '../services/storage_service.dart';
 import '../services/tiendas_service.dart';
@@ -82,6 +84,7 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
   final _formKeyCrear = GlobalKey<FormState>();
   final _tituloCtrl = TextEditingController();
   final _textoCtrl = TextEditingController();
+  final _whatsappCtrl = TextEditingController();
   File? _imagenFile;
   bool _subiendoImagen = false;
 
@@ -103,6 +106,7 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
   void dispose() {
     _tituloCtrl.dispose();
     _textoCtrl.dispose();
+    _whatsappCtrl.dispose();
     super.dispose();
   }
 
@@ -585,6 +589,17 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
             validator: (v) =>
                 (v == null || v.trim().isEmpty) ? 'El texto es obligatorio' : null,
           ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _whatsappCtrl,
+            keyboardType: TextInputType.phone,
+            maxLength: 15,
+            decoration:
+                _decoracion(theme, 'Tu WhatsApp *', Icons.phone_android_rounded),
+            validator: (v) => (v == null || v.trim().isEmpty)
+                ? 'Requerido: es el número al que te escriben'
+                : null,
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -596,7 +611,10 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
                 onPressed: _subiendoImagen
                     ? null
                     : () async {
-                        final f = await _storageService.elegirFoto();
+                        final fuente = await elegirFuenteFoto(context);
+                        if (fuente == null) return;
+                        final f = await _storageService.elegirFoto(
+                            desdeCamara: fuente == ImageSource.camera);
                         if (f != null) setState(() => _imagenFile = f);
                       },
                 icon: const Icon(Icons.image_outlined, size: 18),
@@ -748,6 +766,7 @@ class _AnunciosNegocioSheetState extends State<_AnunciosNegocioSheet> {
         idNegocio: _idNegocio,
         titulo: _tituloCtrl.text.trim(),
         texto: _textoCtrl.text.trim(),
+        whatsapp: _whatsappCtrl.text.trim(),
         imagenUrl: imagenUrl,
       );
       // Nota: el canal realtime solo escucha UPDATE, así que el INSERT
@@ -986,6 +1005,15 @@ const SizedBox(height: 6),
             Row(
               children: [
                 TextButton.icon(
+                  onPressed: () async {
+                    await abrirGestionarAnuncio(
+                        context, a['id_anuncio'] as String);
+                    _recargarMisAnuncios();
+                  },
+                  icon: const Icon(Icons.manage_search_rounded, size: 16),
+                  label: const Text('Ver y gestionar'),
+                ),
+                TextButton.icon(
                   onPressed: () => _dialogEditar(a),
                   icon: const Icon(Icons.edit_outlined, size: 16),
                   label: const Text('Editar'),
@@ -1121,7 +1149,7 @@ const SizedBox(height: 6),
                         keyboardType: TextInputType.phone,
                         maxLength: 15,
                         decoration: const InputDecoration(
-                          labelText: 'WhatsApp',
+                          labelText: 'WhatsApp *',
                           hintText: '584120000000',
                         ),
                       ),
@@ -1131,7 +1159,7 @@ const SizedBox(height: 6),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: () async {
-                    final f = await _storageService.elegirFoto();
+                    final f = await _storageService.elegirFotoConFuente(context);
                     if (f != null) setDialogState(() => nuevaImagen = f);
                   },
                   icon: const Icon(Icons.image_outlined, size: 17),
@@ -1169,6 +1197,10 @@ const SizedBox(height: 6),
     );
 
     if (guardado != true || !mounted) return;
+    if (whatsappCtrl.text.trim().isEmpty) {
+      _snack('El WhatsApp es obligatorio: es al número que te escriben');
+      return;
+    }
     if (tituloCtrl.text.trim().isEmpty || textoCtrl.text.trim().isEmpty) {
       _snack('Título y texto son obligatorios');
       return;

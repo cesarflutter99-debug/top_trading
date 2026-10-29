@@ -122,7 +122,7 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
   }
 
   Future<void> _elegirImagen() async {
-    final foto = await _storageService.elegirFoto();
+    final foto = await _storageService.elegirFotoConFuente(context);
     if (foto != null) setState(() => _imagenFile = foto);
   }
 

@@ -13,10 +13,15 @@
 // El asistente responde con la(s) respuesta(s) del catálogo local y,
 // cuando el tema tiene atajos, con botones accionables.
 
+import '../services/tutorial_service.dart';
+import '../widgets/coach_marks_widget.dart';
+import '../widgets/tour_runner.dart';
+import '../widgets/tour_anchor.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
+import '../widgets/tour_anchor.dart';
 import '../models/assistant_topic.dart';
 import '../services/assistant_service.dart';
 
@@ -51,6 +56,30 @@ class _AssistantScreenState extends State<AssistantScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await TourRunner.mostrarSiNoVisto(
+        context,
+        clave: TutorialService.claveAsistente,
+        titulo: 'Preguntas frecuentes',
+        pasos: const [
+            CoachStep(
+              titulo: 'Escribí tu duda',
+              descripcion:
+                  'Escribí lo que necesites y el asistente te responde al '
+                  'instante, con la respuesta y los pasos a seguir.',
+              ancla: TourAnclas.asistenteEntrada,
+            ),
+            CoachStep(
+              titulo: 'Atajos de preguntas',
+              descripcion:
+                  'Tocá una pregunta sugerida para ver la respuesta sin '
+                  'tener que escribir nada.',
+              ancla: TourAnclas.asistenteTopics,
+            ),
+        ],
+      );
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _recibirBienvenida();
@@ -189,7 +218,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
   Widget _barraEntrada(BuildContext context, bool esOscuro) {
     final borde =
         esOscuro ? AppColors.borderDark : AppColors.borderLight;
-    return SafeArea(
+    return TourAnchor(
+      id: TourAnclas.asistenteEntrada,
+      child: SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
@@ -246,6 +277,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
           ],
         ),
       ),
+    ),
     );
   }
 }
@@ -499,17 +531,21 @@ class _ChipsOpciones extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final o in opciones)
-          ActionChip(
-            label: Text(o.pregunta, maxLines: 1, overflow: TextOverflow.ellipsis),
-            avatar: const Icon(Icons.question_answer_outlined, size: 16),
-            onPressed: () => onTap(o),
-          ),
-      ],
+    return TourAnchor(
+      id: TourAnclas.asistenteTopics,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final o in opciones)
+            ActionChip(
+              label:
+                  Text(o.pregunta, maxLines: 1, overflow: TextOverflow.ellipsis),
+              avatar: const Icon(Icons.question_answer_outlined, size: 16),
+              onPressed: () => onTap(o),
+            ),
+        ],
+      ),
     );
   }
 }

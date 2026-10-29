@@ -31,11 +31,15 @@
 //   - Sin buscador dentro del catálogo de la tienda (solo orden por
 //     precio/relevancia).
 
+import '../services/tutorial_service.dart';
+import '../widgets/coach_marks_widget.dart';
+import '../widgets/tour_runner.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
+import '../widgets/tour_anchor.dart';
 import '../core/supabase_client.dart';
 import '../core/auth_guard.dart';
 import '../services/cache_offline_service.dart';
@@ -146,6 +150,23 @@ class _StoreScreenState extends State<StoreScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await TourRunner.mostrarSiNoVisto(
+        context,
+        clave: TutorialService.claveTienda,
+        titulo: 'La tienda',
+        pasos: const [
+          CoachStep(
+            titulo: 'Agregá al carrito',
+            descripcion:
+                'Elegí la cantidad y tocá "Agregar al carrito". Te aviso que '
+                'el pago se coordina directo con el vendedor por WhatsApp.',
+            ancla: TourAnclas.tiendaAgregarCarrito,
+          ),
+        ],
+      );
+    });
     _tiendaFuture = _cargarTienda();
     _productosFuture = _cargarProductos();
     _ventasFuture = _tiendasService.contarVentasDelMes(widget.idTienda);
@@ -1330,14 +1351,17 @@ class _DetalleProductoModalState extends State<_DetalleProductoModal> {
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: FilledButton(
-                            onPressed: _cantidad > 0
-                                ? () => widget.onAgregar(_cantidad)
-                                : null,
-                            style: FilledButton.styleFrom(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14)),
-                            child: const Text('Agregar al carrito'),
+                          child: TourAnchor(
+                            id: TourAnclas.tiendaAgregarCarrito,
+                            child: FilledButton(
+                              onPressed: _cantidad > 0
+                                  ? () => widget.onAgregar(_cantidad)
+                                  : null,
+                              style: FilledButton.styleFrom(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14)),
+                              child: const Text('Agregar al carrito'),
+                            ),
                           ),
                         ),
                       ],

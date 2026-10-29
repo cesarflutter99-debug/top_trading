@@ -77,7 +77,7 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
   }
 
   Future<void> _cambiarLogo() async {
-    final archivo = await _storageService.elegirFoto();
+    final archivo = await _storageService.elegirFotoConFuente(context);
     if (archivo == null) return;
     setState(() => _subiendoLogo = true);
     try {
@@ -100,7 +100,7 @@ class _GestionarTiendaScreenState extends State<GestionarTiendaScreen> {
   }
 
   Future<void> _cambiarPortada() async {
-    final archivo = await _storageService.elegirFoto();
+    final archivo = await _storageService.elegirFotoConFuente(context);
     if (archivo == null) return;
     setState(() => _subiendoPortada = true);
     try {

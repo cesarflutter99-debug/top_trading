@@ -19,6 +19,8 @@
 // dueño se actualiza solo (igual que hace TiendaStateService).
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/supabase_client.dart';
 
@@ -46,11 +48,11 @@ class NegocioStateService extends ChangeNotifier {
     if (uid == null) {
       _miNegocio = null;
       _cargando = false;
-      notifyListeners();
+      _notificarSeguro();
       return;
     }
     _cargando = true;
-    notifyListeners();
+    _notificarSeguro();
     try {
       // El dueño puede ver sus negocios en cualquier estado (RLS).
       // Si algún día hay varios, nos quedamos con el más reciente.
@@ -67,7 +69,7 @@ class NegocioStateService extends ChangeNotifier {
       _miNegocio ??= null;
     }
     _cargando = false;
-    notifyListeners();
+    _notificarSeguro();
     _escucharCambiosRemotos(uid);
   }
 
@@ -82,7 +84,7 @@ class NegocioStateService extends ChangeNotifier {
     _canalCompras?.unsubscribe();
     _canalCompras = null;
     _uidEscuchado = null;
-    notifyListeners();
+    _notificarSeguro();
   }
 
   void _escucharCambiosRemotos(String uid) {
@@ -124,4 +126,22 @@ class NegocioStateService extends ChangeNotifier {
     _canal?.unsubscribe();
     super.dispose();
   }
+
+  /// Notifica a los listeners SIN romper la app si el aviso cae dentro
+  /// de un build. Un ChangeNotifier que llama notifyListeners() durante
+  /// la fase de build hace que el AnimatedBuilder que lo escucha
+  /// llame setState() -> "setState() or markNeedsBuild() called during
+  /// build". Pasa, por ejemplo, cuando cargar() se llama desde el
+  /// initState de una pantalla que vive dentro de un IndexedStack.
+  /// En ese caso el aviso se aplaza al siguiente frame.
+  void _notificarSeguro() {
+    final fase = SchedulerBinding.instance.schedulerPhase;
+    if (fase == SchedulerPhase.persistentCallbacks ||
+        fase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => notifyListeners());
+    } else {
+      notifyListeners();
+    }
+  }
+
 }

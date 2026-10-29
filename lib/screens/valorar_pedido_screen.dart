@@ -48,7 +48,7 @@ class _ValorarPedidoScreenState extends State<ValorarPedidoScreen> {
   }
 
   Future<void> _elegirFoto() async {
-    final foto = await _storageService.elegirFoto();
+    final foto = await _storageService.elegirFotoConFuente(context);
     if (foto != null) setState(() => _fotoSeleccionada = foto);
   }
 

@@ -43,6 +43,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
+import '../widgets/tour_anchor.dart';
 import '../services/location_service.dart';
 import '../services/negocios_service.dart';
 import '../services/tiendas_service.dart';
@@ -533,7 +534,9 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   }
 
   Widget _buildBuscador() {
-    return Container(
+    return TourAnchor(
+      id: TourAnclas.mapaBuscador,
+      child: Container(
       decoration: BoxDecoration(
         color: _superficie,
         borderRadius: BorderRadius.circular(28),
@@ -574,12 +577,15 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
           contentPadding: const EdgeInsets.symmetric(vertical: 15),
         ),
       ),
+      ),
     );
   }
 
   Widget _buildChips() {
     final categorias = <String?>[null, ...kCategoriasTienda];
-    return SizedBox(
+    return TourAnchor(
+      id: TourAnclas.mapaChips,
+      child: SizedBox(
       height: 42,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
@@ -631,6 +637,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
             ),
           );
         },
+      ),
       ),
     );
   }

@@ -1,43 +1,58 @@
 // coach_marks_widget.dart
 //
-// Tour contextual "spotlight": oscurece (desenfoca visualmente) TODA la
-// pantalla y va iluminando de a UNA las opciones reales de la interfaz,
-// mostrando un cartelito con la explicación de cada una. Sin dependencias
-// extra: la máscara con "agujero" se pinta con un CustomPainter.
+// Tour contextual "spotlight": oscurece la pantalla y va iluminando de
+// a UNA las opciones reales de la interfaz, mostrando un cartelito con la
+// explicacion de cada una. Sin dependencias extra: la mascara con
+// "agujero" se pinta con un CustomPainter.
 //
-// Cómo se usa:
-//   CoachMarks.mostrar(context, titulo: 'Descubrí Al Lado', pasos: [
+// PRECISION: el foco se resuelve en el MOMENTO de pintar cada paso
+// (no se calcula una vez al abrir el tour). Por eso el rect sale del
+// RenderBox real del widget anclado -> el circulo cae EXACTAMENTE sobre
+// el boton, sin desfases. Ver widgets/tour_anchor.dart.
+//
+// Como se usa:
+//   CoachMarks.mostrar(context, titulo: 'Descubri Al Lado', pasos: [
 //     CoachStep(
-//       titulo: 'Explorá el mapa',
-//       descripcion: 'La pestaña Mapa te muestra las tiendas cerca tuyo...',
-//       destino: rectDeLaOpcion,   // Rect en coordenadas globales
+//       titulo: 'Explora el mapa',
+//       descripcion: '...',
+//       ancla: TourAnclas.navMapa,
 //     ),
 //     ...
 //   ]);
 //
-// Si un paso no tiene `destino`, se ilumina un foco central por defecto
-// (para no romper la metáfora "desenfocar + opciones" en ningún paso).
-
+// Si un paso no tiene 'ancla' ni 'destino', se ilumina un foco central
+// por defecto (para no romper la metafora en ningun paso).
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
+import 'tour_anchor.dart';
 
-/// Un paso del tour: la opción a iluminar (`destino`, en coordenadas
-/// globales de pantalla) y el texto que aparece debajo.
+/// Un paso del tour: la opcion a iluminar y el texto que aparece.
+///
+/// - [ancla]: id de un TourAnchor. Se resuelve en vivo -> preciso.
+/// - [destino]: rect absoluto (para casos sin anchor).
+/// - [padding]: margen extra alrededor del foco (px).
+/// - [radio]: radio del hueco. null = se calcula segun el alto del foco.
 class CoachStep {
   final String titulo;
   final String descripcion;
+  final String? ancla;
   final Rect? destino;
+  final double padding;
+  final double? radio;
 
   const CoachStep({
     required this.titulo,
     required this.descripcion,
+    this.ancla,
     this.destino,
+    this.padding = 6,
+    this.radio,
   });
 }
 
 /// Muestra el tour completo como un overlay semitransparente encima de la
-/// pantalla actual. Avanza tocando el fondo o el botón "Siguiente", y se
+/// pantalla actual. Avanza tocando el fondo o el boton "Siguiente", y se
 /// puede saltar siempre con "Saltar" (arriba a la derecha).
 class CoachMarks {
   static Future<void> mostrar(
@@ -49,6 +64,7 @@ class CoachMarks {
     await Navigator.of(context, rootNavigator: true).push<void>(
       PageRouteBuilder<void>(
         opaque: false,
+        barrierColor: Colors.transparent,
         transitionDuration: const Duration(milliseconds: 260),
         reverseTransitionDuration: const Duration(milliseconds: 200),
         pageBuilder: (_, __, ___) => _OverlayTour(titulo: titulo, pasos: pasos),
@@ -84,21 +100,38 @@ class _OverlayTourState extends State<_OverlayTour> {
     setState(() => _paso++);
   }
 
-  /// Rect (inflado un poco) de la opción destacada de este paso. Si el
-  /// paso no trae destino, se ilumina un foco central de tamaño fijo.
-  Rect _hueco(Size pantalla) {
-    final base = _actual.destino;
-    return (base ?? Rect.fromCenter(
-      center: Offset(pantalla.width / 2, pantalla.height * 0.36),
-      width: 320,
-      height: 180,
-    )).inflate(4);
+  /// Radio del hueco: circular si el foco es pequeño (iconos), con
+  /// esquinas suaves si es un area grande (tarjetas, campos).
+  double _radioDelFoco(Rect foco) {
+    final r = _actual.radio;
+    if (r != null) return r;
+    final menor = foco.width < foco.height ? foco.width : foco.height;
+    return (menor / 2).clamp(10, 22);
+  }
+
+  /// Rect (en coordenadas de pantalla) del foco de ESTE paso, resuelto
+  /// en vivo desde el anchor.
+  Rect _foco(Size pantalla) {
+    final paso = _actual;
+    if (paso.ancla != null) {
+      final r = TourRegistro.rectDe(paso.ancla!, padding: paso.padding);
+      if (r != null) return r;
+    }
+    final fijo = paso.destino;
+    if (fijo != null) return fijo.inflate(paso.padding);
+    return Rect.fromCenter(
+      center: Offset(pantalla.width / 2, pantalla.height * 0.4),
+      width: 300,
+      height: 160,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final esOscuro = Theme.of(context).brightness == Brightness.dark;
     final pantalla = MediaQuery.sizeOf(context);
+    final foco = _foco(pantalla);
+    final radio = _radioDelFoco(foco);
 
     return GestureDetector(
       // Tocar la zona oscurecida avanza al siguiente paso (type-showcase).
@@ -111,22 +144,23 @@ class _OverlayTourState extends State<_OverlayTour> {
             child: CustomPaint(
               painter: _MascaraAgujero(
                 pantalla: pantalla,
-                hueco: _hueco(pantalla),
+                hueco: foco,
+                radio: radio,
               ),
             ),
           ),
 
           // 2 - Anillo luminoso alrededor de la opción destacada.
           Positioned(
-            left: _hueco(pantalla).left,
-            top: _hueco(pantalla).top,
-            width: _hueco(pantalla).width,
-            height: _hueco(pantalla).height,
+            left: foco.left,
+            top: foco.top,
+            width: foco.width,
+            height: foco.height,
             child: IgnorePointer(
               child: Container(
                 decoration: BoxDecoration(
                   color: Colors.transparent,
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(radio),
                   border: Border.all(color: AppColors.primary, width: 2.5),
                   boxShadow: [
                     BoxShadow(
@@ -145,13 +179,15 @@ class _OverlayTourState extends State<_OverlayTour> {
           Positioned(
             left: 16,
             right: 16,
-            top: _posicionDelCartel(pantalla),
+            top: _posicionDelCartel(pantalla, foco),
             child: _Cartel(
               titulo: widget.titulo,
               paso: _paso,
               total: widget.pasos.length,
               step: _actual,
               esOscuro: esOscuro,
+              onSiguiente: _siguiente,
+              onSaltar: _cerrar,
             ),
           ),
 
@@ -166,17 +202,20 @@ class _OverlayTourState extends State<_OverlayTour> {
     );
   }
 
-  /// Ubica el cartelito debajo del agujero; si no entra (hueco abajo),
-  /// lo sube encima del mismo para que nunca quede cortado.
-  double _posicionDelCartel(Size pantalla) {
-    final hueco = _hueco(pantalla);
-    const altoCartel = 240.0;
-    final abajo = hueco.bottom + 20;
-    final entraAbajo = abajo + altoCartel < pantalla.height - 16;
-    if (entraAbajo) return abajo;
-    final arriba = hueco.top - altoCartel - 20;
-    if (arriba > 16) return arriba;
-    return (pantalla.height - altoCartel) / 2;
+  /// Ubica el cartelito: debajo del foco si cabe; si no, encima; si
+  /// tampoco, al lado (para foci que están en un borde).
+  double _posicionDelCartel(Size pantalla, Rect foco) {
+    const altoCartel = 250.0;
+    const margen = 20.0;
+
+    final abajo = foco.bottom + margen;
+    if (abajo + altoCartel <= pantalla.height - 16) return abajo;
+
+    final arriba = foco.top - altoCartel - margen;
+    if (arriba >= 16) return arriba;
+
+    // Sin espacio vertical: lo pegamos arriba del todo.
+    return 16;
   }
 }
 
@@ -186,8 +225,13 @@ class _OverlayTourState extends State<_OverlayTour> {
 class _MascaraAgujero extends CustomPainter {
   final Size pantalla;
   final Rect hueco;
+  final double radio;
 
-  _MascaraAgujero({required this.pantalla, required this.hueco});
+  _MascaraAgujero({
+    required this.pantalla,
+    required this.hueco,
+    required this.radio,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -196,21 +240,23 @@ class _MascaraAgujero extends CustomPainter {
     // (like a "ventana" del foco).
     final ventana = Path()
       ..addRRect(
-        RRect.fromRectAndRadius(hueco, const Radius.circular(24)),
+        RRect.fromRectAndRadius(hueco, Radius.circular(radio)),
       );
     final mascara = Path.combine(PathOperation.difference, todo, ventana);
 
     canvas.drawPath(
       mascara,
       Paint()
-        ..color = Colors.black.withValues(alpha: 0.72)
+        ..color = Colors.black.withValues(alpha: 0.74)
         ..style = PaintingStyle.fill,
     );
   }
 
   @override
   bool shouldRepaint(covariant _MascaraAgujero old) =>
-      old.hueco != hueco || old.pantalla != pantalla;
+      old.hueco != hueco ||
+      old.pantalla != pantalla ||
+      old.radio != radio;
 }
 
 // --------------------------- Cartel -----------------------------------
@@ -221,6 +267,8 @@ class _Cartel extends StatelessWidget {
   final int total;
   final CoachStep step;
   final bool esOscuro;
+  final VoidCallback onSiguiente;
+  final VoidCallback onSaltar;
 
   const _Cartel({
     required this.titulo,
@@ -228,6 +276,8 @@ class _Cartel extends StatelessWidget {
     required this.total,
     required this.step,
     required this.esOscuro,
+    required this.onSiguiente,
+    required this.onSaltar,
   });
 
   @override
@@ -249,14 +299,30 @@ class _Cartel extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                titulo,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primary,
-                  letterSpacing: 0.2,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      titulo,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${paso + 1}/$total',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: esOscuro
+                          ? AppColors.inkSecundarioDark
+                          : AppColors.inkSecundarioLight,
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
               Text(
@@ -293,12 +359,12 @@ class _Cartel extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: onSaltar,
                     child: const Text('Saltar'),
                   ),
                   const SizedBox(width: 6),
                   FilledButton(
-                    onPressed: () => _siguiente(context),
+                    onPressed: onSiguiente,
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
@@ -315,16 +381,6 @@ class _Cartel extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  void _siguiente(BuildContext context) {
-    if (paso == total - 1) {
-      Navigator.of(context).pop();
-    } else {
-      // Avanza dentro del overlay: el estado del paso vive en el padre.
-      final state = _tourState(context);
-      state?._siguiente();
-    }
   }
 }
 
@@ -384,10 +440,4 @@ class _BtnSaltar extends StatelessWidget {
       ),
     );
   }
-}
-
-// Helper para que el botón del cartelito pueda avanzar el paso (el
-// botón vive en un subtree; el estado está en el overlay raíz).
-_OverlayTourState? _tourState(BuildContext context) {
-  return context.findAncestorStateOfType<_OverlayTourState>();
 }

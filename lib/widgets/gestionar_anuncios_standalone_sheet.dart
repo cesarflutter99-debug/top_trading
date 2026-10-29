@@ -17,6 +17,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/app_colors.dart';
 import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
+import '../screens/gestionar_anuncio_screen.dart';
 import '../services/storage_service.dart';
 
 /// [destacarAnuncioId] resalta ese anuncio en la lista (flujo:
@@ -211,7 +212,7 @@ class _GestionarAnunciosStandaloneSheetState
                 const SizedBox(height: 8),
                 GestureDetector(
                   onTap: () async {
-                    final f = await _storageService.elegirFoto();
+                    final f = await _storageService.elegirFotoConFuente(context);
                     if (f != null) setDialogState(() => nuevaImagen = f);
                   },
                   child: Row(
@@ -589,35 +590,17 @@ class _GestionarAnunciosStandaloneSheetState
                   ],
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    TextButton.icon(
-                      onPressed: () => _dialogEditar(a),
-                      icon: const Icon(Icons.edit_outlined, size: 16),
-                      label: const Text('Editar'),
-                    ),
-                    if (estado == 'aprobado')
-                      TextButton.icon(
-                        onPressed: () => _cambiarEstado(a, 'pausado'),
-                        icon: const Icon(Icons.pause_circle_outline_rounded,
-                            size: 16),
-                        label: const Text('Pausar'),
-                      ),
-                    if (estado == 'pausado')
-                      TextButton.icon(
-                        onPressed: () => _cambiarEstado(a, 'aprobado'),
-                        icon: const Icon(Icons.play_circle_outline_rounded,
-                            size: 16),
-                        label: const Text('Activar'),
-                      ),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: 'Eliminar',
-                      onPressed: () => _confirmarEliminar(a),
-                      icon: Icon(Icons.delete_outline_rounded,
-                          size: 19, color: theme.colorScheme.error),
-                    ),
-                  ],
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () async {
+                      await abrirGestionarAnuncio(
+                          context, a['id_anuncio'] as String);
+                      _recargar();
+                    },
+                    icon: const Icon(Icons.manage_search_rounded, size: 18),
+                    label: const Text('Ver y gestionar'),
+                  ),
                 ),
               ],
             ),

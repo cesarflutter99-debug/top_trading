@@ -16,11 +16,16 @@
 //   - Avisos arriba con AppToast (antes SnackBar abajo).
 //   - El + se detiene en el stock disponible y avisa "Máx. N".
 
+import '../services/tutorial_service.dart';
+import '../widgets/coach_marks_widget.dart';
+import '../widgets/tour_runner.dart';
+import 'tour_anchor.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
+import 'tour_anchor.dart';
 import '../core/supabase_client.dart';
 import '../core/auth_guard.dart';
 import '../services/currency_service.dart';
@@ -44,6 +49,30 @@ class _CartScreenState extends State<CartScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await TourRunner.mostrarSiNoVisto(
+        context,
+        clave: TutorialService.claveCarrito,
+        titulo: 'Tu carrito',
+        pasos: const [
+            CoachStep(
+              titulo: 'Revisá el total',
+              descripcion:
+                  'Acá ves cuánto vas a pagar en total. Podés cambiar las '
+                  'cantidades con los botones + y −.',
+              ancla: TourAnclas.carritoTotal,
+            ),
+            CoachStep(
+              titulo: 'Completá la compra',
+              descripcion:
+                  'Al confirmar se abre WhatsApp con el pedido ya escrito '
+                  'para que lo coordines directo con el vendedor.',
+              ancla: TourAnclas.carritoConfirmar,
+            ),
+        ],
+      );
+    });
     _dataFuture = _cargarCarrito();
   }
 
@@ -625,7 +654,9 @@ class _CartScreenState extends State<CartScreen> {
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Divider(height: 1, color: c.borde),
             ),
-            Row(
+            TourAnchor(
+              id: TourAnclas.carritoTotal,
+              child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('Total estimado',
@@ -642,6 +673,7 @@ class _CartScreenState extends State<CartScreen> {
                 ),
               ],
             ),
+            ),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -656,7 +688,9 @@ class _CartScreenState extends State<CartScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            SizedBox(
+            TourAnchor(
+              id: TourAnclas.carritoConfirmar,
+              child: SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
                 onPressed: _procesando ? null : () => _completarPedido(data),
@@ -686,6 +720,7 @@ class _CartScreenState extends State<CartScreen> {
                       : 'Completar compra y continuar por WhatsApp'),
                 ),
               ),
+            ),
             ),
           ],
         ),

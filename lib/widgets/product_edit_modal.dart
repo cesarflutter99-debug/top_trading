@@ -19,16 +19,11 @@ import '../services/anuncios_service.dart';
 
 class ProductEditModal extends StatefulWidget {
   final Map<String, dynamic> producto;
-  // FIX: antes este modal solo dejaba cambiar la foto principal
-  // (imagen_url), aunque agregar_producto_screen.dart ya permite subir
-  // hasta 3 fotos en tiendas premium (imagen_url_2 / imagen_url_3).
-  // Con esPremium en true se muestran los dos selectores extra para
-  // poder editarlas también, no solo agregarlas una vez al crear.
-  final bool esPremium;
+  // Todas las tiendas suben UNA sola foto por producto (se unificó:
+  // antes las premium podían subir hasta 3).
   const ProductEditModal({
     super.key,
     required this.producto,
-    this.esPremium = false,
   });
 
   @override
@@ -49,13 +44,6 @@ class _ProductEditModalState extends State<ProductEditModal> {
 
   String? _imagenUrlActual; // la que ya tenía el producto
   File? _imagenNueva; // la que el vendedor acaba de elegir (aún sin subir)
-  // NUEVO: fotos 2 y 3 -- mismo patrón que la principal (URL actual +
-  // archivo nuevo aún sin subir). Solo se muestran/usan si
-  // widget.esPremium es true.
-  String? _imagenUrl2Actual;
-  File? _imagenNueva2;
-  String? _imagenUrl3Actual;
-  File? _imagenNueva3;
   String? _categoriaSeleccionada;
 
   bool _guardando = false;
@@ -77,8 +65,6 @@ class _ProductEditModalState extends State<ProductEditModal> {
     _cantidadCtrl = TextEditingController(
         text: (p['cantidad_disponible'] as num?)?.toString() ?? '0');
     _imagenUrlActual = p['imagen_url'] as String?;
-    _imagenUrl2Actual = p['imagen_url_2'] as String?;
-    _imagenUrl3Actual = p['imagen_url_3'] as String?;
     _categoriaSeleccionada = p['categoria'] as String?;
   }
 
@@ -103,30 +89,6 @@ class _ProductEditModalState extends State<ProductEditModal> {
     setState(() => _imagenNueva = File(archivo.path));
   }
 
-  Future<void> _elegirImagen2() async {
-    final fuente = await elegirFuenteFoto(context);
-    if (fuente == null) return;
-    final XFile? archivo = await _picker.pickImage(
-      source: fuente,
-      maxWidth: 1280,
-      imageQuality: 80,
-    );
-    if (archivo == null) return;
-    setState(() => _imagenNueva2 = File(archivo.path));
-  }
-
-  Future<void> _elegirImagen3() async {
-    final fuente = await elegirFuenteFoto(context);
-    if (fuente == null) return;
-    final XFile? archivo = await _picker.pickImage(
-      source: fuente,
-      maxWidth: 1280,
-      imageQuality: 80,
-    );
-    if (archivo == null) return;
-    setState(() => _imagenNueva3 = File(archivo.path));
-  }
-
   Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
@@ -135,30 +97,12 @@ class _ProductEditModalState extends State<ProductEditModal> {
     });
     try {
       String? nuevaUrl;
-      String? nuevaUrl2;
-      String? nuevaUrl3;
-      if (_imagenNueva != null ||
-          _imagenNueva2 != null ||
-          _imagenNueva3 != null) {
+      if (_imagenNueva != null) {
         setState(() => _subiendoImagen = true);
-        if (_imagenNueva != null) {
-          nuevaUrl = await _storageService.subirFotoProducto(
-            archivo: _imagenNueva!,
-            idTienda: widget.producto['id_tienda'],
-          );
-        }
-        if (_imagenNueva2 != null) {
-          nuevaUrl2 = await _storageService.subirFotoProducto(
-            archivo: _imagenNueva2!,
-            idTienda: widget.producto['id_tienda'],
-          );
-        }
-        if (_imagenNueva3 != null) {
-          nuevaUrl3 = await _storageService.subirFotoProducto(
-            archivo: _imagenNueva3!,
-            idTienda: widget.producto['id_tienda'],
-          );
-        }
+        nuevaUrl = await _storageService.subirFotoProducto(
+          archivo: _imagenNueva!,
+          idTienda: widget.producto['id_tienda'],
+        );
         setState(() => _subiendoImagen = false);
       }
 
@@ -168,8 +112,6 @@ class _ProductEditModalState extends State<ProductEditModal> {
         descripcion: _descripcionCtrl.text.trim(),
         precioUsd: double.parse(_precioCtrl.text.trim()),
         imagenUrl: nuevaUrl, // null si no cambió -> no se toca ese campo
-        imagenUrl2: nuevaUrl2,
-        imagenUrl3: nuevaUrl3,
         cantidadDisponible: int.parse(_cantidadCtrl.text.trim()),
         categoria: _categoriaSeleccionada,
         // esVisible ya no se envía: la visibilidad es automática
@@ -282,56 +224,6 @@ class _ProductEditModalState extends State<ProductEditModal> {
     }
   }
 
-  /// Selector chico de foto extra (2 o 3), mismo estilo que
-  /// agregar_producto_screen.dart -- muestra la foto nueva elegida, si
-  /// no hay ninguna nueva muestra la que ya tenía el producto, y si no
-  /// tenía ninguna muestra el ícono de "agregar foto".
-  Widget _selectorFotoChica({
-    required String? urlActual,
-    required File? archivoNuevo,
-    required VoidCallback? onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 100,
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primary.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.primary.withOpacity(0.25),
-            width: 1.4,
-          ),
-        ),
-        child: archivoNuevo != null
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Image.file(archivoNuevo,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: double.infinity),
-              )
-            : (urlActual != null && urlActual.isNotEmpty)
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Image.network(urlActual,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: double.infinity,
-                        errorBuilder: (_, __, ___) => Center(
-                              child: Icon(Icons.image_not_supported_outlined,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .primary),
-                            )),
-                  )
-                : Center(
-                    child: Icon(Icons.add_a_photo_outlined,
-                        size: 26, color: Theme.of(context).colorScheme.primary),
-                  ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -424,38 +316,6 @@ class _ProductEditModalState extends State<ProductEditModal> {
                   ),
                 ),
 
-                // ---------- Fotos extra (solo tiendas premium) ----------
-                // FIX: esto es lo que faltaba -- antes solo se podían
-                // subir al crear el producto (agregar_producto_screen.dart)
-                // pero no había forma de cambiarlas después desde acá.
-                if (widget.esPremium) ...[
-                  const SizedBox(height: 16),
-                  Text('Fotos extra (opcional, hasta 2 más)',
-                      style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _selectorFotoChica(
-                          urlActual: _imagenUrl2Actual,
-                          archivoNuevo: _imagenNueva2,
-                          onTap: _guardando ? null : _elegirImagen2,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _selectorFotoChica(
-                          urlActual: _imagenUrl3Actual,
-                          archivoNuevo: _imagenNueva3,
-                          onTap: _guardando ? null : _elegirImagen3,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
                 const SizedBox(height: 16),
 
                 TextFormField(

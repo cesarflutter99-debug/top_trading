@@ -23,6 +23,7 @@ import '../services/pending_actions_queue.dart';
 import '../services/tutorial_service.dart';
 import '../widgets/offline_banner.dart';
 import '../widgets/coach_marks_widget.dart';
+import '../widgets/tour_anchor.dart';
 import 'home_screen.dart';
 import 'mapa_tiendas_screen.dart';
 import 'favoritos_screen.dart';
@@ -46,7 +47,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
         0 => 'Inicio',
         1 => 'Mapa',
         2 => 'Anuncios',
-        3 => 'Favoritos',
         4 => 'Mi Tienda',
         5 => 'Perfil',
         _ => 'Inicio',
@@ -151,7 +151,10 @@ class _MainShellScreenState extends State<MainShellScreen> {
   void _programarTourDePestana(int indice) {
     final String? clave = switch (indice) {
       0 => TutorialService.claveHome,
+      1 => TutorialService.claveMapa,
+      2 => TutorialService.claveAnuncios,
       4 => TutorialService.claveMiTienda,
+      5 => TutorialService.clavePerfil,
       _ => null,
     };
     if (clave == null || _toursEnVuelo.contains(clave)) return;
@@ -162,52 +165,10 @@ class _MainShellScreenState extends State<MainShellScreen> {
       if (!mounted) return;
 
       _toursEnVuelo.add(clave);
-      final pasos = switch (indice) {
-        0 => [
-            CoachStep(
-              titulo: 'Explorá el mapa',
-              descripcion:
-                  'La pestaña Mapa te muestra las tiendas cerca de vos. '
-                  'Tocá una para ver sus productos.',
-              destino: _rectDestinoNav(0),
-            ),
-            CoachStep(
-              titulo: 'Descubrí anuncios',
-              descripcion:
-                  'En Anuncios vas a encontrar promociones de tiendas, '
-                  'negocios y la plataforma. Podés dar "me gusta" y comentar.',
-              destino: _rectDestinoNav(1),
-            ),
-            CoachStep(
-              titulo: 'Tu perfil',
-              descripcion:
-                  'Iniciá sesión con Google para comprar, guardar '
-                  'favoritos y vender.',
-              destino: _rectDestinoNav(4),
-            ),
-          ],
-        4 => [
-            CoachStep(
-              titulo: 'Tu panel de ventas',
-              descripcion:
-                  'Desde "Mi Tienda" gestionás tus productos, pedidos, '
-                  'promociones y tu plan.',
-              destino: _rectDestinoNav(3),
-            ),
-            CoachStep(
-              titulo: 'Publicá productos',
-              descripcion:
-                  'En esta área vas a encontrar el botón de nuevo producto '
-                  'para sumar a tu catálogo y empezar a vender.',
-              destino: _rectTabMiTienda(),
-            ),
-          ],
-        _ => const <CoachStep>[],
-      };
-
+      final pasos = _pasosDelTour(indice);
       await CoachMarks.mostrar(
         context,
-        titulo: switch (indice) { 4 => 'Tu tienda', _ => 'Descubrí Al Lado' },
+        titulo: _tituloDelTour(indice),
         pasos: pasos,
       );
       if (!mounted) return;
@@ -216,24 +177,157 @@ class _MainShellScreenState extends State<MainShellScreen> {
     });
   }
 
-  /// Rect (en coordenadas globales) de la pestaña `posicionEnBarra`
-  /// dentro de la barra de navegación. Orden visual de la barra:
-  /// Mapa=0, Anuncios=1, Favoritos=2, Inicio=3, Mi Tienda=4, Perfil=5.
-  Rect? _rectDestinoNav(int posicionEnBarra) {
-    final render = _navBarKey.currentContext?.findRenderObject();
-    if (render is! RenderBox || !render.hasSize) return null;
-    final origen = render.localToGlobal(Offset.zero);
-    final anchoPorItem = render.size.width / 5;
-    final centroX = origen.dx + anchoPorItem * posicionEnBarra + anchoPorItem / 2;
-    // Resaltamos solo el icono (no toda la celda), para que el foco
-    // quede centrado y preciso sobre la opcion correspondiente.
-    const tamano = 48.0;
-    return Rect.fromCenter(
-      center: Offset(centroX, origen.dy + 22),
-      width: tamano,
-      height: tamano,
-    );
-  }
+  String _tituloDelTour(int indice) => switch (indice) {
+        1 => 'Explorar el mapa',
+        2 => 'Anuncios',
+        3 => 'Favoritos',
+        4 => 'Tu tienda',
+        5 => 'Tu perfil',
+        _ => 'Bienvenido a Al Lado',
+      };
+
+  /// Pasos de cada tour. El foco se ancla a widgets REALES (TourAnchor),
+  /// asi que el círculo cae con precisión de pixel sobre el botón.
+  List<CoachStep> _pasosDelTour(int indice) => switch (indice) {
+        0 => const [
+            CoachStep(
+              titulo: 'Tu inicio',
+              descripcion:
+                  'Acá ves las tiendas más cercanas, los productos que '
+                  'están cerca de vos y los anuncios del barrio. Deslizá '
+                  'para explorar.',
+              ancla: TourAnclas.navInicio,
+            ),
+            CoachStep(
+              titulo: 'Mapa: tiendas cerca de vos',
+              descripcion:
+                  'Tocá el mapa y filtrá por distancia. Ves dónde está cada '
+                  'tienda antes de ir, para que no pierdas el tiempo '
+                  'viajando.',
+              ancla: TourAnclas.navMapa,
+            ),
+            CoachStep(
+              titulo: 'Anuncios de la comunidad',
+              descripcion:
+                  'Promociones de tiendas, negocios y la plataforma. Podés '
+                  'dar "me gusta", comentar y compartir.',
+              ancla: TourAnclas.navAnuncios,
+            ),
+            CoachStep(
+              titulo: 'Tu tienda y tu perfil',
+              descripcion:
+                  'En "Mi Tienda" vendés tus productos. En "Perfil" están tus '
+                  'datos, tus pedidos y el soporte.',
+              ancla: TourAnclas.navMiTienda,
+            ),
+            CoachStep(
+              titulo: 'Todo a un toque',
+              descripcion:
+                  'El botón del medio siempre te trae de vuelta al inicio, '
+                  'sin importar dónde estés. Abrimos el menú con el botón '
+                  'de arriba a la izquierda.',
+              ancla: TourAnclas.homeHamburguesa,
+            ),
+          ],
+        1 => const [
+            CoachStep(
+              titulo: 'Filtra por distancia',
+              descripcion:
+                  'Ajusta el radio para ver solo lo que tienes cerca. Con '
+                  'la ubicación activada el mapa se centra en vos.',
+              ancla: TourAnclas.mapaBuscador,
+            ),
+            CoachStep(
+              titulo: 'Filtra por categoría',
+              descripcion:
+                  'Tocá una categoría para ver solo tiendas de ese tipo: '
+                  'gastronomía, moda, salud y más.',
+              ancla: TourAnclas.mapaChips,
+            ),
+            CoachStep(
+              titulo: 'Tocá un pin',
+              descripcion:
+                  'Cada pin es una tienda. Abrís su ficha con sus productos, '
+                  'horarios y cómo contactarla.',
+              ancla: TourAnclas.navMapa,
+            ),
+          ],
+        2 => const [
+            CoachStep(
+              titulo: 'Buscá por categoría',
+              descripcion:
+                  'Tocá la categoría que te interesa y el feed se filtra al '
+                  'instante. "Todos" para ver todo.',
+              ancla: TourAnclas.anunciosChips,
+            ),
+            CoachStep(
+              titulo: 'Creá y potenciá anuncios',
+              descripcion:
+                  'Con el botón flotante publicás un anuncio propio, o '
+                  'potenciás uno de tu tienda para que salga más.',
+              ancla: TourAnclas.anunciosFab,
+            ),
+            CoachStep(
+              titulo: 'Interactuá con la comunidad',
+              descripcion:
+                  'Cada anuncio tiene su botón de WhatsApp. Alguien que '
+                  'te escriba puede comprar en la tienda del anuncio.',
+              ancla: TourAnclas.navAnuncios,
+            ),
+          ],
+        4 => [
+            CoachStep(
+              titulo: 'Tu panel de ventas',
+              descripcion:
+                  'Desde "Mi Tienda" gestionás tus productos, pedidos, '
+                  'promociones y tu plan. Es tu negocio desde el celular.',
+              ancla: TourAnclas.navMiTienda,
+            ),
+            // Si el usuario todavía no tiene tienda, el botón de nuevo
+            // producto no existe: el foco cae en la tarjeta de la
+            // pestaña, que es donde se crea la tienda.
+            if (_miTienda != null)
+              CoachStep(
+                titulo: 'Publicá productos',
+                descripcion:
+                    'Con el botón de nuevo producto sumás artículos a tu '
+                    'catálogo y empezás a vender.',
+                ancla: TourAnclas.miTiendaNuevo,
+              )
+            else
+              CoachStep(
+                titulo: '¿Querés vender?',
+                descripcion:
+                    'Creá tu tienda gratis y empezá a vender. Es un minuto '
+                    'y te abre el catálogo al instante.',
+                ancla: TourAnclas.navMiTienda,
+              ),
+          ],
+        5 => const [
+            CoachStep(
+              titulo: 'Tu perfil',
+              descripcion:
+                  'Acá cambiás tu foto, ves tus pedidos, tus anuncios y tu '
+                  'plan. También entrás al chat de soporte.',
+              ancla: TourAnclas.navPerfil,
+            ),
+            CoachStep(
+              titulo: 'Tus datos y tu foto',
+              descripcion:
+                  'Tocá tu foto para cambiarla. Podés sacarla con la cámara '
+                  'o elegirla de la galería.',
+              ancla: TourAnclas.perfilAvatar,
+            ),
+            CoachStep(
+              titulo: '¿Necesitás ayuda?',
+              descripcion:
+                  'En el chat de soporte escribís y te responde el equipo '
+                  'de Al Lado. También podés ver las preguntas frecuentes.',
+              ancla: TourAnclas.navPerfil,
+            ),
+          ],
+        _ => const <CoachStep>[],
+      };
 
   /// Rect del contenido de la pestaña Mi Tienda (panel del vendedor o CTA).
   Rect? _rectTabMiTienda() {
@@ -285,49 +379,64 @@ class _MainShellScreenState extends State<MainShellScreen> {
       mainAxisAlignment: MainAxisAlignment.spaceAround,
       children: [
         Expanded(
-          child: _ItemNav(
+          child: TourAnchor(
+            id: TourAnclas.navMapa,
+            child: _ItemNav(
             activo: _indice == 1,
             iconoInactivo: Icons.map_outlined,
             iconoActivo: Icons.map_rounded,
             label: 'Mapa',
             onTap: () => _cambiarIndice(1),
+            ),
           ),
         ),
         Expanded(
-          child: _ItemNav(
+          child: TourAnchor(
+            id: TourAnclas.navAnuncios,
+            child: _ItemNav(
             activo: _indice == 2,
             iconoInactivo: Icons.campaign_outlined,
             iconoActivo: Icons.campaign_rounded,
             label: 'Anuncios',
             onTap: () => _cambiarIndice(2),
+            ),
           ),
         ),
         Expanded(
-          child: _ItemNav(
+          child: TourAnchor(
+            id: TourAnclas.navInicio,
+            child: _ItemNav(
             activo: _indice == 0,
             iconoInactivo: Icons.home_outlined,
             iconoActivo: Icons.home_rounded,
             label: 'Inicio',
             tamanoIcono: 26,
             onTap: () => _cambiarIndice(0),
+            ),
           ),
         ),
         Expanded(
-          child: _ItemNav(
+          child: TourAnchor(
+            id: TourAnclas.navMiTienda,
+            child: _ItemNav(
             activo: _indice == 4,
             iconoInactivo: Icons.storefront_outlined,
             iconoActivo: Icons.storefront_rounded,
             label: 'Mi Tienda',
             onTap: () => _irA(4),
+            ),
           ),
         ),
         Expanded(
-          child: _ItemNav(
+          child: TourAnchor(
+            id: TourAnclas.navPerfil,
+            child: _ItemNav(
             activo: _indice == 5,
             iconoInactivo: Icons.person_outline_rounded,
             iconoActivo: Icons.person_rounded,
             label: 'Perfil',
             onTap: () => _irA(5),
+            ),
           ),
         ),
       ],

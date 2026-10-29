@@ -81,6 +81,16 @@ class StorageService {
     return File(archivo.path);
   }
 
+  /// Igual que [elegirFoto], pero ANTES pregunta de dónde sacar la
+  /// foto (cámara o galería) con el bottom sheet de [elegirFuenteFoto].
+  /// Es el metodo que debe usarse en TODOS los puntos de subida de
+  /// fotos de la app, para que el usuario siempre pueda elegir.
+  Future<File?> elegirFotoConFuente(BuildContext context) async {
+    final fuente = await elegirFuenteFoto(context);
+    if (fuente == null) return null;
+    return elegirFoto(desdeCamara: fuente == ImageSource.camera);
+  }
+
   // ---------------------------------------------------------------
   // COMPRESIÓN
   // ---------------------------------------------------------------
