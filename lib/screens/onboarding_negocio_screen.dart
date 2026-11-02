@@ -13,7 +13,9 @@
 //   3. Horario (por día, con franja abre/cierra)
 //   4. Ubicación (dirección + GPS)
 //   5. Lista de precios opcional
-//   6. Pago: elige su primer PAQUETE DE ANUNCIO + cuenta (tarjeta/QR).
+//   6. Pago ÚNICO de registro (precio fijado por el admin, una sola vez):
+//      el negocio queda en el mapa para siempre. Promocionarlo en el feed
+//      usa las ranuras de anuncio (Mi perfil > Potenciar mi negocio).
 //      Al tocar "Ya pagué - Enviar": crea el negocio en 'pendiente',
 //      registra la compra pendiente y abre WhatsApp con el mensaje
 //      pre-armado (datos del negocio + paquete + código) para que el
@@ -161,7 +163,7 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
     if (_esEvento) {
       _categoriaCtrl.text = 'Evento / Fiesta puntual';
     }
-    _paquetesFuture = _anunciosService.obtenerPaquetesActivos().then((lista) {
+    _paquetesFuture = _anunciosService.obtenerPaquetesRegistroNegocio().then((lista) {
       _paquetesCache = lista;
       return lista;
     });
@@ -660,7 +662,7 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
       case 5:
         return 'Precios';
       default:
-        return 'Pago del anuncio';
+        return 'Pago único de registro';
     }
   }
 
@@ -1249,9 +1251,9 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Último paso: elegirás y pagarás tu paquete de '
-                    'anuncio. Tu negocio queda en revisión hasta que '
-                    'el admin lo apruebe.',
+                    'Último paso: un pago único de registro. Tu negocio '
+                    'queda en el mapa para siempre y queda en revisión '
+                    'hasta que el admin verifique el pago.',
                     style: GoogleFonts.inter(
                         fontSize: 12.5, color: textoSecundario, height: 1.4),
                   ),
@@ -1280,8 +1282,8 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _tituloPasoTexto(theme, 'Activa tu anuncio',
-              'Elige tu primer paquete y paga con una de sus cuentas. '
+          _tituloPasoTexto(theme, 'Registra tu negocio',
+              'Haz el pago único y tu negocio aparecerá en el mapa para siempre. '
               'Tu negocio queda EN REVISIÓN hasta que el admin lo apruebe.'),
           const SizedBox(height: 16),
           FutureBuilder<List<Map<String, dynamic>>>(
@@ -1304,7 +1306,7 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
                         Border.all(color: Colors.amber.shade700.withOpacity(0.35)),
                   ),
                   child: Text(
-                    'El admin aún no ha configurado paquetes de anuncio. '
+                    'El admin aún no ha configurado el pago de registro. '
                     'Puedes enviar tu solicitud y coordinarás el pago '
                     'directamente por WhatsApp.',
                     style: GoogleFonts.inter(
@@ -1319,7 +1321,7 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
                   ...paquetes.map(_tarjetaPaquete),
                   const SizedBox(height: 8),
                   Text(
-                    'Toca un paquete para ver los datos de pago y '
+                    'Toca el pago para ver los datos y '
                     'verificar tu transferencia.',
                     style: GoogleFonts.inter(
                         fontSize: 12.5, color: textoSecundario, height: 1.4),
@@ -1343,7 +1345,7 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Paga en la app o cajero, y al tocar "Ya pagué - Enviar '
+                    'Paga una sola vez, y al tocar "Ya pagué - Enviar '
                     'solicitud" te llevamos a WhatsApp con el mensaje listo '
                     'para que el admin verifique tu pago.',
                     style: GoogleFonts.inter(
@@ -1394,8 +1396,7 @@ class _OnboardingNegocioScreenState extends State<OnboardingNegocioScreen> {
                           color: theme.textTheme.bodyLarge?.color)),
                   const SizedBox(height: 2),
                   Text(
-                    '\$${p['precio_usd']} USD · ${p['duracion_dias']} días · '
-                    '${p['max_anuncios']} anuncio${p['max_anuncios'] > 1 ? 's' : ''} a la vez',
+                    '\$${p['precio_usd']} USD · pago único · para siempre',
                     style: GoogleFonts.inter(
                         fontSize: 12.5, color: textoSecundario),
                   ),

@@ -36,6 +36,8 @@ import '../services/anuncios_service.dart';
 import '../services/storage_service.dart';
 import '../services/currency_service.dart';
 import '../services/tiendas_service.dart';
+import '../services/tienda_state_service.dart';
+import '../services/negocio_state_service.dart';
 import '../widgets/gestionar_anuncios_standalone_sheet.dart';
 import '../widgets/fila_dato_copiable.dart';
 
@@ -55,8 +57,15 @@ Future<void> mostrarPlanesStandaloneSheet(
   );
 }
 
+/// Valor especial del selector de ranura: usar las ranuras del PLAN de la
+/// tienda (no hay permiso comprado de por medio).
+const String _kPlan = '__plan__';
+
 class StandaloneAnuncioScreen extends StatefulWidget {
-  const StandaloneAnuncioScreen({super.key});
+  /// 'negocio' | 'tienda' | 'producto': preselecciona qué se promociona
+  /// (Mi perfil > "Potenciar mi negocio", menú de Mi Tienda...).
+  final String? destinoInicial;
+  const StandaloneAnuncioScreen({super.key, this.destinoInicial});
 
   @override
   State<StandaloneAnuncioScreen> createState() =>
@@ -80,6 +89,15 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
   final _precioCtrl = TextEditingController();
   final _whatsappCtrl = TextEditingController();
 
+  // --- Ligar a algo propio (opcional) ---
+  String _destino = 'ninguno'; // ninguno | producto | tienda | negocio
+  Map<String, dynamic>? _miTienda;
+  Map<String, dynamic>? _miNegocio;
+  List<Map<String, dynamic>> _misProductos = [];
+  String? _idProductoSel;
+  String? _imagenProductoUrl;
+  int _planSlots = 0;
+
   File? _imagenFile;
   bool _publicando = false;
   bool _subiendoImagen = false;
@@ -88,6 +106,7 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
   void initState() {
     super.initState();
     _cargarTodo();
+    _cargarDestinos();
   }
 
   Future<void> _cargarTodo() async {
@@ -110,6 +129,199 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
         }
       }
     }
+  }
+
+  Future<void> _cargarDestinos() async {
+    var t = TiendaStateService.instance.miTienda;
+    if (t == null) {
+      await TiendaStateService.instance.cargar();
+      t = TiendaStateService.instance.miTienda;
+    }
+    final n = NegocioStateService.instance.miNegocio;
+    var prods = <Map<String, dynamic>>[];
+    final idT = t?['id_tienda']?.toString();
+    if (idT != null) {
+      try {
+        prods = List<Map<String, dynamic>>.from(
+            await TiendasService().obtenerProductosDeTienda(idT));
+      } catch (_) {}
+    }
+    final plan = await _anunciosService.planSlotsActual();
+    if (!mounted) return;
+    setState(() {
+      _miTienda = t;
+      _miNegocio = (n != null && n['estado'] == 'activo') ? n : null;
+      _misProductos = prods;
+      _planSlots = plan;
+      if (_idPermisoElegido == null && plan > 0) _idPermisoElegido = _kPlan;
+    });
+    final d = widget.destinoInicial;
+    if (d != null &&
+        ((d == 'negocio' && _miNegocio != null) ||
+            (d == 'tienda' && _miTienda != null) ||
+            (d == 'producto' && _misProductos.isNotEmpty))) {
+      _alElegirDestino(d);
+    }
+  }
+
+  void _alElegirDestino(String d) {
+    setState(() {
+      _destino = d;
+      _idProductoSel = null;
+      _imagenProductoUrl = null;
+      if (d == 'tienda' && _miTienda != null) {
+        if (_tituloCtrl.text.trim().isEmpty) {
+          _tituloCtrl.text = (_miTienda!['nombre'] ?? '').toString();
+        }
+        if (_whatsappCtrl.text.trim().isEmpty) {
+          _whatsappCtrl.text =
+              (_miTienda!['telefono_whatsapp'] ?? '').toString();
+        }
+      } else if (d == 'negocio' && _miNegocio != null) {
+        if (_tituloCtrl.text.trim().isEmpty) {
+          _tituloCtrl.text = (_miNegocio!['nombre'] ?? '').toString();
+        }
+        if (_whatsappCtrl.text.trim().isEmpty) {
+          _whatsappCtrl.text = (_miNegocio!['whatsapp'] ?? '').toString();
+        }
+      }
+    });
+  }
+
+  void _alElegirProducto(String? id) {
+    final p = _misProductos
+        .where((x) => x['id_producto']?.toString() == id)
+        .toList();
+    if (p.isEmpty) return;
+    final prod = p.first;
+    setState(() {
+      _idProductoSel = id;
+      _imagenProductoUrl = prod['imagen_url'] as String?;
+      _tituloCtrl.text = (prod['nombre'] ?? '').toString();
+      final precio = (prod['precio_usd'] as num?)?.toDouble();
+      if (precio != null) {
+        _precioCtrl.text = precio == precio.roundToDouble()
+            ? precio.toInt().toString()
+            : precio.toStringAsFixed(2);
+      }
+      if (_textoCtrl.text.trim().isEmpty) {
+        _textoCtrl.text =
+            'Disponible en ${_miTienda?['nombre'] ?? 'nuestra tienda'}. ¡Pídelo ya!';
+      }
+      if (_whatsappCtrl.text.trim().isEmpty) {
+        _whatsappCtrl.text =
+            (_miTienda?['telefono_whatsapp'] ?? '').toString();
+      }
+    });
+  }
+
+  /// Selector "¿Qué quieres promocionar?" -- solo aparece si el usuario
+  /// tiene tienda y/o negocio activo; si no, es un anuncio puntual.
+  Widget _seccionDestino() {
+    final opciones = <(String, String, IconData)>[
+      ('ninguno', 'Algo puntual', Icons.sell_outlined),
+      if (_misProductos.isNotEmpty)
+        ('producto', 'Un producto mío', Icons.inventory_2_outlined),
+      if (_miTienda != null) ('tienda', 'Mi tienda', Icons.storefront_rounded),
+      if (_miNegocio != null) ('negocio', 'Mi negocio', Icons.apartment_rounded),
+    ];
+    if (opciones.length == 1) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('¿Qué quieres promocionar?',
+            style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w800, fontSize: 14, color: _colorTexto)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final o in opciones)
+              ChoiceChip(
+                avatar: Icon(o.$3, size: 16),
+                label: Text(o.$2),
+                selected: _destino == o.$1,
+                onSelected: (_) => _alElegirDestino(o.$1),
+              ),
+          ],
+        ),
+        if (_destino == 'producto') ...[
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            value: _idProductoSel,
+            isExpanded: true,
+            decoration: _decoracion('Elige el producto', Icons.inventory_2_outlined),
+            items: [
+              for (final p in _misProductos)
+                DropdownMenuItem(
+                  value: p['id_producto']?.toString(),
+                  child: Text('${p['nombre'] ?? ''}',
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: _alElegirProducto,
+          ),
+        ],
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  /// Ranuras del plan de la tienda como opción del selector.
+  Widget _tarjetaPlan() {
+    final seleccionada = _idPermisoElegido == _kPlan;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(kCardRadius),
+        onTap: () => setState(() => _idPermisoElegido = _kPlan),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: seleccionada
+                ? AppColors.primary.withOpacity(_esOscuro ? 0.16 : 0.08)
+                : _colorSuperficie,
+            borderRadius: BorderRadius.circular(kCardRadius),
+            border: Border.all(
+              color: seleccionada
+                  ? AppColors.primary.withOpacity(0.7)
+                  : _colorBorde,
+              width: seleccionada ? 1.6 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                seleccionada
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                size: 20,
+                color: AppColors.primary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Plan de tu tienda',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: _colorTexto)),
+                    const SizedBox(height: 4),
+                    Text('Incluye hasta $_planSlots anuncios mientras tu plan esté activo',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12, color: _colorTextoSecundario)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -135,6 +347,9 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
     if (s.contains('PERMISO_INVALIDO')) {
       return 'Esa ranura ya no está vigente o no tiene cupo. Elige otra.';
     }
+    if (s.contains('TIENDA_AJENA') || s.contains('NEGOCIO_NO_HABILITADO')) {
+      return 'Solo puedes ligar el anuncio a tu propia tienda o negocio activo.';
+    }
     if (s.contains('WHATSAPP_REQUERIDO')) {
       return 'Agrega un número de WhatsApp para poder publicar tu anuncio.';
     }
@@ -158,7 +373,7 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
 
   Future<void> _publicar() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_idPermisoElegido == null) {
+    if (_idPermisoElegido == null && _planSlots == 0) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -178,6 +393,15 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
       return;
     }
 
+    if (_destino == 'producto' && _idProductoSel == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Elige el producto que quieres anunciar.')),
+        );
+      }
+      return;
+    }
+
     setState(() => _publicando = true);
     try {
       String? imagenUrl;
@@ -192,13 +416,28 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
         setState(() => _subiendoImagen = false);
       }
 
+      // Sin foto propia: usa la del producto / logo de tienda o negocio.
+      imagenUrl ??= switch (_destino) {
+        'producto' => _imagenProductoUrl,
+        'tienda' => _miTienda?['logo_url'] as String?,
+        'negocio' => (_miNegocio?['portada_url'] ?? _miNegocio?['logo_url'])
+            as String?,
+        _ => null,
+      };
+
       await _anunciosService.crearAnuncioStandalone(
         titulo: _tituloCtrl.text.trim(),
         texto: _textoCtrl.text.trim(),
         imagenUrl: imagenUrl,
-        idPermiso: _idPermisoElegido,
+        idPermiso: _idPermisoElegido == _kPlan ? null : _idPermisoElegido,
         precioUsd: precio,
         whatsapp: _whatsappCtrl.text.trim(),
+        idProducto: _destino == 'producto' ? _idProductoSel : null,
+        idTienda: (_destino == 'tienda' || _destino == 'producto')
+            ? _miTienda?['id_tienda']?.toString()
+            : null,
+        idNegocio:
+            _destino == 'negocio' ? _miNegocio?['id_negocio']?.toString() : null,
       );
 
       if (mounted) {
@@ -671,6 +910,7 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
                     child: Center(child: CircularProgressIndicator()),
                   );
                 }
+                if (permisos.isEmpty && _planSlots > 0) return _tarjetaPlan();
                 if (permisos.isEmpty) {
                   return Container(
                     padding: const EdgeInsets.all(12),
@@ -704,6 +944,10 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
                     final usos = usnap.data ?? const {};
                     return Column(
                       children: [
+                        if (_planSlots > 0) ...[
+                          _tarjetaPlan(),
+                          const SizedBox(height: 8),
+                        ],
                         for (final p in permisos) ...[
                           _tarjetaRanura(context, p, usos),
                           const SizedBox(height: 8),
@@ -732,6 +976,7 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  _seccionDestino(),
                   TextFormField(
                     controller: _tituloCtrl,
                     maxLength: 60,
@@ -856,7 +1101,7 @@ class _PlanesStandaloneSheetState extends State<_PlanesStandaloneSheet> {
     super.initState();
     _paquetes = _anunciosService
         .obtenerPaquetesActivos()
-        .then((l) => l.where((p) => p['standalone'] == true).toList());
+        .then((l) => List<Map<String, dynamic>>.from(l));
   }
 
   Future<void> _abrirModalPago(Map<String, dynamic> paquete) async {

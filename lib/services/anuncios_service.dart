@@ -40,6 +40,15 @@ const int kMaxRanurasNegocio = 5;
 /// de anuncios de tienda en Supabase -- si cambias uno, cambia el otro.
 const int kMaxRanurasExtraTienda = 5;
 
+/// Normaliza un WhatsApp: solo dígitos; si son 8 y empiezan con 5
+/// (móvil cubano sin código de país) antepone 53. Espejo de
+/// fn_normalizar_whatsapp en Supabase.
+String normalizarWhatsapp(String raw) {
+  final d = raw.replaceAll(RegExp(r'[^0-9]'), '');
+  if (d.length == 8 && d.startsWith('5')) return '53$d';
+  return d;
+}
+
 class Anuncio {
   final String idAnuncio;
   final String tipo; // 'admin' | 'negocio' | 'producto' | 'standalone'
@@ -281,17 +290,47 @@ class AnunciosService {
   // también lo define el admin (configuracion_app -> whatsapp_pagos).
   // ------------------------------------------------------------------
 
-  /// Paquetes activos ordenados por `orden`.
+  /// Paquetes de ANUNCIO activos ordenados por `orden` (excluye el paquete
+  /// de registro de negocio, que se paga una sola vez al registrarse).
   Future<List<Map<String, dynamic>>> obtenerPaquetesActivos() async {
     try {
       final res = await supabase
           .from('paquetes_anuncio')
           .select()
           .eq('activo', true)
+          .neq('tipo_paquete', 'registro_negocio')
           .order('orden', ascending: true);
       return List<Map<String, dynamic>>.from(res as List);
     } catch (e) {
-      debugPrint('obtenerPaquetesActivos falló (¿offline?): $e');
+      // Si la columna tipo_paquete aún no existe (SQL sin aplicar), cae a
+      // la consulta sin filtro.
+      try {
+        final res = await supabase
+            .from('paquetes_anuncio')
+            .select()
+            .eq('activo', true)
+            .order('orden', ascending: true);
+        return List<Map<String, dynamic>>.from(res as List);
+      } catch (e2) {
+        debugPrint('obtenerPaquetesActivos falló (¿offline?): $e2');
+        return [];
+      }
+    }
+  }
+
+  /// Paquete de REGISTRO de negocio: pago único, el negocio queda en el
+  /// mapa para siempre. Lista vacía si el admin aún no lo configuró.
+  Future<List<Map<String, dynamic>>> obtenerPaquetesRegistroNegocio() async {
+    try {
+      final res = await supabase
+          .from('paquetes_anuncio')
+          .select()
+          .eq('activo', true)
+          .eq('tipo_paquete', 'registro_negocio')
+          .order('orden', ascending: true);
+      return List<Map<String, dynamic>>.from(res as List);
+    } catch (e) {
+      debugPrint('obtenerPaquetesRegistroNegocio falló: $e');
       return [];
     }
   }
@@ -443,21 +482,13 @@ class AnunciosService {
     }
   }
 
-  /// Ranuras de anuncio de la tienda: cuántas usa y cuántas permite en
-  /// TOTAL (plan + extra).
+  /// Ranuras del usuario (UNIFICADAS): anuncios en uso vs. plan de la
+  /// tienda + permisos comprados (permisos_usuario_anuncios).
+  /// Se mantiene la firma por compatibilidad con Mi Perfil.
   Future<({int usados, int max, int maxPlan, int maxExtra})> ranurasDeTienda(
       String idTienda) async {
-    var usados = 0;
+    final uid = supabase.auth.currentUser?.id;
     var maxPlan = 0;
-    try {
-      final res = await supabase
-          .from('anuncios')
-          .select('id_anuncio')
-          .eq('tipo', 'producto')
-          .eq('id_tienda', idTienda)
-          .eq('estado', 'aprobado');
-      usados = (res as List).length;
-    } catch (_) {}
     try {
       final res = await supabase
           .from('tiendas')
@@ -469,13 +500,69 @@ class AnunciosService {
         maxPlan = (planes['ranuras_anuncios'] as num).toInt();
       }
     } catch (_) {}
-    final maxExtra = await _ranurasExtraDeTienda(idTienda);
+    final usados = uid == null ? 0 : await _usadosUnificados(uid);
+    final maxExtra = uid == null ? 0 : (await _permisosVigentes(uid)).max;
     return (
       usados: usados,
       max: maxPlan + maxExtra,
       maxPlan: maxPlan,
       maxExtra: maxExtra,
     );
+  }
+
+  /// Anuncios de usuario en uso (aprobados, no automáticos, no admin).
+  Future<int> _usadosUnificados(String uid) async {
+    try {
+      final res = await supabase
+          .from('anuncios')
+          .select('id_anuncio')
+          .eq('creado_por', uid)
+          .neq('tipo', 'admin')
+          .eq('es_automatico', false)
+          .eq('estado', 'aprobado');
+      return (res as List).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Suma de ranuras de los permisos comprados vigentes + última vigencia.
+  Future<({int max, DateTime? hasta})> _permisosVigentes(String uid) async {
+    var max = 0;
+    DateTime? hasta;
+    try {
+      final res = await supabase
+          .from('permisos_usuario_anuncios')
+          .select('max_anuncios, hasta')
+          .eq('id_usuario', uid)
+          .eq('activo', true)
+          .gt('hasta', DateTime.now().toIso8601String());
+      for (final p in (res as List)) {
+        max += ((p['max_anuncios'] as num?)?.toInt() ?? 0);
+        final h = DateTime.tryParse(p['hasta'] as String? ?? '');
+        if (h != null && (hasta == null || h.isAfter(hasta))) hasta = h;
+      }
+    } catch (_) {}
+    return (max: max, hasta: hasta);
+  }
+
+  /// Ranuras que da el PLAN de la tienda del usuario (ej. SOCIO = 20).
+  Future<int> planSlotsActual() async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return 0;
+    try {
+      final res = await supabase
+          .from('tiendas')
+          .select('plan, planes:plan!inner(ranuras_anuncios)')
+          .eq('owner_id', uid)
+          .eq('estado', 'active')
+          .maybeSingle();
+      final planes = res?['planes'];
+      if (planes is Map && planes['ranuras_anuncios'] != null) {
+        return (planes['ranuras_anuncios'] as num).toInt();
+      }
+    } catch (_) {}
+    return 0;
   }
 
   /// Potencia un producto existente.
@@ -607,40 +694,20 @@ class AnunciosService {
   // publicación libre sin verificación de pago.
   // ------------------------------------------------------------------
 
-  /// Ranuras de anuncio INDEPENDIENTE del usuario actual: usadas
-  /// (aprobadas) vs. máximo según la suma de sus permisos vigentes.
+  /// Ranuras UNIFICADAS del usuario: anuncios en uso vs. permisos comprados
+  /// + ranuras del plan de su tienda.
   Future<({int usados, int max, DateTime? vigenteHasta})>
       ranurasStandalone() async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) return (usados: 0, max: 0, vigenteHasta: null);
-    var usados = 0;
-    var max = 0;
-    DateTime? vigenteHasta;
-    try {
-      final res = await supabase
-          .from('anuncios')
-          .select('id_anuncio')
-          .eq('tipo', 'standalone')
-          .eq('creado_por', uid)
-          .eq('estado', 'aprobado');
-      usados = (res as List).length;
-    } catch (_) {}
-    try {
-      final res = await supabase
-          .from('permisos_usuario_anuncios')
-          .select('max_anuncios, hasta')
-          .eq('id_usuario', uid)
-          .eq('activo', true)
-          .gt('hasta', DateTime.now().toIso8601String());
-      for (final p in (res as List)) {
-        max += ((p['max_anuncios'] as num?)?.toInt() ?? 0);
-        final h = DateTime.tryParse(p['hasta'] as String? ?? '');
-        if (h != null && (vigenteHasta == null || h.isAfter(vigenteHasta!))) {
-          vigenteHasta = h;
-        }
-      }
-    } catch (_) {}
-    return (usados: usados, max: max, vigenteHasta: vigenteHasta);
+    final usados = await _usadosUnificados(uid);
+    final permisos = await _permisosVigentes(uid);
+    final plan = await planSlotsActual();
+    return (
+      usados: usados,
+      max: permisos.max + plan,
+      vigenteHasta: permisos.hasta,
+    );
   }
 
   /// Detalle de los permisos vigentes (paquetes comprados y aprobados)
@@ -691,10 +758,11 @@ class AnunciosService {
       return const {};
     }
   }
-  /// El cupo y la vigencia los resuelve el trigger
-  /// anuncios_before_insert contra permisos_usuario_anuncios -- si no
-  /// hay ranuras vigentes en el permiso elegido, el insert lanza
-  /// 'CUPO_ANUNCIOS'.
+  /// Crea el anuncio UNIFICADO. [idProducto] / [idTienda] / [idNegocio]
+  /// son vínculos OPCIONALES a algo propio (el trigger valida que lo sea).
+  /// Si [idPermiso] es null se usa el pool (plan de la tienda + permisos).
+  /// El WhatsApp se normaliza; si va vacío y hay tienda/negocio ligado, el
+  /// trigger lo completa desde ahí.
   Future<void> crearAnuncioStandalone({
     required String titulo,
     required String texto,
@@ -702,20 +770,28 @@ class AnunciosService {
     String? imagenUrl,
     String? idPermiso,
     double? precioUsd,
+    String? idProducto,
+    String? idTienda,
+    String? idNegocio,
   }) async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) throw Exception('SESION_REQUERIDA');
-    final tel = whatsapp.trim();
-    if (tel.isEmpty) throw Exception('WHATSAPP_REQUERIDO');
+    final tel = normalizarWhatsapp(whatsapp);
+    if (tel.isEmpty && idTienda == null && idNegocio == null && idProducto == null) {
+      throw Exception('WHATSAPP_REQUERIDO');
+    }
     await supabase.from('anuncios').insert({
       'tipo': 'standalone',
       'titulo': titulo,
       'texto': texto,
-      'whatsapp': tel,
+      if (tel.isNotEmpty) 'whatsapp': tel,
       if (imagenUrl != null && imagenUrl.isNotEmpty) 'imagen_url': imagenUrl,
       if (idPermiso != null && idPermiso.isNotEmpty)
         'id_permiso_usuario': idPermiso,
       if (precioUsd != null) 'precio_usd': precioUsd,
+      if (idProducto != null) 'id_producto': idProducto,
+      if (idTienda != null) 'id_tienda': idTienda,
+      if (idNegocio != null) 'id_negocio': idNegocio,
       'creado_por': uid,
     });
   }
@@ -728,7 +804,8 @@ class AnunciosService {
       final res = await supabase
           .from('anuncios')
           .select()
-          .eq('tipo', 'standalone')
+          .neq('tipo', 'admin')
+          .eq('es_automatico', false)
           .eq('creado_por', uid)
           .order('creado_en', ascending: false);
       return List<Map<String, dynamic>>.from(res as List);
@@ -767,7 +844,7 @@ class AnunciosService {
     String? imagenUrl,
     double? precioUsd,
   }) async {
-    final tel = whatsapp.trim();
+    final tel = normalizarWhatsapp(whatsapp);
     if (tel.isEmpty) throw Exception('WHATSAPP_REQUERIDO');
     final data = <String, dynamic>{
       'titulo': titulo,
@@ -897,7 +974,7 @@ class AnunciosService {
       'titulo': titulo.trim(),
       'texto': texto.trim(),
       'precio_usd': precioUsd,
-      'whatsapp': whatsapp.trim(),
+      'whatsapp': normalizarWhatsapp(whatsapp),
     };
     if (imagenUrl != null && imagenUrl.isNotEmpty) {
       data['imagen_url'] = imagenUrl;

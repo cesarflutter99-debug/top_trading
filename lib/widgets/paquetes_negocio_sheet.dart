@@ -9,8 +9,6 @@
 // Si el negocio ya tiene permiso vigente, arriba aparece su estado y un
 // acceso directo a GESTIONAR sus anuncios (anuncios_negocio_sheet).
 
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -19,21 +17,19 @@ import '../core/supabase_client.dart';
 import '../services/anuncios_service.dart';
 import '../services/tiendas_service.dart';
 import '../services/currency_service.dart';
-import 'anuncios_negocio_sheet.dart';
+import '../screens/standalone_anuncio_screen.dart';
 import 'fila_dato_copiable.dart';
 
 const Color _kVerde = Color(0xFF0D9488);
 
+/// Compatibilidad: la antigua hoja "Anuncios y promociones" del negocio
+/// ya no existe. Todo se gestiona desde el anuncio unificado.
 Future<void> mostrarPaquetesNegocioSheet(
   BuildContext context,
   Map<String, dynamic> negocio,
 ) {
-  return showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.white,
-    builder: (_) => _PaquetesNegocioSheet(negocio: negocio),
-  );
+  return Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const StandaloneAnuncioScreen()));
 }
 
 /// Modal de pago de UN paquete, público para reutilizarlo desde el
@@ -61,494 +57,6 @@ Future<void> mostrarModalPagoPaquete({
       onVerificar: onVerificar,
     ),
   );
-}
-
-class _PaquetesNegocioSheet extends StatefulWidget {
-  final Map<String, dynamic> negocio;
-  const _PaquetesNegocioSheet({required this.negocio});
-
-  @override
-  State<_PaquetesNegocioSheet> createState() => _PaquetesNegocioSheetState();
-}
-
-class _PaquetesNegocioSheetState extends State<_PaquetesNegocioSheet> {
-  final _anunciosService = AnunciosService();
-  final _tiendasService = TiendasService();
-
-  late Future<List<Map<String, dynamic>>> _paquetes;
-  // Compras aún sin verificar por el admin -- alimentan el banner
-  // "en revisión" para que el usuario sepa que su solicitud quedó
-  // registrada incluso antes de que el admin la apruebe.
-  late Future<List<Map<String, dynamic>>> _pendientes;
-  bool _procesando = false;
-  String? _aviso;
-
-  String get _idNegocio => widget.negocio['id_negocio'] as String;
-  String get _nombreNegocio =>
-      (widget.negocio['nombre'] as String?) ?? 'nuestro negocio';
-
-  @override
-  void initState() {
-    super.initState();
-    _paquetes = _anunciosService.obtenerPaquetesActivos();
-    _pendientes = _anunciosService.comprasPendientesDeNegocio(_idNegocio);
-    _anunciosService.ranurasDeNegocio(_idNegocio).then((r) {
-      // Solo para refrescar el banner si cambió mientras tanto
-      if (mounted) setState(() {});
-    });
-  }
-
-  void _avisoMsg(String msg) {
-    if (!mounted) return;
-    setState(() => _aviso = msg);
-    Future.delayed(const Duration(seconds: 4), () {
-      if (mounted && _aviso == msg) setState(() => _aviso = null);
-    });
-  }
-
-  String _generarCodigoCompra() {
-    const alfabeto = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    final rnd = Random();
-    return 'AN-' +
-        List.generate(4, (_) => alfabeto[rnd.nextInt(alfabeto.length)]).join();
-  }
-
-  /// Flujo de compra estilo "modal pago plan": tarjeta de datos de la
-  /// cuenta, pasos numerados y botón verde de WhatsApp. La compra queda
-  /// 'pendiente' AL PRESIONAR "Verificar Pago" (con código AN-XXXX).
-  Future<void> _abrirModalPago(Map<String, dynamic> paquete) async {
-    final cuentas = await _anunciosService
-        .obtenerCuentasDePaquete(paquete['id_paquete'] as String);
-    if (!mounted) return;
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      builder: (sheetContext) => _ModalPagoPaquete(
-        paquete: paquete,
-        cuentas: cuentas,
-        negocio: widget.negocio,
-        onVerificar: () async {
-          // 1) registrar compra pendiente con código legible
-          final codigoRef = _generarCodigoCompra();
-          await _anunciosService.crearCompraPendiente(
-            idNegocio: _idNegocio,
-            idPaquete: paquete['id_paquete'] as String,
-            codigoRef: codigoRef,
-          );
-          return codigoRef;
-        },
-      ),
-    );
-    // Al volver del modal (pagó o canceló), resincroniza el banner de
-    // pendientes -- si acaba de verificar, acá aparece su AN-XXXX.
-    if (mounted) {
-      setState(() {
-        _pendientes = _anunciosService.comprasPendientesDeNegocio(_idNegocio);
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final esOscuro = theme.brightness == Brightness.dark;
-
-    return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.85,
-        ),
-        decoration: BoxDecoration(
-          color: esOscuro ? theme.colorScheme.surface : Colors.white,
-          borderRadius:
-              const BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: theme.dividerColor,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 12, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text('Anuncios y promociones',
-                        style: GoogleFonts.inter(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 18,
-                            color: theme.textTheme.bodyLarge?.color)),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
-            ),
-            Flexible(
-              child: FutureBuilder<
-                  ({List<Map<String, dynamic>> paquetes})>(
-                future: _paquetes.then((p) => (paquetes: p)),
-                builder: (context, snap) {
-                  final paquetes = snap.data?.paquetes ?? [];
-                  return SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_aviso != null)
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: AppColors.warm
-                                  .withOpacity(esOscuro ? 0.2 : 0.12),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                  color: AppColors.warm.withOpacity(0.45)),
-                            ),
-                            child: Text(_aviso!,
-                                style: GoogleFonts.inter(fontSize: 12.5)),
-                          ),
-
-                        // ---------- Compras en revisión ----------
-                        FutureBuilder<List<Map<String, dynamic>>>(
-                          future: _pendientes,
-                          builder: (context, psnap) {
-                            final pends = psnap.data ?? const [];
-                            if (pends.isEmpty) return const SizedBox.shrink();
-                            final primera = pends.first;
-                            final codigo =
-                                (primera['codigo_ref'] as String?) ?? '';
-                            final extra = pends.length > 1
-                                ? ' (y ${pends.length - 1} más)'
-                                : '';
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: AppColors.warm.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                    color: AppColors.warm.withOpacity(0.4)),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.hourglass_top_rounded,
-                                      size: 20, color: AppColors.warm),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
-                                      'Compra ${codigo.trim().isEmpty ? 'registrada' : codigo}'
-                                      '$extra en revisión: el admin va a '
-                                      'verificar tu pago por WhatsApp y tu '
-                                      'paquete se activa solo.',
-                                      style: TextStyle(
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w600,
-                                        height: 1.4,
-                                        color: theme.textTheme.bodyMedium?.color,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-
-                        // ---------- Estado del paquete actual ----------
-                        FutureBuilder<({int usados, int max, DateTime? vigenteHasta})>(
-                          future: _anunciosService
-                              .ranurasDeNegocio(_idNegocio),
-                          builder: (context, rsnap) {
-                            final r = rsnap.data;
-                            if (r == null || r.max <= 0) {
-                              return Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: AppColors.warm.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                      color: AppColors.warm.withOpacity(0.4)),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.workspace_premium_rounded,
-                                        size: 20, color: AppColors.warm),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        'No tienes paquete activo. Elige una '
-                                        'oferta abajo para empezar.',
-                                        style: GoogleFonts.inter(
-                                            fontSize: 12.5,
-                                            fontWeight: FontWeight.w600,
-                                            height: 1.4),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-                            final h = r.vigenteHasta;
-                            return Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: _kVerde.withOpacity(0.08),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                    color: _kVerde.withOpacity(0.3)),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Icon(Icons.check_circle_rounded,
-                                          size: 20, color: _kVerde),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          '${r.usados} de ${r.max} anuncios en uso'
-                                          '${h != null ? ' · paquete válido hasta ${h.day}/${h.month}/${h.year}' : ''}',
-                                          style: GoogleFonts.inter(
-                                              fontSize: 12.5,
-                                              fontWeight: FontWeight.w700,
-                                              color: _kVerde,
-                                              height: 1.4),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 10),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    height: 40,
-                                    child: OutlinedButton.icon(
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: _kVerde,
-                                        side: BorderSide(
-                                            color:
-                                                _kVerde.withOpacity(0.5)),
-                                      ),
-                                      onPressed: () {
-                                        Navigator.of(context).pop();
-                                        mostrarAnunciosNegocioSheet(
-                                            context, widget.negocio);
-                                      },
-                                      icon: const Icon(
-                                          Icons.campaign_rounded,
-                                          size: 17),
-                                      label: Text('Gestionar mis anuncios',
-                                          style: GoogleFonts.inter(
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 13)),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 18),
-
-                        // ---------- Ofertas ----------
-                        Text('Ofertas',
-                            style: GoogleFonts.inter(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w800,
-                                color: theme.textTheme.bodyLarge?.color)),
-                        const SizedBox(height: 4),
-                        Text('Pago verificado por WhatsApp.',
-                            style: GoogleFonts.inter(
-                                fontSize: 12,
-                                color: theme.textTheme.bodySmall?.color)),
-                        const SizedBox(height: 10),
-
-                        // NUEVO (2026-08): explica para qué sirve el
-                        // paquete más corto -- no solo negocios fijos
-                        // (barberías, talleres) pueden anunciarse acá.
-                        // Un evento puntual (fiesta, venta de garaje,
-                        // rifa, bazar de un fin de semana) también
-                        // puede registrarse como "negocio" y usar el
-                        // paquete semanal para promocionarse sin pagar
-                        // por más tiempo del que necesita.
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 14),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AppColors.warm
-                                .withOpacity(esOscuro ? 0.14 : 0.08),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                                color: AppColors.warm.withOpacity(0.35)),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(Icons.celebration_rounded,
-                                  size: 18, color: AppColors.warm),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  '¿Vas a organizar una fiesta, venta de '
-                                  'garaje, rifa o evento de un fin de '
-                                  'semana? El paquete de 1 semana es '
-                                  'ideal: promociónalo sin comprometerte '
-                                  'a más tiempo del que necesitas.',
-                                  style: GoogleFonts.inter(
-                                      fontSize: 12,
-                                      height: 1.4,
-                                      color: theme.textTheme.bodySmall?.color),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (snap.connectionState == ConnectionState.waiting)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 30),
-                            child:
-                                Center(child: CircularProgressIndicator()),
-                          )
-                        else if (paquetes.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 24),
-                            child: Text(
-                              'No hay paquetes publicados todavía. '
-                              'Escríbenos por WhatsApp y coordinamos.',
-                              textAlign: TextAlign.center,
-                              style: GoogleFonts.inter(
-                                  color: theme.textTheme.bodySmall?.color,
-                                  height: 1.45),
-                            ),
-                          )
-                        else
-                          ...paquetes.map((p) => _tarjetaPaquete(p, theme)),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _tarjetaPaquete(Map<String, dynamic> p, ThemeData theme) {
-    // NUEVO (2026-08): paquetes de 7 días o menos se marcan como
-    // "ideal para eventos" -- fiestas, ventas de garaje, rifas, etc.
-    // que solo necesitan promoción por un fin de semana o una semana,
-    // no todo un mes.
-    final duracion = (p['duracion_dias'] as num?)?.toInt() ?? 0;
-    final esParaEventos = duracion > 0 && duracion <= 7;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _kVerde.withOpacity(0.35)),
-        color: _kVerde.withOpacity(0.05),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(p['nombre'] ?? 'Paquete',
-                    style: GoogleFonts.inter(
-                        fontWeight: FontWeight.w800, fontSize: 15)),
-              ),
-              AnimatedBuilder(
-                animation: CurrencyService.instance,
-                builder: (context, _) => Text(
-                  CurrencyService.instance
-                      .formatear((p['precio_usd'] as num).toDouble()),
-                  style: GoogleFonts.inter(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                      color: _kVerde),
-                ),
-              ),
-            ],
-          ),
-          if (esParaEventos) ...[
-            const SizedBox(height: 6),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: AppColors.warm.withOpacity(0.14),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.celebration_rounded,
-                      size: 12, color: AppColors.warm),
-                  const SizedBox(width: 4),
-                  Text('IDEAL PARA EVENTOS',
-                      style: GoogleFonts.inter(
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.3,
-                          color: AppColors.warm)),
-                ],
-              ),
-            ),
-          ],
-          const SizedBox(height: 2),
-          Text(
-            '${p['duracion_dias']} días · hasta ${p['max_anuncios']} anuncio(s) simultáneo(s)',
-            style: GoogleFonts.inter(
-                fontSize: 12, color: theme.textTheme.bodySmall?.color),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 42,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: _kVerde,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: _procesando ? null : () => _abrirModalPago(p),
-              icon: _procesando
-                  ? const SizedBox(
-                      height: 16,
-                      width: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.chat_rounded, size: 16),
-              label: Text('Adquirir por WhatsApp',
-                  style:
-                      GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// Modal de pago de un paquete -- MISMO estilo que ModalPagoPlan:
@@ -615,13 +123,16 @@ class _ModalPagoPaqueteState extends State<_ModalPagoPaquete> {
       Navigator.of(context).pop();
 
       final buf = StringBuffer();
-      buf.writeln('Compra de PAQUETE DE ANUNCIO en Al Lado:');
+      final esRegistro = widget.paquete['tipo_paquete'] == 'registro_negocio';
+      buf.writeln(esRegistro
+          ? 'REGISTRO DE NEGOCIO (pago único) en Al Lado:'
+          : 'Compra de PAQUETE DE ANUNCIO en Al Lado:');
       buf.writeln('- Negocio: ${widget.negocio['nombre'] ?? 'nuestro negocio'}');
       final email = supabase.auth.currentUser?.email;
       if (email != null && email.isNotEmpty) buf.writeln('- Cuenta: $email');
       buf.writeln('- Paquete: ${widget.paquete['nombre']} '
           '(${CurrencyService.instance.formatear((widget.paquete['precio_usd'] as num).toDouble())} / '
-          '${widget.paquete['duracion_dias']} días)');
+          '${esRegistro ? 'pago único' : '${widget.paquete['duracion_dias']} días'})');
       if (_cuentaSel != null) {
         buf.writeln(
             '- Pagado en: ${_cuentaSel!['tipo']} · ${_cuentaSel!['numero_tarjeta']}');
@@ -698,7 +209,9 @@ class _ModalPagoPaqueteState extends State<_ModalPagoPaquete> {
                     ),
                   ),
                 ),
-                Text('Pagar paquete ${p['nombre']}',
+                Text(p['tipo_paquete'] == 'registro_negocio'
+                    ? 'Pagar ${p['nombre']}'
+                    : 'Pagar paquete ${p['nombre']}',
                     style: GoogleFonts.inter(
                         fontSize: 19, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 2),
@@ -711,7 +224,9 @@ class _ModalPagoPaqueteState extends State<_ModalPagoPaquete> {
                   animation: CurrencyService.instance,
                   builder: (context, _) => Text(
                     '${CurrencyService.instance.formatear((p['precio_usd'] as num).toDouble())} '
-                    '· ${p['duracion_dias']} días',
+                    p['tipo_paquete'] == 'registro_negocio'
+                        ? '· pago único, para siempre'
+                        : '· ${p['duracion_dias']} días',
                     style: GoogleFonts.inter(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,

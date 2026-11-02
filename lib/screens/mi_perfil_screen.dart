@@ -44,7 +44,6 @@ import '../services/theme_provider.dart';
 import '../services/tiendas_service.dart';
 import '../services/tienda_state_service.dart';
 import '../services/afiliado_state_service.dart';
-import '../widgets/paquetes_negocio_sheet.dart';
 import '../widgets/servicios_negocio_sheet.dart';
 import '../widgets/gestionar_anuncios_standalone_sheet.dart';
 import 'onboarding_negocio_screen.dart';
@@ -931,8 +930,8 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
           color: AppColors.success,
           icono: Icons.check_circle_rounded,
           titulo: '"${n['nombre']}" está aprobado',
-          texto: 'Ya aparece en el mapa y, si tienes paquete vigente, '
-              'también rota en el feed.',
+          texto: 'Ya aparece en el mapa para siempre. Para que salga en el '
+              'feed y en Anuncios, usa "Potenciar mi negocio".',
           botonTexto: 'Ver mi mini-página',
           accion: () => context.push('/negocio/${n['id_negocio']}'),
           accionesSecundarias: [
@@ -943,8 +942,10 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
             ),
             (
               icono: Icons.campaign_rounded,
-              texto: 'Anuncios y promociones',
-              accion: () => mostrarPaquetesNegocioSheet(context, n),
+              texto: 'Potenciar mi negocio',
+              accion: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const StandaloneAnuncioScreen(
+                      destinoInicial: 'negocio'))),
             ),
           ],
         );

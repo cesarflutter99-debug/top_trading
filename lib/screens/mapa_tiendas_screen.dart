@@ -56,6 +56,32 @@ const Color _kDorado = Color(0xFFD4AF37);
 // Color identitario de los negocios/servicios en toda la app.
 const Color _kVerdeNegocio = Color(0xFF0D9488);
 
+// Icono del pin de un NEGOCIO según su categoría (texto libre).
+// Por defecto: tienda genérica. Solo barberías/peluquerías usan tijera.
+IconData _iconoNegocio(String? categoria) {
+  final c = (categoria ?? '').toLowerCase();
+  if (c.contains('evento') || c.contains('fiesta') || c.contains('rifa')) {
+    return Icons.celebration_rounded;
+  }
+  if (c.contains('barber') || c.contains('peluq')) {
+    return Icons.content_cut_rounded;
+  }
+  if (c.contains('taller') || c.contains('mecan')) return Icons.build_rounded;
+  if (c.contains('joyer')) return Icons.diamond_outlined;
+  if (c.contains('consultorio') || c.contains('veterin') || c.contains('clinic')) {
+    return Icons.medical_services_outlined;
+  }
+  if (c.contains('restaur') || c.contains('cafe') || c.contains('pizz') ||
+      c.contains('repost')) {
+    return Icons.restaurant_rounded;
+  }
+  if (c.contains('gimnas')) return Icons.fitness_center_rounded;
+  if (c.contains('lavand')) return Icons.local_laundry_service_rounded;
+  if (c.contains('foto')) return Icons.photo_camera_outlined;
+  return Icons.storefront_rounded;
+}
+
+
 // Alturas del panel inferior (sin contar el espacio de la barra de nav).
 const double _kAltoPanelAbierto = 182;
 const double _kAltoPanelCerrado = 60;
@@ -721,7 +747,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
         _punto(n),
         _PinMapa(
           color: _kVerdeNegocio,
-          icono: Icons.content_cut_rounded,
+          icono: _iconoNegocio(n['categoria'] as String?),
           nombre: n['nombre']?.toString() ?? '',
           subtitulo: n['categoria']?.toString(),
           estrellas: null,

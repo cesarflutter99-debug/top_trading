@@ -464,7 +464,7 @@ class _GestionarAnuncioScreenState extends State<GestionarAnuncioScreen> {
         ],
       ),
       body: _cuerpo(),
-      bottomNavigationBar: (_anuncio != null && _esStandalone)
+      bottomNavigationBar: (_anuncio != null && _anuncio?['es_automatico'] != true)
           ? _barraAcciones()
           : null,
     );
