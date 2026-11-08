@@ -425,6 +425,18 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
         _ => null,
       };
 
+      final tiendaMap = _miTienda;
+      final negocioMap = _miNegocio;
+      String? idTiendaSel;
+      if ((_destino == 'tienda' || _destino == 'producto') &&
+          tiendaMap != null) {
+        idTiendaSel = tiendaMap['id_tienda']?.toString();
+      }
+      String? idNegocioSel;
+      if (_destino == 'negocio' && negocioMap != null) {
+        idNegocioSel = negocioMap['id_negocio']?.toString();
+      }
+
       await _anunciosService.crearAnuncioStandalone(
         titulo: _tituloCtrl.text.trim(),
         texto: _textoCtrl.text.trim(),
@@ -433,11 +445,8 @@ class _StandaloneAnuncioScreenState extends State<StandaloneAnuncioScreen> {
         precioUsd: precio,
         whatsapp: _whatsappCtrl.text.trim(),
         idProducto: _destino == 'producto' ? _idProductoSel : null,
-        idTienda: (_destino == 'tienda' || _destino == 'producto')
-            ? _miTienda?['id_tienda']?.toString()
-            : null,
-        idNegocio:
-            _destino == 'negocio' ? _miNegocio?['id_negocio']?.toString() : null,
+        idTienda: idTiendaSel,
+        idNegocio: idNegocioSel,
       );
 
       if (mounted) {

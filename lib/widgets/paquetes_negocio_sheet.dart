@@ -222,18 +222,22 @@ class _ModalPagoPaqueteState extends State<_ModalPagoPaquete> {
                 const SizedBox(height: 6),
                 AnimatedBuilder(
                   animation: CurrencyService.instance,
-                  builder: (context, _) => Text(
-                    '${CurrencyService.instance.formatear((p['precio_usd'] as num).toDouble())} '
-                    p['tipo_paquete'] == 'registro_negocio'
+                  builder: (context, _) {
+                    final precioTxt = CurrencyService.instance
+                        .formatear((p['precio_usd'] as num).toDouble());
+                    final sufijoTxt = p['tipo_paquete'] == 'registro_negocio'
                         ? '· pago único, para siempre'
-                        : '· ${p['duracion_dias']} días',
-                    style: GoogleFonts.inter(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: esOscuro
-                            ? Colors.green.shade300
-                            : Colors.green),
-                  ),
+                        : '· ${p['duracion_dias']} días';
+                    return Text(
+                      '$precioTxt $sufijoTxt',
+                      style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: esOscuro
+                              ? Colors.green.shade300
+                              : Colors.green),
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
 
