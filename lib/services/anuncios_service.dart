@@ -296,24 +296,28 @@ class AnunciosService {
     try {
       final res = await supabase
           .from('paquetes_anuncio')
-          .select()
+          .select('id_paquete, nombre, descripcion, precio_usd, duracion_dias, activo, tipo_paquete, orden')
           .eq('activo', true)
           .neq('tipo_paquete', 'registro_negocio')
           .order('orden', ascending: true);
-      return List<Map<String, dynamic>>.from(res as List);
+      final lista = List<Map<String, dynamic>>.from(res as List);
+      CacheOfflineService.instance.guardar('paquetes_anuncio_activos', lista);
+      return lista;
     } catch (e) {
       // Si la columna tipo_paquete aún no existe (SQL sin aplicar), cae a
       // la consulta sin filtro.
       try {
         final res = await supabase
             .from('paquetes_anuncio')
-            .select()
+            .select('id_paquete, nombre, descripcion, precio_usd, duracion_dias, activo, orden')
             .eq('activo', true)
             .order('orden', ascending: true);
-        return List<Map<String, dynamic>>.from(res as List);
+        final lista = List<Map<String, dynamic>>.from(res as List);
+        CacheOfflineService.instance.guardar('paquetes_anuncio_activos', lista);
+        return lista;
       } catch (e2) {
         debugPrint('obtenerPaquetesActivos falló (¿offline?): $e2');
-        return [];
+        return CacheOfflineService.instance.leerLista('paquetes_anuncio_activos') ?? [];
       }
     }
   }
@@ -324,14 +328,16 @@ class AnunciosService {
     try {
       final res = await supabase
           .from('paquetes_anuncio')
-          .select()
+          .select('id_paquete, nombre, descripcion, precio_usd, duracion_dias, activo, tipo_paquete, orden')
           .eq('activo', true)
           .eq('tipo_paquete', 'registro_negocio')
           .order('orden', ascending: true);
-      return List<Map<String, dynamic>>.from(res as List);
+      final lista = List<Map<String, dynamic>>.from(res as List);
+      CacheOfflineService.instance.guardar('paquetes_registro_negocio', lista);
+      return lista;
     } catch (e) {
       debugPrint('obtenerPaquetesRegistroNegocio falló: $e');
-      return [];
+      return CacheOfflineService.instance.leerLista('paquetes_registro_negocio') ?? [];
     }
   }
 
@@ -341,13 +347,15 @@ class AnunciosService {
     try {
       final res = await supabase
           .from('paquetes_anuncio_cuentas_pago')
-          .select()
+          .select('id_cuenta, id_paquete, codigo_pago, tipo_pago, monto, activo')
           .eq('id_paquete', idPaquete)
           .eq('activo', true);
-      return List<Map<String, dynamic>>.from(res as List);
+      final lista = List<Map<String, dynamic>>.from(res as List);
+      CacheOfflineService.instance.guardar('cuentas_paquete_$idPaquete', lista);
+      return lista;
     } catch (e) {
       debugPrint('obtenerCuentasDePaquete falló: $e');
-      return [];
+      return CacheOfflineService.instance.leerLista('cuentas_paquete_$idPaquete') ?? [];
     }
   }
 
@@ -428,13 +436,15 @@ class AnunciosService {
     try {
       final res = await supabase
           .from('compras_anuncio')
-          .select()
+          .select('id_compra, id_tienda, id_paquete, estado, codigo_ref, creado_en')
           .eq('id_tienda', idTienda)
           .eq('estado', 'pendiente');
-      return List<Map<String, dynamic>>.from(res as List);
+      final lista = List<Map<String, dynamic>>.from(res as List);
+      CacheOfflineService.instance.guardar('compras_tienda_$idTienda', lista);
+      return lista;
     } catch (e) {
       debugPrint('comprasPendientesDeTienda falló: $e');
-      return [];
+      return CacheOfflineService.instance.leerLista('compras_tienda_$idTienda') ?? [];
     }
   }
 
@@ -447,13 +457,15 @@ class AnunciosService {
     try {
       final res = await supabase
           .from('compras_anuncio')
-          .select()
+          .select('id_compra, id_comprador, id_paquete, estado, codigo_ref, creado_en')
           .eq('id_comprador', uid)
           .eq('estado', 'pendiente');
-      return List<Map<String, dynamic>>.from(res as List);
+      final lista = List<Map<String, dynamic>>.from(res as List);
+      CacheOfflineService.instance.guardar('compras_standalone_$uid', lista);
+      return lista;
     } catch (e) {
       debugPrint('comprasPendientesStandalone falló: $e');
-      return [];
+      return CacheOfflineService.instance.leerLista('compras_standalone_$uid') ?? [];
     }
   }
 
@@ -467,17 +479,33 @@ class AnunciosService {
     try {
       final res = await supabase
           .from('permisos_tienda_anuncios')
-          .select('max_anuncios_extra')
+          .select('max_anuncios_extra, hasta')
           .eq('id_tienda', idTienda)
           .eq('activo', true)
           .gt('hasta', DateTime.now().toIso8601String());
       var total = 0;
+      DateTime? hastaMax;
       for (final p in (res as List)) {
         total += ((p['max_anuncios_extra'] as num?)?.toInt() ?? 0);
+        final h = DateTime.tryParse(p['hasta'] as String? ?? '');
+        if (h != null && (hastaMax == null || h.isAfter(hastaMax))) {
+          hastaMax = h;
+        }
       }
       if (total > kMaxRanurasExtraTienda) total = kMaxRanurasExtraTienda;
+      // Cachear el resultado para uso futuro
+      if (total > 0 && hastaMax != null) {
+        CacheOfflineService.instance.guardar('ranuras_extra_$idTienda', {
+          'total': total,
+          'hasta': hastaMax.toIso8601String(),
+        });
+      }
       return total;
     } catch (_) {
+      final cached = CacheOfflineService.instance.leerMapa('ranuras_extra_$idTienda');
+      if (cached != null && cached['total'] != null) {
+        return cached['total'] as int;
+      }
       return 0;
     }
   }
@@ -515,14 +543,18 @@ class AnunciosService {
     try {
       final res = await supabase
           .from('anuncios')
-          .select('id_anuncio')
+          .select('id_anuncio, creado_por')
           .eq('creado_por', uid)
           .neq('tipo', 'admin')
           .eq('es_automatico', false)
           .eq('estado', 'aprobado');
-      return (res as List).length;
+      final count = (res as List).length;
+      // Cachear el conteo por usuario
+      CacheOfflineService.instance.guardar('usados_unificados_$uid', count);
+      return count;
     } catch (_) {
-      return 0;
+      final cached = CacheOfflineService.instance.leerMapa('usados_unificados_$uid');
+      return cached?['total'] as int? ?? 0;
     }
   }
 
@@ -542,7 +574,21 @@ class AnunciosService {
         final h = DateTime.tryParse(p['hasta'] as String? ?? '');
         if (h != null && (hasta == null || h.isAfter(hasta))) hasta = h;
       }
+      // Cachear los permisos vigentes para este usuario
+      if (max > 0 || hasta != null) {
+        CacheOfflineService.instance.guardar('permisos_vigentes_$uid', {
+          'max': max,
+          'hasta': hasta?.toIso8601String(),
+        });
+      }
     } catch (_) {}
+    // Intentar recuperar de cache si la consulta falla
+    final cached = CacheOfflineService.instance.leerMapa('permisos_vigentes_$uid');
+    if (cached != null) {
+      max = cached['max'] as int? ?? 0;
+      final h = DateTime.tryParse(cached['hasta'] as String? ?? '');
+      if (h != null) hasta = h;
+    }
     return (max: max, hasta: hasta);
   }
 

@@ -35,7 +35,7 @@ class ProductosService {
   Future<List<Map<String, dynamic>>> productosDeTienda(String idTienda) async {
     final data = await _supabase
         .from('productos')
-        .select()
+        .select('id_producto, nombre, precio_usd, imagen_url, cantidad_disponible, categoria')
         .eq('id_tienda', idTienda)
         .eq('estado', 'activo')
         .order('nombre');

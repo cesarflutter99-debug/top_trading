@@ -306,7 +306,7 @@ class TiendasService {
     try {
       final res = await supabase
           .from('productos')
-          .select()
+          .select('id_producto, nombre, precio_usd, imagen_url, cantidad_disponible, descripcion, categoria')
           .eq('id_tienda', idTienda)
           .eq('es_visible', true)
           .gt('cantidad_disponible', 0)
@@ -316,7 +316,7 @@ class TiendasService {
       CacheOfflineService.instance.guardar('destacados_$idTienda', lista);
       return lista;
     } catch (_) {
-      return CacheOfflineService.instance.leerLista('destacados_$idTienda');
+      return CacheOfflineService.instance.leerLista('destacados_$idTienda') ?? [];
     }
   }
 
