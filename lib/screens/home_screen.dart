@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
+import '../core/app_links_config.dart';
 import '../core/supabase_client.dart';
 import '../services/location_service.dart';
 import '../services/tiendas_service.dart';

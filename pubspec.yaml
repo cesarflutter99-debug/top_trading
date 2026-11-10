@@ -1,7 +1,7 @@
 name: top_trading
 description: Marketplace geolocalizado "Al Lado"
 publish_to: 'none'
-version: 1.0.0+1
+version: 0.9.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

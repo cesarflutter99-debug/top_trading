@@ -31,7 +31,7 @@ import '../core/auth_guard.dart';
 import '../services/currency_service.dart';
 import '../services/tiendas_service.dart';
 import '../widgets/app_toast.dart';
-import 'store_screen_flow.dart' show CartService;
+import '../screens/store_screen_flow.dart' show CartService;
 
 class CartScreen extends StatefulWidget {
   final String idTienda;

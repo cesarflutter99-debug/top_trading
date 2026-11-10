@@ -53,6 +53,21 @@ enum _OrdenCatalogo { relevancia, menorPrecio, mayorPrecio }
 
 /// Carrito local en memoria (State Management), TTL 72h según ERS.
 /// Aislado por comercio: cada item recuerda a qué tienda pertenece.
+/// Mensaje al compartir un producto: invita a ir a la tienda y ver el
+/// producto con el enlace que abre la tienda directo en ese producto.
+String mensajeCompartirProducto({
+  required String nombre,
+  required String link,
+  double? precioUsd,
+  String? nombreTienda,
+}) {
+  final tienda = (nombreTienda ?? '').trim();
+  final precio = precioUsd != null ? ' · \$${precioUsd.toStringAsFixed(2)} USD' : '';
+  return '¿Quieres ver nuestro "$nombre"? 🛍️$precio\n'
+      '${tienda.isNotEmpty ? 'Llévate a nuestra tienda $tienda y velo aquí 👇' : 'Llévate a nuestra tienda y velo aquí 👇'}\n'
+      '$link';
+}
+
 class CartService extends ChangeNotifier {
   static final CartService instance = CartService._();
   CartService._();
@@ -245,6 +260,19 @@ class _StoreScreenState extends State<StoreScreen> {
       return;
     }
     Share.share('Mira la tienda "$nombre" en Al Lado: $link');
+  }
+
+  /// Compartir un producto desde su tarjeta (vendedor o comprador).
+  void _compartirProducto(Map<String, dynamic> p) {
+    final nombre = (p['nombre'] ?? 'producto').toString();
+    final idProducto = p['id_producto']?.toString() ?? '';
+    final link = kEnlaceTienda(widget.idTienda, idProducto);
+    Share.share(mensajeCompartirProducto(
+      nombre: nombre,
+      link: link,
+      precioUsd: (p['precio_usd'] as num?)?.toDouble(),
+      nombreTienda: (_tiendaCache?['nombre'] as String?),
+    ));
   }
 
   int _cantidad(String idProducto) => _cantidadSeleccionada[idProducto] ?? 0;
@@ -453,6 +481,7 @@ class _StoreScreenState extends State<StoreScreen> {
                                   colorTextoSecundario: _colorTextoSecundario,
                                   onTap: () => _abrirDetalleProducto(p),
                                   onAgregarRapido: () => _agregarRapido(p),
+                                  onCompartir: () => _compartirProducto(p),
                                 ),
                               );
                             },
@@ -958,6 +987,7 @@ class _ProductoCardChica extends StatelessWidget {
   final Color colorTextoSecundario;
   final VoidCallback onTap;
   final VoidCallback onAgregarRapido;
+  final VoidCallback onCompartir;
 
   const _ProductoCardChica({
     required this.producto,
@@ -970,6 +1000,7 @@ class _ProductoCardChica extends StatelessWidget {
     required this.colorTextoSecundario,
     required this.onTap,
     required this.onAgregarRapido,
+    required this.onCompartir,
   });
 
   @override
@@ -1052,6 +1083,25 @@ class _ProductoCardChica extends StatelessWidget {
                                 fontWeight: FontWeight.w700)),
                       ),
                     ),
+                  // Compartir: esquina superior derecha de la foto.
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Material(
+                      color: Colors.black.withOpacity(0.45),
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: onCompartir,
+                        child: const SizedBox(
+                          width: 32,
+                          height: 32,
+                          child: Icon(Icons.share_outlined,
+                              size: 17, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1208,12 +1258,14 @@ class _DetalleProductoModalState extends State<_DetalleProductoModal> {
   }
 
   void _compartir() {
-    final nombre = widget.producto['nombre'] ?? 'producto';
-    final precio = (widget.producto['precio_usd'] as num?)?.toStringAsFixed(2);
+    final nombre = (widget.producto['nombre'] ?? 'producto').toString();
     final idProducto = widget.producto['id_producto']?.toString() ?? '';
     final link = kEnlaceTienda(widget.idTienda, idProducto);
-    Share.share(
-        'Mira este producto: $nombre${precio != null ? ' - \$$precio USD' : ''}\n$link');
+    Share.share(mensajeCompartirProducto(
+      nombre: nombre,
+      link: link,
+      precioUsd: (widget.producto['precio_usd'] as num?)?.toDouble(),
+    ));
   }
 
   @override

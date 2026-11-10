@@ -46,3 +46,8 @@ app.*.map.json
 
 # Supabase CLI local state (project-ref, pooler-url, etc.)
 /supabase/.temp/
+
+# Android signing
+android/key.properties
+*.jks
+*.keystore

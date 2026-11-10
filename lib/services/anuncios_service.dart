@@ -674,6 +674,12 @@ class AnunciosService {
   }
 
   /// Potencia un producto existente.
+  ///
+  /// FIX (TIPO_OBSOLETO): el trigger anuncios_before_insert ya NO acepta
+  /// tipo='producto' ni 'negocio'; todo anuncio de usuario es 'standalone'
+  /// (unificado), con vínculos opcionales a lo propio. Aquí va ligado al
+  /// producto y a su tienda: el trigger valida que sean tuyos, completa el
+  /// WhatsApp desde la tienda y usa el cupo de ranuras del plan.
   Future<void> potenciarProducto({
     required String idTienda,
     required String idProducto,
@@ -684,7 +690,7 @@ class AnunciosService {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) throw Exception('SESION_REQUERIDA');
     await supabase.from('anuncios').insert({
-      'tipo': 'producto',
+      'tipo': 'standalone',
       'id_tienda': idTienda,
       'id_producto': idProducto,
       'titulo': titulo,
@@ -707,7 +713,8 @@ class AnunciosService {
     final tel = whatsapp.trim();
     if (tel.isEmpty) throw Exception('WHATSAPP_REQUERIDO');
     await supabase.from('anuncios').insert({
-      'tipo': 'producto',
+      // FIX (TIPO_OBSOLETO): ver potenciarProducto().
+      'tipo': 'standalone',
       'id_tienda': idTienda,
       'titulo': titulo,
       'texto': texto,
@@ -724,7 +731,8 @@ class AnunciosService {
       final res = await supabase
           .from('anuncios')
           .select()
-          .eq('tipo', 'producto')
+          // Nuevos = standalone ligados a la tienda; viejos = 'producto'.
+          .or('tipo.eq.producto,tipo.eq.standalone')
           .eq('id_tienda', idTienda)
           .order('creado_en', ascending: false);
       return List<Map<String, dynamic>>.from(res as List);

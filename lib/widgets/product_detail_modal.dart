@@ -212,7 +212,9 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
     final d = widget.data;
     final link = kEnlaceTienda(d.idTienda, d.idProducto);
     Share.share(
-        'Mira este producto: ${d.nombre} - \$${d.precioUsd.toStringAsFixed(2)} USD\n$link');
+        '¿Quieres ver nuestro "${d.nombre}"? 🛍️ · \$${d.precioUsd.toStringAsFixed(2)} USD\n'
+        'Llévate a nuestra tienda ${d.nombreTienda} y velo aquí 👇\n'
+        '$link');
   }
 
   /// Ir a la tienda dueña del producto SIN pasar por el carrito (el
@@ -359,13 +361,8 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
                     onPressed: _toggleFavorito,
                   ),
                 IconButton(
-                  icon: const Icon(Icons.share),
-                  tooltip: 'Compartir tienda',
-                  onPressed: _shareTienda,
-                ),
-                IconButton(
                   icon: const Icon(Icons.share_outlined),
-                  tooltip: 'Compartir producto',
+                  tooltip: 'Compartir',
                   onPressed: _shareProducto,
                 ),
               ],

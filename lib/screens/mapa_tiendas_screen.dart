@@ -320,10 +320,20 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
         (m['longitud'] as num).toDouble(),
       );
 
+  // Un item del mapa es una TIENDA (id_tienda) o un NEGOCIO (id_negocio).
+  bool _esNegocio(Map<String, dynamic> m) =>
+      m['id_negocio'] != null && m['id_tienda'] == null;
+
+  String _claveItem(Map<String, dynamic> m) =>
+      _esNegocio(m) ? 'n:${m['id_negocio']}' : 't:${m['id_tienda']}';
+
+  bool _esSel(Map<String, dynamic> m) =>
+      _seleccion != null && _claveItem(_seleccion!) == _claveItem(m);
+
   double? _distanciaKm(Map<String, dynamic> t) {
     final mi = _miUbicacion;
     if (mi == null) return null;
-    return _distancias.putIfAbsent(t['id_tienda'], () {
+    return _distancias.putIfAbsent(_claveItem(t), () {
       final p = _punto(t);
       return Geolocator.distanceBetween(
               mi.latitude, mi.longitude, p.latitude, p.longitude) /
@@ -354,12 +364,22 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   // Los negocios tienen categoría de texto libre, así que al elegir una
   // categoría de tienda se ocultan (no hay forma fiable de compararlas).
   List<Map<String, dynamic>> get _negociosVisibles {
-    if (!_verNegocios || _categoria != null) return [];
+    if (!_verNegocios) return [];
     return _negocios.where(_coincideBusqueda).toList();
   }
 
   List<Map<String, dynamic>> _tiendasPorDistancia() {
     final lista = [..._tiendasVisibles];
+    if (_miUbicacion != null) {
+      lista.sort((a, b) => (_distanciaKm(a) ?? double.infinity)
+          .compareTo(_distanciaKm(b) ?? double.infinity));
+    }
+    return lista;
+  }
+
+  // Panel inferior y "Ver todas": tiendas Y negocios, por distancia.
+  List<Map<String, dynamic>> _itemsPorDistancia() {
+    final lista = [..._tiendasVisibles, ..._negociosVisibles];
     if (_miUbicacion != null) {
       lista.sort((a, b) => (_distanciaKm(a) ?? double.infinity)
           .compareTo(_distanciaKm(b) ?? double.infinity));
@@ -416,9 +436,8 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
 
   void _alTocarPin(Map<String, dynamic> tienda) {
     setState(() {
-      final id = tienda['id_tienda'];
       // Tocar la misma otra vez la cierra; tocar otra la reemplaza.
-      _seleccion = _seleccion?['id_tienda'] == id ? null : tienda;
+      _seleccion = _esSel(tienda) ? null : tienda;
     });
   }
 
@@ -856,9 +875,10 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
           subtitulo: n['categoria']?.toString(),
           estrellas: null,
           conEtiqueta: conEtiqueta,
-          seleccionado: false,
-          // Su mini-página ya ES el detalle: van directo.
-          onTap: () => context.push('/negocio/${n['id_negocio']}'),
+          seleccionado: _esSel(n),
+          // Igual que las tiendas: el toque lo selecciona y la tarjeta
+          // flotante abre su mini-página.
+          onTap: () => _alTocarPin(n),
         ),
       ));
     }
@@ -919,7 +939,61 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   // -------------------------------------------------------------------
   // Tarjeta flotante de la tienda seleccionada
   // -------------------------------------------------------------------
+  Widget _tarjetaNegocioSeleccionada(Map<String, dynamic> n) {
+    final dist = _distanciaKm(n);
+    final detalle = [
+      if ((n['categoria'] ?? '').toString().isNotEmpty) '${n['categoria']}',
+      if (dist != null) 'A ${dist.toStringAsFixed(1)} km',
+      if ((n['municipio'] ?? '').toString().isNotEmpty) '${n['municipio']}',
+    ].join(' · ');
+
+    return Material(
+      color: _superficie,
+      elevation: 6,
+      shadowColor: Colors.black.withOpacity(0.25),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => context.push('/negocio/${n['id_negocio']}'),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 10, 8),
+          child: Row(
+            children: [
+              _badgeCategoria(n, _kVerdeNegocio, 38),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(n['nombre']?.toString() ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                            color: _texto)),
+                    if (detalle.isNotEmpty) ...[
+                      const SizedBox(height: 1),
+                      Text(detalle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11, color: _textoSec)),
+                    ],
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: _textoSec),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _tarjetaSeleccionada(Map<String, dynamic> t) {
+    if (_esNegocio(t)) return _tarjetaNegocioSeleccionada(t);
     final color = _colorTienda(t);
     final vende = _productosPorTienda[t['id_tienda']?.toString()];
     final dist = _distanciaKm(t);
@@ -1000,8 +1074,12 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               offset: const Offset(0, 3)),
         ],
       ),
-      child: Icon(_iconoCategoria(t['categoria'] as String?),
-          color: Colors.white, size: size * 0.5),
+      child: Icon(
+          _esNegocio(t)
+              ? _iconoNegocio(t['categoria'] as String?)
+              : _iconoCategoria(t['categoria'] as String?),
+          color: Colors.white,
+          size: size * 0.5),
     );
   }
 
@@ -1009,7 +1087,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   // Panel inferior "Tiendas cercanas"
   // -------------------------------------------------------------------
   Widget _buildPanel(double altoPanel) {
-    final cercanas = _tiendasPorDistancia();
+    final cercanas = _itemsPorDistancia();
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
@@ -1054,7 +1132,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Tiendas cercanas',
+                  Text('Tiendas y negocios cerca',
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 14,
                           fontWeight: FontWeight.w800,
@@ -1087,8 +1165,8 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                   ? Center(
                       child: Text(
                         _cargandoDatos
-                            ? 'Cargando tiendas...'
-                            : 'No encontramos tiendas con ese filtro',
+                            ? 'Cargando tiendas y negocios...'
+                            : 'No encontramos tiendas ni negocios con ese filtro',
                         style: GoogleFonts.plusJakartaSans(
                             fontSize: 13, color: _textoSec),
                       ),
@@ -1096,7 +1174,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                   : ListView.builder(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: math.min(cercanas.length, 12),
+                      itemCount: math.min(cercanas.length, 20),
                       itemBuilder: (context, i) =>
                           _tarjetaCercana(cercanas[i]),
                     ),
@@ -1107,10 +1185,22 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
     );
   }
 
+  // Abre el detalle según el tipo: tienda -> hoja de detalle, negocio ->
+  // su mini-página.
+  void _abrirItem(Map<String, dynamic> t) {
+    if (_esNegocio(t)) {
+      context.push('/negocio/${t['id_negocio']}');
+    } else {
+      _mostrarDetalleTienda(t);
+    }
+  }
+
   Widget _tarjetaCercana(Map<String, dynamic> t) {
-    final color = _colorTienda(t);
-    final portada = t['imagen_portada'] as String?;
-    final logo = t['logo_url'] as String?;
+    final esNeg = _esNegocio(t);
+    final color = esNeg ? _kVerdeNegocio : _colorTienda(t);
+    final portada = (t['imagen_portada'] ?? t['imagen_url'] ?? t['foto_url'])
+        ?.toString();
+    final logo = t['logo_url']?.toString();
     final foto = (portada != null && portada.isNotEmpty) ? portada : logo;
     final dist = _distanciaKm(t);
     final estrellas = _estrellas(t);
@@ -1119,7 +1209,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
     final categoria = vende != null
         ? 'Vende: $vende'
         : (t['categoria'] ?? t['municipio'] ?? '').toString();
-    final seleccionada = _seleccion?['id_tienda'] == t['id_tienda'];
+    final seleccionada = _esSel(t);
 
     return Container(
       width: 236,
@@ -1183,7 +1273,14 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                               fontSize: 12.5,
                               color: _texto)),
                       const SizedBox(height: 2),
-                      Row(
+                      if (esNeg)
+                        Text('Negocio',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: _kVerdeNegocio))
+                      else
+                        Row(
                         children: [
                           const Icon(Icons.star_rounded,
                               size: 13, color: _kDorado),
@@ -1231,7 +1328,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                 ),
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: () => _mostrarDetalleTienda(t),
+                  onTap: () => _abrirItem(t),
                   child: Padding(
                     padding: const EdgeInsets.all(4),
                     child: Icon(Icons.chevron_right_rounded, color: _textoSec),
@@ -1255,7 +1352,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   // "Ver todas": listado completo ordenado por distancia
   // -------------------------------------------------------------------
   void _abrirListaCompleta() {
-    final lista = _tiendasPorDistancia();
+    final lista = _itemsPorDistancia();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1273,7 +1370,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text('Tiendas cercanas (${lista.length})',
+                    child: Text('Tiendas y negocios (${lista.length})',
                         style: GoogleFonts.plusJakartaSans(
                             fontSize: 18, fontWeight: FontWeight.w800)),
                   ),
@@ -1290,7 +1387,8 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                 itemCount: lista.length,
                 itemBuilder: (context, i) {
                   final t = lista[i];
-                  final color = _colorTienda(t);
+                  final esNeg = _esNegocio(t);
+                  final color = esNeg ? _kVerdeNegocio : _colorTienda(t);
                   final dist = _distanciaKm(t);
                   final logo = t['logo_url'] as String?;
                   final sub = [
@@ -1309,7 +1407,10 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                           ? NetworkImage(logo)
                           : null,
                       child: (logo == null || logo.isEmpty)
-                          ? Icon(_iconoCategoria(t['categoria'] as String?),
+                          ? Icon(
+                              esNeg
+                                  ? _iconoNegocio(t['categoria'] as String?)
+                                  : _iconoCategoria(t['categoria'] as String?),
                               color: color)
                           : null,
                     ),
@@ -1324,16 +1425,23 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.plusJakartaSans(fontSize: 12)),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.star_rounded,
-                            size: 15, color: _kDorado),
-                        const SizedBox(width: 2),
-                        Text(_estrellas(t) ?? 'Nuevo',
-                            style: GoogleFonts.plusJakartaSans(fontSize: 12)),
-                      ],
-                    ),
+                    trailing: esNeg
+                        ? Text('Negocio',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: _kVerdeNegocio))
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.star_rounded,
+                                  size: 15, color: _kDorado),
+                              const SizedBox(width: 2),
+                              Text(_estrellas(t) ?? 'Nuevo',
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12)),
+                            ],
+                          ),
                   );
                 },
               ),

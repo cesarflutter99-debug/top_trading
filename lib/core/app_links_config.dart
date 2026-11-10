@@ -11,7 +11,11 @@
 //
 // Los links quedan así: https://<subdominio>/tienda/{id}[?producto={id}],
 // https://<subdominio>/anuncio/{id}, https://<subdominio>/afiliado/{codigo}.
-const String kDominioAppLinks = 'app.example.com';
+// Dominio de la página de descarga (Cloudflare Worker). Los enlaces
+// compartidos usan este dominio para que, si la app está instalada,
+// Android/iOS abra la app directamente (App Links / Universal Links);
+// si no está instalada, se abre la página de descarga.
+const String kDominioAppLinks = 'al-lado.elcesarrecord.workers.dev';
 
 /// Link https a una tienda (opcionalmente a un producto dentro).
 String kEnlaceTienda(String idTienda, [String? idProducto]) {

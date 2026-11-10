@@ -100,7 +100,37 @@
                     android:scheme="io.supabase.toptrading"
                     android:host="afiliado" />
             </intent-filter>
-            
+
+            <!-- App Links (https): abrir la app en una tienda -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https"
+                      android:host="al-lado.elcesarrecord.workers.dev"
+                      android:pathPrefix="/tienda" />
+            </intent-filter>
+
+            <!-- App Links (https): abrir la app en un anuncio -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https"
+                      android:host="al-lado.elcesarrecord.workers.dev"
+                      android:pathPrefix="/anuncio" />
+            </intent-filter>
+
+            <!-- App Links (https): código de afiliado -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https"
+                      android:host="al-lado.elcesarrecord.workers.dev"
+                      android:pathPrefix="/afiliado" />
+            </intent-filter>
+
         </activity>
 
         <meta-data
