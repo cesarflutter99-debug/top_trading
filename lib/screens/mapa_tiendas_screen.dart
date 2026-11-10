@@ -702,9 +702,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
 
   Widget _buildChips() {
     final categorias = <String?>[null, ...kCategoriasTienda];
-    return TourAnchor(
-      id: TourAnclas.mapaChips,
-      child: SizedBox(
+    return SizedBox(
       height: 34,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
@@ -713,7 +711,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
         itemBuilder: (context, i) {
           final cat = categorias[i];
           final activo = cat == _categoria;
-          return GestureDetector(
+          final chip = GestureDetector(
             onTap: () => setState(() {
               _categoria = cat;
               _seleccion = null;
@@ -755,8 +753,10 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               ),
             ),
           );
+          return i == 0
+              ? TourAnchor(id: TourAnclas.mapaChips, child: chip)
+              : chip;
         },
-      ),
       ),
     );
   }

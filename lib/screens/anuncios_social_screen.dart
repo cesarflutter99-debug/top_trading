@@ -844,12 +844,12 @@ class _AnunciosSocialScreenState extends State<AnunciosSocialScreen> {
     final visibles = _anunciosVisibles;
     return Scaffold(
       backgroundColor: _colorFondo,
-      floatingActionButton: TourAnchor(
-        id: TourAnclas.anunciosFab,
-        child: Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).padding.bottom + 84,
-          ),
+      floatingActionButton: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom + 84,
+        ),
+        child: TourAnchor(
+          id: TourAnclas.anunciosFab,
           child: _buildFabMenu(AppColors.primary),
         ),
       ),

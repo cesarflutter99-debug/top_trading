@@ -49,7 +49,7 @@ class _FavoritosScreenState extends State<FavoritosScreen> {
             CoachStep(
               titulo: 'Tus guardados',
               descripcion:
-                  'Acá quedan las tiendas que marcaste con el corazón, '
+                  'Aquí quedan las tiendas que marcaste con el corazón, '
                   'para encontrarlas rápido después.',
               ancla: TourAnclas.favoritosLista,
             ),

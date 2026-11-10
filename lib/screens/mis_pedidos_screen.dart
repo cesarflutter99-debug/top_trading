@@ -53,7 +53,7 @@ class _MisPedidosScreenState extends State<MisPedidosScreen> {
           CoachStep(
             titulo: 'Seguimiento en vivo',
             descripcion:
-                'Acá ves todos tus pedidos con su estado actual. Los pedidos '
+                'Aquí ves todos tus pedidos con su estado actual. Los pedidos '
                 'pendientes muestran cuánto tiempo te queda para '
                 'confirmarlos.',
             ancla: TourAnclas.pedidosLista,

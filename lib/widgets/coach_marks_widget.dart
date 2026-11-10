@@ -61,6 +61,7 @@ class CoachMarks {
     required List<CoachStep> pasos,
   }) async {
     if (pasos.isEmpty) return;
+    if (!context.mounted) return;
     await Navigator.of(context, rootNavigator: true).push<void>(
       PageRouteBuilder<void>(
         opaque: false,
@@ -177,10 +178,15 @@ class _OverlayTourState extends State<_OverlayTour> {
           // 3 - Cartelito con el contenido del paso. Sus botones son
           // interactivos; el resto de la zona oscura avanza al tocar.
           Positioned(
-            left: 16,
-            right: 16,
+            left: 0,
+            right: 0,
             top: _posicionDelCartel(pantalla, foco),
-            child: _Cartel(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: _Cartel(
               titulo: widget.titulo,
               paso: _paso,
               total: widget.pasos.length,
@@ -189,6 +195,9 @@ class _OverlayTourState extends State<_OverlayTour> {
               onSiguiente: _siguiente,
               onSaltar: _cerrar,
             ),
+          ),
+          ),
+          ),
           ),
 
           // 4 - Botón Saltar siempre visible (arriba a la derecha).
@@ -205,7 +214,7 @@ class _OverlayTourState extends State<_OverlayTour> {
   /// Ubica el cartelito: debajo del foco si cabe; si no, encima; si
   /// tampoco, al lado (para foci que están en un borde).
   double _posicionDelCartel(Size pantalla, Rect foco) {
-    const altoCartel = 250.0;
+    const altoCartel = 340.0;
     const margen = 20.0;
 
     final abajo = foco.bottom + margen;
@@ -335,14 +344,19 @@ class _Cartel extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
-                step.descripcion,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
-                  height: 1.45,
-                  color: esOscuro
-                      ? AppColors.inkSecundarioDark
-                      : AppColors.inkSecundarioLight,
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 160),
+                child: SingleChildScrollView(
+                  child: Text(
+                    step.descripcion,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      height: 1.45,
+                      color: esOscuro
+                          ? AppColors.inkSecundarioDark
+                          : AppColors.inkSecundarioLight,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -424,7 +438,7 @@ class _BtnSaltar extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.skip_next_rounded, color: Colors.white, size: 18),
+              Icon(Icons.close_rounded, color: Colors.white, size: 18),
               SizedBox(width: 4),
               Text(
                 'Saltar',

@@ -159,9 +159,9 @@ class _StoreScreenState extends State<StoreScreen> {
         titulo: 'La tienda',
         pasos: const [
           CoachStep(
-            titulo: 'Agregá al carrito',
+            titulo: 'Agrega al carrito',
             descripcion:
-                'Elegí la cantidad y tocá "Agregar al carrito". Te aviso que '
+                'Elige la cantidad y toca "Agregar al carrito". Te aviso que '
                 'el pago se coordina directo con el vendedor por WhatsApp.',
             ancla: TourAnclas.tiendaAgregarCarrito,
           ),

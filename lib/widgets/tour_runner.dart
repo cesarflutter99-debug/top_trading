@@ -23,6 +23,11 @@ import 'coach_marks_widget.dart';
 class TourRunner {
   TourRunner._();
 
+  /// Flag global para evitar que dos tours se abran al mismo tiempo
+  /// (p. ej. al cambiar de pestaña rápido en MainShell).
+  static bool _abierto = false;
+  static bool get abierto => _abierto;
+
   /// Muestra el tour si el usuario no lo ha visto todavia.
   /// Devuelve true si se mostró (para no volver a intentarlo).
   static Future<bool> mostrarSiNoVisto(
@@ -33,9 +38,15 @@ class TourRunner {
   }) async {
     if (pasos.isEmpty) return false;
     if (!context.mounted) return false;
+    if (_abierto) return false;
     if (await TutorialService.instance.yaVisto(clave)) return false;
     if (!context.mounted) return false;
-    await CoachMarks.mostrar(context, titulo: titulo, pasos: pasos);
+    _abierto = true;
+    try {
+      await CoachMarks.mostrar(context, titulo: titulo, pasos: pasos);
+    } finally {
+      _abierto = false;
+    }
     await TutorialService.instance.marcarVisto(clave);
     return true;
   }

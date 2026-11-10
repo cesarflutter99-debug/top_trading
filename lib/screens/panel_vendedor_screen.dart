@@ -870,12 +870,12 @@ class _PanelVendedorScreenState extends State<PanelVendedorScreen> {
           ),
         ],
       ),
-      floatingActionButton: TourAnchor(
-        id: TourAnclas.miTiendaNuevo,
-        child: Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).padding.bottom + 70,
-          ),
+      floatingActionButton: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom + 70,
+        ),
+        child: TourAnchor(
+          id: TourAnclas.miTiendaNuevo,
           child: _buildFabMenu(primary),
         ),
       ),

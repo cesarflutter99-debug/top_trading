@@ -57,14 +57,14 @@ class _CartScreenState extends State<CartScreen> {
         titulo: 'Tu carrito',
         pasos: const [
             CoachStep(
-              titulo: 'Revisá el total',
+              titulo: 'Revisa el total',
               descripcion:
-                  'Acá ves cuánto vas a pagar en total. Podés cambiar las '
+                  'Aquí ves cuánto vas a pagar en total. Puedes cambiar las '
                   'cantidades con los botones + y −.',
               ancla: TourAnclas.carritoTotal,
             ),
             CoachStep(
-              titulo: 'Completá la compra',
+              titulo: 'Completa la compra',
               descripcion:
                   'Al confirmar se abre WhatsApp con el pedido ya escrito '
                   'para que lo coordines directo con el vendedor.',
@@ -654,16 +654,17 @@ class _CartScreenState extends State<CartScreen> {
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Divider(height: 1, color: c.borde),
             ),
-            TourAnchor(
-              id: TourAnclas.carritoTotal,
-              child: Row(
+            Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Total estimado',
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: c.texto)),
+                TourAnchor(
+                  id: TourAnclas.carritoTotal,
+                  child: Text('Total estimado',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: c.texto)),
+                ),
                 PriceTag(
                   montoUsd: total,
                   style: TextStyle(
@@ -672,7 +673,6 @@ class _CartScreenState extends State<CartScreen> {
                       color: verde),
                 ),
               ],
-            ),
             ),
             const SizedBox(height: 10),
             Row(

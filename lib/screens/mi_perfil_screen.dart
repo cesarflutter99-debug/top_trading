@@ -364,14 +364,14 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
       ),
       child: Row(
         children: [
-          TourAnchor(
-            id: TourAnclas.perfilAvatar,
-            child: GestureDetector(
-              onTap: _subiendoAvatar ? null : _cambiarFotoPerfil,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  CircleAvatar(
+          GestureDetector(
+            onTap: _subiendoAvatar ? null : _cambiarFotoPerfil,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                TourAnchor(
+                  id: TourAnclas.perfilAvatar,
+                  child: CircleAvatar(
                     radius: 26,
                     backgroundColor: AppColors.primary.withOpacity(0.1),
                     backgroundImage:
@@ -381,6 +381,7 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
                             size: 26, color: AppColors.primary)
                         : null,
                   ),
+                ),
                   if (_subiendoAvatar)
                     const SizedBox(
                       width: 26,
@@ -409,7 +410,6 @@ class _MiPerfilScreenState extends State<MiPerfilScreen>
                 ],
               ),
             ),
-          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

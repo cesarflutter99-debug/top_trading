@@ -80,8 +80,6 @@ class TourAnclas {
 
   // --- Home ---
   static const homeHamburguesa = 'home_hamburguesa';
-  static const homeBuscador = 'home_buscador';
-  static const homeCarrusel = 'home_carrusel';
 
   // --- Anuncios ---
   static const anunciosChips = 'anuncios_chips';
@@ -93,7 +91,6 @@ class TourAnclas {
 
   // --- Perfil ---
   static const perfilAvatar = 'perfil_avatar';
-  static const perfilTabs = 'perfil_tabs';
 
   // --- Tienda ---
   static const tiendaAgregarCarrito = 'tienda_agregar_carrito';
@@ -103,7 +100,6 @@ class TourAnclas {
   static const carritoConfirmar = 'carrito_confirmar';
 
   // --- Mis pedidos ---
-  static const pedidosTabs = 'pedidos_tabs';
 
   // --- Asistente (Preguntas frecuentes) ---
   static const asistenteEntrada = 'asistente_entrada';
@@ -119,6 +115,5 @@ class TourAnclas {
   static const soporteEntrada = 'soporte_entrada';
 
   // --- Mi Tienda ---
-  static const miTiendaProductos = 'mi_tienda_productos';
   static const miTiendaNuevo = 'mi_tienda_nuevo';
 }

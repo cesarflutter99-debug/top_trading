@@ -22,9 +22,9 @@ class AssistantService {
       id: 'crear_tienda',
       pregunta: '¿Cómo creo mi tienda y empiezo a vender?',
       respuesta:
-          'Para vender en "Al Lado" tocá "Hacerte vendedor" desde tu perfil. '
-          'Elegís el plan, completás el registro y tras el pago tu tienda '
-          'queda activa. Podés publicar productos, ver el panel de ventas y '
+          'Para vender en "Al Lado" toca "Hacerte vendedor" desde tu perfil. '
+          'Eliges el plan, completas el registro y tras el pago tu tienda '
+          'queda activa. Puedes publicar productos, ver el panel de ventas y '
           'marcarlos como favoritos más fácil.',
       keywords: [
         'tienda',
@@ -44,8 +44,8 @@ class AssistantService {
       id: 'negocio',
       pregunta: 'Tengo un negocio de servicios, ¿cómo lo promociono?',
       respuesta:
-          'Si tenés un negocio (barbería, taller, reparto...) registralo '
-          'desde "Promociona tu negocio". Necesitás un permiso vigente: '
+          'Si tienes un negocio (barbería, taller, reparto...) regístralo '
+          'desde "Promociona tu negocio". Necesitas un permiso vigente: '
           'los anuncios de negocio pasan por moderación y luego se muestran '
           'solo en tu feed.',
       keywords: [
@@ -64,9 +64,9 @@ class AssistantService {
       id: 'comprar',
       pregunta: '¿Cómo compro un producto?',
       respuesta:
-          'Buscá en el mapa o en la pestaña Inicio, entrá a la tienda, '
+          'Busca en el mapa o en la pestaña Inicio, entra a la tienda, '
           'agregá productos al carrito y confirmá el pedido. El vendedor lo '
-          've al instante y coordinan la entrega. Podés revisar tus pedidos '
+          've al instante y coordinan la entrega. Puedes revisar tus pedidos '
           'en la sección "Mis pedidos".',
       keywords: [
         'comprar',
@@ -103,9 +103,9 @@ class AssistantService {
       id: 'ubicacion',
       pregunta: '¿Cómo funciona la ubicación y el mapa?',
       respuesta:
-          'El mapa muestra tiendas cerca de vos usando tu ubicación '
-          'geográfica. Activá el permiso de ubicación cuando la app lo pida; '
-          'si lo negás podés seguir buscando sin el mapa cercano.',
+          'El mapa muestra tiendas cerca de ti usando tu ubicación '
+          'geográfica. Activa el permiso de ubicación cuando la app lo pida; '
+          'si lo niegas puedes seguir buscando sin el mapa cercano.',
       keywords: [
         'mapa',
         'ubicación',
@@ -145,9 +145,9 @@ class AssistantService {
       pregunta: '¿Cómo pago mi plan o un paquete extra?',
       respuesta:
           'Los pagos se registran contra el administrador: elegís el plan, '
-          'generás una solicitud y te abre el WhatsApp del admin para '
+          'generas una solicitud y te abre el WhatsApp del admin para '
           'coordinar. Al aprobarlo, tu plan o permiso se activa solo. '
-          'También podés comprar ranuras extra de anuncios por WhatsApp.',
+          'También puedes comprar ranuras extra de anuncios por WhatsApp.',
       keywords: [
         'pago',
         'plan',
@@ -168,7 +168,7 @@ class AssistantService {
       respuesta:
           'Registrate como afiliado y compartí tu código al invitar vendedores. '
           'Cuando una tienda nueva se activa con tu código, vas sumando '
-          'comisiones que podés ver y retirar desde tu panel de afiliado.',
+          'comisiones que puedes ver y retirar desde tu panel de afiliado.',
       keywords: [
         'afiliado',
         'afiliados',
@@ -200,7 +200,7 @@ class AssistantService {
       id: 'notificaciones',
       pregunta: '¿Cómo funcionan las notificaciones push?',
       respuesta:
-          'Recibís avisos de nuevos pedidos, mensajes y novedades de tus '
+          'Recibes avisos de nuevos pedidos, mensajes y novedades de tus '
           'anuncios/pedidos. Aparecen aunque la app esté cerrada. Si no te '
           'llegan, revisá que la app tenga el permiso de notificaciones '
           'activado en tu teléfono.',

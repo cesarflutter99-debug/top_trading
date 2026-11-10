@@ -23,6 +23,7 @@ import '../services/pending_actions_queue.dart';
 import '../services/tutorial_service.dart';
 import '../widgets/offline_banner.dart';
 import '../widgets/coach_marks_widget.dart';
+import '../widgets/tour_runner.dart';
 import '../widgets/tour_anchor.dart';
 import 'home_screen.dart';
 import 'mapa_tiendas_screen.dart';
@@ -73,10 +74,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   late final RealtimeChannel _canalPresencia;
   late final StreamSubscription<AuthState> _suscripcionAuth;
-
-  // Tours contextuales en vuelo (para no duplicar el overlay si el
-  // usuario salta de pestaña rápido mientras uno está abierto).
-  final Set<String> _toursEnVuelo = {};
 
   @override
   void initState() {
@@ -144,10 +141,11 @@ class _MainShellScreenState extends State<MainShellScreen> {
     }
   }
 
-  /// Agenda el tour contextual de la pestaña `indice` si aún no se vio
-  /// y no hay otro en vuelo para esa clave. No corre en el initState de
-  /// pestañas ocultas: solo cuando `_cambiarIndice` las deja visibles
-  /// (o para la pestaña inicial visible, al primer frame).
+  /// Agenda el tour contextual de la pestaña `indice` si aún no se vio.
+  /// No corre en el initState de pestañas ocultas: solo cuando
+  /// `_cambiarIndice` las deja visibles (o para la pestaña inicial
+  /// visible, al primer frame). Usa TourRunner para evitar tours
+  /// concurrentes (flag global) y centralizar la persistencia.
   void _programarTourDePestana(int indice) {
     final String? clave = switch (indice) {
       0 => TutorialService.claveHome,
@@ -157,23 +155,19 @@ class _MainShellScreenState extends State<MainShellScreen> {
       5 => TutorialService.clavePerfil,
       _ => null,
     };
-    if (clave == null || _toursEnVuelo.contains(clave)) return;
+    if (clave == null) return;
+    if (TourRunner.abierto) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || _toursEnVuelo.contains(clave)) return;
-      if (await TutorialService.instance.yaVisto(clave)) return;
       if (!mounted) return;
-
-      _toursEnVuelo.add(clave);
+      if (TourRunner.abierto) return;
       final pasos = _pasosDelTour(indice);
-      await CoachMarks.mostrar(
+      await TourRunner.mostrarSiNoVisto(
         context,
+        clave: clave,
         titulo: _tituloDelTour(indice),
         pasos: pasos,
       );
-      if (!mounted) return;
-      _toursEnVuelo.remove(clave);
-      await TutorialService.instance.marcarVisto(clave);
     });
   }
 
@@ -193,15 +187,15 @@ class _MainShellScreenState extends State<MainShellScreen> {
             CoachStep(
               titulo: 'Tu inicio',
               descripcion:
-                  'Acá ves las tiendas más cercanas, los productos que '
-                  'están cerca de vos y los anuncios del barrio. Deslizá '
+                  'Aquí ves las tiendas más cercanas, los productos que '
+                  'están cerca de ti y los anuncios del barrio. Desliza '
                   'para explorar.',
               ancla: TourAnclas.navInicio,
             ),
             CoachStep(
-              titulo: 'Mapa: tiendas cerca de vos',
+              titulo: 'Mapa: tiendas cerca de ti',
               descripcion:
-                  'Tocá el mapa y filtrá por distancia. Ves dónde está cada '
+                  'Toca el mapa y filtra por distancia. Ves dónde está cada '
                   'tienda antes de ir, para que no pierdas el tiempo '
                   'viajando.',
               ancla: TourAnclas.navMapa,
@@ -209,14 +203,14 @@ class _MainShellScreenState extends State<MainShellScreen> {
             CoachStep(
               titulo: 'Anuncios de la comunidad',
               descripcion:
-                  'Promociones de tiendas, negocios y la plataforma. Podés '
+                  'Promociones de tiendas, negocios y la plataforma. Puedes '
                   'dar "me gusta", comentar y compartir.',
               ancla: TourAnclas.navAnuncios,
             ),
             CoachStep(
               titulo: 'Tu tienda y tu perfil',
               descripcion:
-                  'En "Mi Tienda" vendés tus productos. En "Perfil" están tus '
+                  'En "Mi Tienda" vendes tus productos. En "Perfil" están tus '
                   'datos, tus pedidos y el soporte.',
               ancla: TourAnclas.navMiTienda,
             ),
@@ -234,41 +228,41 @@ class _MainShellScreenState extends State<MainShellScreen> {
               titulo: 'Filtra por distancia',
               descripcion:
                   'Ajusta el radio para ver solo lo que tienes cerca. Con '
-                  'la ubicación activada el mapa se centra en vos.',
+                  'la ubicación activada el mapa se centra en ti.',
               ancla: TourAnclas.mapaBuscador,
             ),
             CoachStep(
               titulo: 'Filtra por categoría',
               descripcion:
-                  'Tocá una categoría para ver solo tiendas de ese tipo: '
+                  'Toca una categoría para ver solo tiendas de ese tipo: '
                   'gastronomía, moda, salud y más.',
               ancla: TourAnclas.mapaChips,
             ),
             CoachStep(
-              titulo: 'Tocá un pin',
+              titulo: 'Toca un pin',
               descripcion:
-                  'Cada pin es una tienda. Abrís su ficha con sus productos, '
+                  'Cada pin es una tienda. Abres su ficha con sus productos, '
                   'horarios y cómo contactarla.',
               ancla: TourAnclas.navMapa,
             ),
           ],
         2 => const [
             CoachStep(
-              titulo: 'Buscá por categoría',
+              titulo: 'Busca por categoría',
               descripcion:
-                  'Tocá la categoría que te interesa y el feed se filtra al '
+                  'Toca la categoría que te interesa y el feed se filtra al '
                   'instante. "Todos" para ver todo.',
               ancla: TourAnclas.anunciosChips,
             ),
             CoachStep(
-              titulo: 'Creá y potenciá anuncios',
+              titulo: 'Crea y potencia anuncios',
               descripcion:
-                  'Con el botón flotante publicás un anuncio propio, o '
-                  'potenciás uno de tu tienda para que salga más.',
+                  'Con el botón flotante publicas un anuncio propio, o '
+                  'potencias uno de tu tienda para que salga más.',
               ancla: TourAnclas.anunciosFab,
             ),
             CoachStep(
-              titulo: 'Interactuá con la comunidad',
+              titulo: 'Interactúa con la comunidad',
               descripcion:
                   'Cada anuncio tiene su botón de WhatsApp. Alguien que '
                   'te escriba puede comprar en la tienda del anuncio.',
@@ -279,7 +273,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
             CoachStep(
               titulo: 'Tu panel de ventas',
               descripcion:
-                  'Desde "Mi Tienda" gestionás tus productos, pedidos, '
+                  'Desde "Mi Tienda" gestionas tus productos, pedidos, '
                   'promociones y tu plan. Es tu negocio desde el celular.',
               ancla: TourAnclas.navMiTienda,
             ),
@@ -288,17 +282,17 @@ class _MainShellScreenState extends State<MainShellScreen> {
             // pestaña, que es donde se crea la tienda.
             if (_miTienda != null)
               CoachStep(
-                titulo: 'Publicá productos',
+                titulo: 'Publica productos',
                 descripcion:
-                    'Con el botón de nuevo producto sumás artículos a tu '
-                    'catálogo y empezás a vender.',
+                    'Con el botón de nuevo producto sumas artículos a tu '
+                    'catálogo y empiezas a vender.',
                 ancla: TourAnclas.miTiendaNuevo,
               )
             else
               CoachStep(
-                titulo: '¿Querés vender?',
+                titulo: '¿Quieres vender?',
                 descripcion:
-                    'Creá tu tienda gratis y empezá a vender. Es un minuto '
+                    'Crea tu tienda gratis y empiezas a vender. Es un minuto '
                     'y te abre el catálogo al instante.',
                 ancla: TourAnclas.navMiTienda,
               ),
@@ -307,22 +301,22 @@ class _MainShellScreenState extends State<MainShellScreen> {
             CoachStep(
               titulo: 'Tu perfil',
               descripcion:
-                  'Acá cambiás tu foto, ves tus pedidos, tus anuncios y tu '
-                  'plan. También entrás al chat de soporte.',
+                  'Aquí cambias tu foto, ves tus pedidos, tus anuncios y tu '
+                  'plan. También entras al chat de soporte.',
               ancla: TourAnclas.navPerfil,
             ),
             CoachStep(
               titulo: 'Tus datos y tu foto',
               descripcion:
-                  'Tocá tu foto para cambiarla. Podés sacarla con la cámara '
+                  'Toca tu foto para cambiarla. Puedes sacarla con la cámara '
                   'o elegirla de la galería.',
               ancla: TourAnclas.perfilAvatar,
             ),
             CoachStep(
               titulo: '¿Necesitás ayuda?',
               descripcion:
-                  'En el chat de soporte escribís y te responde el equipo '
-                  'de Al Lado. También podés ver las preguntas frecuentes.',
+                  'En el chat de soporte escribes y te responde el equipo '
+                  'de Al Lado. También puedes ver las preguntas frecuentes.',
               ancla: TourAnclas.navPerfil,
             ),
           ],

@@ -46,7 +46,7 @@ class _OnboardingSlidesScreenState extends State<OnboardingSlidesScreen> {
       icono: Icons.sell_rounded,
       titulo: 'Vende y crece',
       descripcion:
-          'Creá tu tienda en minutos, publicá productos, gestioná '
+          'Crea tu tienda en minutos, publica productos, gestiona '
           'pedidos y promocioná tu negocio con anuncios.',
       color: AppColors.warm,
     ),

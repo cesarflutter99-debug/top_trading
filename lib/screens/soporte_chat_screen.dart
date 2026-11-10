@@ -45,8 +45,8 @@ class _SoporteChatScreenState extends State<SoporteChatScreen> {
             CoachStep(
               titulo: 'Habla con el equipo',
               descripcion:
-                  'Escribí tu mensaje y te respondemos por acá mismo. '
-                  'Guardamos el historial, así que podés volver cuando '
+                  'Escribe tu mensaje y te respondemos por aquí mismo. '
+                  'Guardamos el historial, así que puedes volver cuando '
                   'quieras.',
               ancla: TourAnclas.soporteEntrada,
             ),

@@ -64,16 +64,16 @@ class _AssistantScreenState extends State<AssistantScreen> {
         titulo: 'Preguntas frecuentes',
         pasos: const [
             CoachStep(
-              titulo: 'Escribí tu duda',
+              titulo: 'Escribe tu duda',
               descripcion:
-                  'Escribí lo que necesites y el asistente te responde al '
+                  'Escribe lo que necesites y el asistente te responde al '
                   'instante, con la respuesta y los pasos a seguir.',
               ancla: TourAnclas.asistenteEntrada,
             ),
             CoachStep(
               titulo: 'Atajos de preguntas',
               descripcion:
-                  'Tocá una pregunta sugerida para ver la respuesta sin '
+                  'Toca una pregunta sugerida para ver la respuesta sin '
                   'tener que escribir nada.',
               ancla: TourAnclas.asistenteTopics,
             ),
@@ -249,7 +249,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     border: InputBorder.none,
                     enabledBorder: InputBorder.none,
                     focusedBorder: InputBorder.none,
-                    hintText: 'Escribí tu consulta...',
+                    hintText: 'Escribe tu consulta...',
                     contentPadding:
                         const EdgeInsets.symmetric(vertical: 12),
                   ),
