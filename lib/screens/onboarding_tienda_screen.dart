@@ -10,6 +10,19 @@
 //     antes había que salir y volver a entrar a la app para que
 //     dejara de mostrar el CTA de "Hacerte vendedor".
 
+//
+// PLANES DESDE LA BD (2026-11):
+//   - El paso 5 ya NO tiene tarjetas escritas a mano (Basic/Premium con
+//     textos propios). Ahora carga los mismos planes que usa
+//     GestionarPlanesScreen (TiendasService.obtenerPlanesActivos()), con
+//     el mismo contenido: nombre, precio, productos y descripción. Lo que
+//     cambies en la tabla `planes` se ve igual en el registro y en
+//     "Gestionar Planes".
+//   - _planElegido guarda el `codigo` del plan (igual que
+//     GestionarPlanesScreen y _PagoPlanScreen en router.dart), y si el
+//     plan es gratis se detecta por `es_gratis`, no por un texto fijo.
+//   - _confirmar() sigue igual: crea la tienda y hace push('/pago-plan').
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
@@ -54,25 +67,65 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
   double? _lon;
   bool _capturandoGps = false;
 
-  String _planElegido = 'basic';
-  bool _cargandoElegibilidadGratis = true;
+  // `codigo` del plan elegido (vacío hasta que carguen los planes).
+  String _planElegido = '';
+  List<Map<String, dynamic>> _planes = [];
+  bool _cargandoPlanes = true;
+  String? _errorPlanes;
   bool _puedeUsarGratis = false;
   bool _guardando = false;
+
+  Map<String, dynamic>? get _planSeleccionado {
+    for (final p in _planes) {
+      if ((p['codigo'] as String? ?? '') == _planElegido) return p;
+    }
+    return null;
+  }
+
+  bool get _esGratis => _planSeleccionado?['es_gratis'] == true;
 
   @override
   void initState() {
     super.initState();
-    _cargarElegibilidadGratis();
+    _cargarPlanes();
   }
 
-  Future<void> _cargarElegibilidadGratis() async {
-    final puede = await _tiendasService.puedeUsarPlanGratis();
-    if (mounted) {
+  Future<void> _cargarPlanes() async {
+    setState(() {
+      _cargandoPlanes = true;
+      _errorPlanes = null;
+    });
+    try {
+      final resultados = await Future.wait([
+        _tiendasService.obtenerPlanesActivos(),
+        _tiendasService.puedeUsarPlanGratis(),
+      ]);
+      final planes = resultados[0] as List<Map<String, dynamic>>;
+      final puedeGratis = resultados[1] as bool;
+      if (!mounted) return;
       setState(() {
-        _puedeUsarGratis = puede;
-        _cargandoElegibilidadGratis = false;
-        if (!puede && _planElegido == 'gratis') _planElegido = 'basic';
+        _planes = planes;
+        _puedeUsarGratis = puedeGratis;
+        _cargandoPlanes = false;
+        // Por defecto: el primer plan de pago (igual que antes, que
+        // arrancaba en 'basic'). Si el usuario no puede usar el gratis
+        // nunca queda elegido.
+        final pagos = planes.where((p) => p['es_gratis'] != true).toList();
+        final codigoBasic = pagos.firstWhere(
+          (p) => (p['codigo'] as String? ?? '').toLowerCase() == 'basic',
+          orElse: () => pagos.isNotEmpty ? pagos.first : <String, dynamic>{},
+        )['codigo'] as String?;
+        if (_planElegido.isEmpty && codigoBasic != null) {
+          _planElegido = codigoBasic;
+        }
       });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _cargandoPlanes = false;
+          _errorPlanes = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
     }
   }
 
@@ -122,6 +175,10 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     if (_paso < _totalPasos - 1) {
       _irAPaso(_paso + 1);
     } else {
+      if (_planSeleccionado == null) {
+        _mostrarError('Selecciona un plan');
+        return;
+      }
       _confirmar();
     }
   }
@@ -156,7 +213,7 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
   Future<void> _confirmar() async {
     setState(() => _guardando = true);
     try {
-      if (_planElegido == 'gratis') {
+      if (_esGratis) {
         await _tiendasService.crearTiendaConPlanGratis(
           nombre: _nombreCtrl.text.trim(),
           nombrePropietario: _nombrePropietarioCtrl.text.trim(),
@@ -326,9 +383,9 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                         : Text(
                             _paso < _totalPasos - 1
                                 ? 'Siguiente'
-                                : (_planElegido == 'gratis'
+                                : (_esGratis
                                     ? 'Activar tienda gratis'
-                                    : 'Enviar solicitud'),
+                                    : 'Continuar al pago'),
                             style: GoogleFonts.inter(
                                 fontWeight: FontWeight.w600, fontSize: 16),
                           ),
@@ -625,7 +682,6 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
   }
 
   Widget _pasoPlan(ThemeData theme) {
-    final primary = theme.colorScheme.primary;
     final textoSecundario = theme.textTheme.bodySmall?.color ??
         theme.colorScheme.onSurface.withOpacity(0.6);
     final esOscuro = theme.brightness == Brightness.dark;
@@ -641,50 +697,36 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _tituloPasoTexto(theme, 'Elige tu plan',
-              'Puedes empezar gratis o ir directo a un plan de pago.'),
+              'Selecciona un plan y continúa al pago.'),
           const SizedBox(height: 20),
-          if (_cargandoElegibilidadGratis)
+          if (_cargandoPlanes)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
+              padding: EdgeInsets.symmetric(vertical: 24),
               child: Center(child: CircularProgressIndicator()),
             )
+          else if (_errorPlanes != null)
+            Column(
+              children: [
+                Text('No se pudieron cargar los planes: $_errorPlanes',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(color: textoSecundario)),
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  onPressed: _cargarPlanes,
+                  child: const Text('Reintentar'),
+                ),
+              ],
+            )
+          else if (_planes.isEmpty)
+            Text('No hay planes disponibles todavía',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(color: textoSecundario))
           else
-            _planOption(
-              theme: theme,
-              titulo: 'Gratis · 14 días',
-              subtitulo: _puedeUsarGratis
-                  ? 'Tu tienda queda activa de inmediato, sin pago. Válido '
-                      'por 14 días, una sola vez por cuenta.'
-                  : 'Ya usaste tu plan gratuito con esta cuenta. Elige '
-                      'Basic o Premium para continuar.',
-              value: 'gratis',
-              habilitado: _puedeUsarGratis,
-              primary: primary,
-              textoSecundario: textoSecundario,
-            ),
+            ..._planes.map((p) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _planCard(theme, p),
+                )),
           const SizedBox(height: 12),
-          _planOption(
-            theme: theme,
-            titulo: 'Basic',
-            subtitulo:
-                '20 productos visibles, 20 fotos. Requiere aprobación y pago.',
-            value: 'basic',
-            habilitado: true,
-            primary: primary,
-            textoSecundario: textoSecundario,
-          ),
-          const SizedBox(height: 12),
-          _planOption(
-            theme: theme,
-            titulo: 'Premium',
-            subtitulo: '50 productos, 50 fotos, elegible para Portada '
-                'Mensual. Requiere aprobación y pago.',
-            value: 'premium',
-            habilitado: true,
-            primary: primary,
-            textoSecundario: textoSecundario,
-          ),
-          const SizedBox(height: 24),
           Container(
             decoration: BoxDecoration(
               color: infoBg,
@@ -700,7 +742,7 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                   const SizedBox(width: 14),
                   Expanded(
                     child: Text(
-                      _planElegido == 'gratis'
+                      _esGratis
                           ? 'Tu tienda gratuita queda activa de inmediato. '
                               '5 y 3 días antes de que venza tu plan, te '
                               'avisaremos para que puedas renovarlo.'
@@ -722,38 +764,41 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
     );
   }
 
-  Widget _planOption({
-    required ThemeData theme,
-    required String titulo,
-    required String subtitulo,
-    required String value,
-    required bool habilitado,
-    required Color primary,
-    required Color textoSecundario,
-  }) {
-    final seleccionado = value == _planElegido;
+  /// Tarjeta de un plan, con el mismo contenido que en
+  /// GestionarPlanesScreen (nombre, precio, productos, descripción).
+  Widget _planCard(ThemeData theme, Map<String, dynamic> p) {
+    final primary = theme.colorScheme.primary;
+    final textoSecundario = theme.textTheme.bodySmall?.color ??
+        theme.colorScheme.onSurface.withOpacity(0.6);
+    final codigo = p['codigo'] as String? ?? '';
+    final esGratis = p['es_gratis'] == true;
+    final habilitado = !esGratis || _puedeUsarGratis;
+    final seleccionado = habilitado && codigo == _planElegido;
+    final descripcion = (p['descripcion'] ?? '').toString();
+
     return Opacity(
       opacity: habilitado ? 1 : 0.55,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: habilitado ? () => setState(() => _planElegido = value) : null,
+        onTap: habilitado ? () => setState(() => _planElegido = codigo) : null,
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            color: seleccionado && habilitado
+            color: seleccionado
                 ? primary.withOpacity(0.08)
                 : theme.colorScheme.surface,
             border: Border.all(
-              color: seleccionado && habilitado ? primary : theme.dividerColor,
-              width: seleccionado && habilitado ? 2 : 1,
+              color: seleccionado ? primary : theme.dividerColor,
+              width: seleccionado ? 2 : 1,
             ),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Radio<String>(
-                  value: value,
+                  value: codigo,
                   groupValue: habilitado ? _planElegido : null,
                   activeColor: primary,
                   onChanged: habilitado
@@ -764,14 +809,44 @@ class _OnboardingTiendaScreenState extends State<OnboardingTiendaScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(titulo,
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: Text(p['nombre'] ?? '',
+                            style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 17,
+                                color: theme.textTheme.bodyLarge?.color)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        esGratis
+                            ? 'Gratis · ${p['duracion_dias']} días'
+                            : '\$${p['precio_usd']} USD',
+                        style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: theme.textTheme.bodyLarge?.color),
+                      ),
+                      Text('${p['limite_productos']} productos permitidos',
                           style: GoogleFonts.inter(
-                              fontWeight: FontWeight.w700,
-                              color: theme.textTheme.bodyLarge?.color)),
-                      const SizedBox(height: 2),
-                      Text(subtitulo,
+                              fontSize: 13, color: textoSecundario)),
+                      if (descripcion.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(descripcion,
+                            style: GoogleFonts.inter(
+                                fontSize: 12.5,
+                                height: 1.4,
+                                color: textoSecundario)),
+                      ],
+                      if (esGratis && !_puedeUsarGratis) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Ya usaste tu plan gratuito con esta cuenta. '
+                          'Elige un plan de pago para continuar.',
                           style: GoogleFonts.inter(
-                              fontSize: 12, color: textoSecundario)),
+                              fontSize: 12.5, color: Colors.red.shade700),
+                        ),
+                      ],
                     ],
                   ),
                 ),

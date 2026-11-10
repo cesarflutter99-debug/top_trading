@@ -1216,41 +1216,140 @@ class _PlanesStandaloneSheetState extends State<_PlanesStandaloneSheet> {
   }
 
   Widget _tarjeta(Map<String, dynamic> p, ThemeData theme) {
+    return _TarjetaPaquete(
+      paquete: p,
+      onAdquirir: () => _abrirModalPago(p),
+    );
+  }
+}
+
+/// Tarjeta de un paquete de anuncio: nombre y precio, chips con duración y
+/// cantidad de anuncios, y la DESCRIPCIÓN que se escribe desde la
+/// administración (columna `descripcion` de paquetes_anuncio). Antes la
+/// tarjeta nunca la dibujaba. Si es larga se recorta a 3 líneas con
+/// "Ver más / Ver menos".
+class _TarjetaPaquete extends StatefulWidget {
+  final Map<String, dynamic> paquete;
+  final VoidCallback onAdquirir;
+
+  const _TarjetaPaquete({required this.paquete, required this.onAdquirir});
+
+  @override
+  State<_TarjetaPaquete> createState() => _TarjetaPaqueteState();
+}
+
+class _TarjetaPaqueteState extends State<_TarjetaPaquete> {
+  bool _expandida = false;
+
+  Widget _dato(IconData icono, String texto) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icono, size: 13, color: AppColors.primary),
+          const SizedBox(width: 5),
+          Text(texto,
+              style: GoogleFonts.inter(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primary)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final esOscuro = theme.brightness == Brightness.dark;
+    final p = widget.paquete;
+    final secundario = theme.textTheme.bodySmall?.color ??
+        theme.colorScheme.onSurface.withOpacity(0.6);
+    final dias = (p['duracion_dias'] as num?)?.toInt();
+    final max = (p['max_anuncios'] as num?)?.toInt();
+    final precio = (p['precio_usd'] as num?)?.toDouble() ?? 0;
+    final descripcion = (p['descripcion'] ?? '').toString().trim();
+    final larga = descripcion.length > 110 ||
+        '\n'.allMatches(descripcion).length >= 3;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
-        color: AppColors.primary.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(18),
+        color: esOscuro
+            ? Colors.white.withOpacity(0.05)
+            : const Color(0xFFF8FAFD),
+        border: Border.all(color: theme.dividerColor.withOpacity(0.5)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Text(p['nombre'] ?? 'Paquete',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.inter(
-                        fontWeight: FontWeight.w800, fontSize: 15)),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15.5,
+                        color: theme.textTheme.bodyLarge?.color)),
               ),
-              Text(
-                  CurrencyService.instance
-                      .formatear((p['precio_usd'] as num).toDouble()),
+              const SizedBox(width: 10),
+              Text(CurrencyService.instance.formatear(precio),
                   style: GoogleFonts.inter(
                       fontWeight: FontWeight.w800,
                       fontSize: 16,
                       color: AppColors.primary)),
             ],
           ),
-          const SizedBox(height: 2),
-          Text(
-            '${p['duracion_dias']} días · ${p['max_anuncios']} anuncio'
-            '${(p['max_anuncios'] as num? ?? 1) > 1 ? 's' : ''} a la vez',
-            style: GoogleFonts.inter(
-                fontSize: 12, color: theme.textTheme.bodySmall?.color),
-          ),
           const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              if (dias != null) _dato(Icons.schedule_rounded, '$dias días'),
+              if (max != null)
+                _dato(Icons.campaign_rounded,
+                    '$max anuncio${max > 1 ? 's' : ''} a la vez'),
+            ],
+          ),
+          if (descripcion.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              alignment: Alignment.topCenter,
+              child: Text(
+                descripcion,
+                maxLines: _expandida ? null : 3,
+                overflow:
+                    _expandida ? TextOverflow.visible : TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                    fontSize: 12.5, height: 1.45, color: secundario),
+              ),
+            ),
+            if (larga)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _expandida = !_expandida),
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(_expandida ? 'Ver menos' : 'Ver más',
+                      style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary)),
+                ),
+              ),
+          ],
+          const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
             height: 42,
@@ -1258,8 +1357,10 @@ class _PlanesStandaloneSheetState extends State<_PlanesStandaloneSheet> {
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
-              onPressed: () => _abrirModalPago(p),
+              onPressed: widget.onAdquirir,
               icon: const Icon(Icons.chat_rounded, size: 16),
               label: Text('Adquirir por WhatsApp',
                   style: GoogleFonts.inter(

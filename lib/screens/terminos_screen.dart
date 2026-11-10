@@ -202,7 +202,7 @@ class _TerminosScreenState extends State<TerminosScreen> {
                     ]),
                     _seccion('9. Contacto', colorTexto, colorSec, [
                       'Dudas, fraudes o reclamos de pagos de planes y paquetes: '
-                      '[número oficial de WhatsApp] / [correo de soporte].',
+                      'teléfono +5356403313 / correo elcesarrecord@gmil.com.',
                     ]),
                     const SizedBox(height: 12),
                     // Checkbox de aceptación

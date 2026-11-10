@@ -1825,12 +1825,6 @@ class _AnuncioDetalleScreenState extends State<AnuncioDetalleScreen> {
         foregroundColor: _colorTexto,
         elevation: 0,
         scrolledUnderElevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            onPressed: _compartir,
-          ),
-        ],
       ),
       body: ListView(
         children: [

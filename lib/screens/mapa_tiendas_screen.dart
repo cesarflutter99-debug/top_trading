@@ -27,12 +27,34 @@
 //     reconstruía el mapa entero).
 //   - Atribución de OpenStreetMap propia y visible sobre el panel.
 //
+// AJUSTES (2026-11):
+//   - PIN DORADO: _esVip() ahora normaliza el plan (minúsculas/espacios).
+//     Los premium vigentes se dibujan SIEMPRE encima de los normales, con
+//     un dorado más intenso (_kDoradoVip) y una estrella-insignia.
+//   - Pines más exactos: el glifo location_on deja ~2/24 de aire bajo la
+//     punta; se compensa para que la punta caiga justo en la coordenada
+//     (también al seleccionar, porque el escalado pivota sobre la punta).
+//   - Interfaz más compacta: header, chips, panel inferior, tarjetas y
+//     etiquetas de los pines más pequeños -> el mapa gana espacio.
+//   - Rendimiento: distancias en caché (antes se recalculaban dentro del
+//     sort en cada rebuild), pines en RepaintBoundary, estilos de texto
+//     de los pines creados una sola vez, fotos decodificadas a su tamaño
+//     (cacheWidth), sin rotación del mapa y más tiles en memoria.
+//
+// BÚSQUEDA POR PRODUCTO (2026-11): el buscador, además de nombre/categoría/
+//   municipio de la tienda, busca PRODUCTOS (TiendasService.
+//   buscarTiendasPorProducto): "moto electrica" deja solo los pines de las
+//   tiendas que la venden y la tarjeta muestra "Vende: <producto>". Sin
+//   tildes ni mayúsculas, con debounce de 400 ms y desde 3 letras. El mapa
+//   no se mueve solo (se respeta la regla de abajo).
+//
 // REQUIERE (opcional pero recomendado) ampliar el select de
 // TiendasService.obtenerTiendasParaMapa() con:
 //   categoria, municipio, imagen_portada, total_valoraciones
 // Sin eso la pantalla funciona, pero los chips de categoría no filtran y
 // las tarjetas usan el logo como foto.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -48,10 +70,25 @@ import '../services/location_service.dart';
 import '../services/negocios_service.dart';
 import '../services/tiendas_service.dart';
 
+/// minúsculas y sin tildes (ñ -> n) para comparar textos en el buscador.
+String _norm(String t) {
+  const de = 'áàäâéèëêíìïîóòöôúùüûñ';
+  const a = 'aaaaeeeeiiiioooouuuun';
+  final sb = StringBuffer();
+  for (final c in t.toLowerCase().split('')) {
+    final i = de.indexOf(c);
+    sb.write(i >= 0 ? a[i] : c);
+  }
+  return sb.toString().trim();
+}
+
 // Centro por defecto: La Habana, Cuba.
 const LatLng _kCentroLaHabana = LatLng(23.1136, -82.3666);
 const double _kZoomUmbral = 14; // a partir de acá se revela la etiqueta
 const Color _kDorado = Color(0xFFD4AF37);
+// Dorado de los pines/insignias de tiendas premium (más saturado para que
+// no se confunda con el azul ni con el verde sobre el mapa).
+const Color _kDoradoVip = Color(0xFFE8A200);
 
 // Color identitario de los negocios/servicios en toda la app.
 const Color _kVerdeNegocio = Color(0xFF0D9488);
@@ -83,8 +120,8 @@ IconData _iconoNegocio(String? categoria) {
 
 
 // Alturas del panel inferior (sin contar el espacio de la barra de nav).
-const double _kAltoPanelAbierto = 182;
-const double _kAltoPanelCerrado = 60;
+const double _kAltoPanelAbierto = 146;
+const double _kAltoPanelCerrado = 56;
 
 /// Ícono por categoría -- los valores deben coincidir con
 /// kCategoriasTienda (tiendas_service.dart).
@@ -156,6 +193,16 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   bool _panelAbierto = true;
   Map<String, dynamic>? _seleccion;
 
+  // Caché de distancias (km) por id_tienda: antes se calculaban dentro del
+  // comparador del sort, en cada rebuild. Se vacía al cambiar mi ubicación.
+  final Map<dynamic, double> _distancias = {};
+
+  // Búsqueda por producto: id_tienda -> nombre del producto que coincidió.
+  Map<String, String> _productosPorTienda = {};
+  bool _buscandoProductos = false;
+  String _busquedaNorm = '';
+  Timer? _debounceBusqueda;
+
   // -------------------------------------------------------------------
   // Colores adaptativos
   // -------------------------------------------------------------------
@@ -178,6 +225,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
 
   @override
   void dispose() {
+    _debounceBusqueda?.cancel();
     _busquedaCtrl.dispose();
     _mapController.dispose();
     super.dispose();
@@ -213,6 +261,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
       // Solo guardamos la posición; el mapa NO se mueve solo. Para
       // centrar el mapa en el usuario hay que tocar "Ubicarme".
       setState(() {
+        _distancias.clear();
         _miUbicacion = LatLng(pos.latitude, pos.longitude);
         _cargandoUbicacion = false;
       });
@@ -235,6 +284,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
       if (!mounted) return;
       final ubicacion = LatLng(pos.latitude, pos.longitude);
       setState(() {
+        _distancias.clear();
         _miUbicacion = ubicacion;
         _cargandoUbicacion = false;
       });
@@ -252,12 +302,18 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   // Reglas de tienda
   // -------------------------------------------------------------------
   bool _esVip(Map<String, dynamic> t) {
-    if (t['plan'] != 'premium') return false;
+    // FIX: se normaliza el plan -- antes un 'Premium' o 'premium ' (otra
+    // mayúscula/espacio guardado desde la administración) no era vip.
+    final plan = (t['plan']?.toString() ?? '').trim().toLowerCase();
+    if (plan != 'premium') return false;
     final expira = t['plan_expira_en'] as String?;
     if (expira == null) return true;
     final fecha = DateTime.tryParse(expira);
     return fecha == null || fecha.isAfter(DateTime.now());
   }
+
+  Color _colorTienda(Map<String, dynamic> t) =>
+      _esVip(t) ? _kDoradoVip : AppColors.primary;
 
   LatLng _punto(Map<String, dynamic> m) => LatLng(
         (m['latitud'] as num).toDouble(),
@@ -267,27 +323,30 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   double? _distanciaKm(Map<String, dynamic> t) {
     final mi = _miUbicacion;
     if (mi == null) return null;
-    final p = _punto(t);
-    return Geolocator.distanceBetween(
-            mi.latitude, mi.longitude, p.latitude, p.longitude) /
-        1000;
+    return _distancias.putIfAbsent(t['id_tienda'], () {
+      final p = _punto(t);
+      return Geolocator.distanceBetween(
+              mi.latitude, mi.longitude, p.latitude, p.longitude) /
+          1000;
+    });
   }
 
   String? _estrellas(Map<String, dynamic> t) =>
       (t['promedio_estrellas'] as num?)?.toStringAsFixed(1);
 
   bool _coincideBusqueda(Map<String, dynamic> m) {
-    final q = _busqueda.trim().toLowerCase();
+    final q = _busquedaNorm;
     if (q.isEmpty) return true;
     return [m['nombre'], m['categoria'], m['municipio']]
-        .any((c) => c?.toString().toLowerCase().contains(q) ?? false);
+        .any((c) => c != null && _norm(c.toString()).contains(q));
   }
 
   List<Map<String, dynamic>> get _tiendasVisibles {
     if (!_verTiendas) return [];
     return _tiendas
         .where((t) =>
-            _coincideBusqueda(t) &&
+            (_coincideBusqueda(t) ||
+                _productosPorTienda.containsKey(t['id_tienda']?.toString())) &&
             (_categoria == null || t['categoria'] == _categoria))
         .toList();
   }
@@ -311,6 +370,44 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   // -------------------------------------------------------------------
   // Interacción
   // -------------------------------------------------------------------
+  void _alCambiarBusqueda(String v) {
+    _debounceBusqueda?.cancel();
+    final q = v.trim();
+    setState(() {
+      _busqueda = v;
+      _busquedaNorm = _norm(v);
+      _seleccion = null;
+      // Se vacía al instante: así nunca quedan pines de una búsqueda vieja.
+      _productosPorTienda = {};
+      _buscandoProductos = q.length >= 3;
+    });
+    if (q.length < 3) return;
+    _debounceBusqueda =
+        Timer(const Duration(milliseconds: 400), () => _buscarProductos(q));
+  }
+
+  Future<void> _buscarProductos(String q) async {
+    final r = await _tiendasService.buscarTiendasPorProducto(q);
+    // Si mientras tanto cambió el texto, esta respuesta ya no sirve.
+    if (!mounted || _busqueda.trim() != q) return;
+    setState(() {
+      _productosPorTienda = r;
+      _buscandoProductos = false;
+    });
+  }
+
+  void _limpiarBusqueda() {
+    _debounceBusqueda?.cancel();
+    setState(() {
+      _busquedaCtrl.clear();
+      _busqueda = '';
+      _busquedaNorm = '';
+      _seleccion = null;
+      _productosPorTienda = {};
+      _buscandoProductos = false;
+    });
+  }
+
   void _alCambiarPosicion(double? zoom) {
     if (zoom == null) return;
     final visible = zoom >= _kZoomUmbral;
@@ -374,7 +471,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                   bottom: altoPanel - 28,
                   child: _buildMapa(tiendas, negocios),
                 ),
-                if (_cargandoUbicacion || _cargandoDatos)
+                if (_cargandoUbicacion || _cargandoDatos || _buscandoProductos)
                   const Positioned(
                     top: 0,
                     left: 0,
@@ -477,7 +574,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
 
     return Container(
       padding: EdgeInsets.fromLTRB(
-          16, MediaQuery.of(context).padding.top + 10, 16, 10),
+          16, MediaQuery.of(context).padding.top + 6, 16, 6),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -505,14 +602,16 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                   children: [
                     Text('Tiendas cerca de ti',
                         style: GoogleFonts.plusJakartaSans(
-                            fontSize: 24,
+                            fontSize: 20,
                             fontWeight: FontWeight.w800,
                             color: tituloColor)),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 1),
                     Text(
-                      'Encuentra las tiendas más cercanas\ny compra lo que necesitas.',
+                      'Encuentra las tiendas más cercanas.',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12.5, height: 1.35, color: _textoSec),
+                          fontSize: 11.5, height: 1.3, color: _textoSec),
                     ),
                   ],
                 ),
@@ -521,9 +620,9 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               _pillMiUbicacion(),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           _buildBuscador(),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           _buildChips(),
         ],
       ),
@@ -540,18 +639,18 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
         borderRadius: BorderRadius.circular(30),
         onTap: _ubicarme,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.my_location_rounded,
-                  color: AppColors.primary, size: 20),
-              const SizedBox(width: 6),
+                  color: AppColors.primary, size: 17),
+              const SizedBox(width: 5),
               Text('Mi ubicación',
                   style: GoogleFonts.plusJakartaSans(
                       color: AppColors.primary,
                       fontWeight: FontWeight.w700,
-                      fontSize: 13)),
+                      fontSize: 12)),
             ],
           ),
         ),
@@ -565,28 +664,25 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
       child: Container(
       decoration: BoxDecoration(
         color: _superficie,
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
             color: AppColors.primary.withOpacity(_esOscuro ? 0.0 : 0.10),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: TextField(
         controller: _busquedaCtrl,
-        onChanged: (v) => setState(() {
-          _busqueda = v;
-          _seleccion = null;
-        }),
+        onChanged: _alCambiarBusqueda,
         style: GoogleFonts.plusJakartaSans(color: _texto, fontSize: 14),
         decoration: InputDecoration(
           filled: false,
           border: InputBorder.none,
           enabledBorder: InputBorder.none,
           focusedBorder: InputBorder.none,
-          hintText: 'Buscar tiendas, negocios...',
+          hintText: 'Buscar tiendas, productos, negocios...',
           hintStyle:
               GoogleFonts.plusJakartaSans(color: _textoSec, fontSize: 14),
           prefixIcon: const Icon(Icons.search_rounded, color: AppColors.primary),
@@ -594,13 +690,10 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               ? null
               : IconButton(
                   icon: const Icon(Icons.close_rounded, size: 20),
-                  onPressed: () => setState(() {
-                    _busquedaCtrl.clear();
-                    _busqueda = '';
-                    _seleccion = null;
-                  }),
+                  onPressed: _limpiarBusqueda,
                 ),
-          contentPadding: const EdgeInsets.symmetric(vertical: 15),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 11),
         ),
       ),
       ),
@@ -612,7 +705,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
     return TourAnchor(
       id: TourAnclas.mapaChips,
       child: SizedBox(
-      height: 42,
+      height: 34,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: categorias.length,
@@ -627,10 +720,10 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
             }),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
                 color: activo ? AppColors.primary : _superficie,
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(20),
                 border: Border.all(
                     color: activo ? AppColors.primary : _borde),
                 boxShadow: activo
@@ -649,13 +742,13 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                     cat == null
                         ? Icons.storefront_rounded
                         : _iconoCategoria(cat),
-                    size: 18,
+                    size: 15,
                     color: activo ? Colors.white : AppColors.primary,
                   ),
-                  const SizedBox(width: 7),
+                  const SizedBox(width: 5),
                   Text(cat ?? 'Todas',
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12.5,
+                          fontSize: 11.5,
                           fontWeight: FontWeight.w700,
                           color: activo ? Colors.white : _textoSec)),
                 ],
@@ -682,6 +775,10 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
         initialZoom: 12,
         minZoom: 5,
         maxZoom: 18,
+        // Sin rotación: más fluido y los pines/etiquetas siempre derechos.
+        interactionOptions: const InteractionOptions(
+          flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+        ),
         onTap: (_, __) => _limpiarSeleccion(),
         onPositionChanged: (camera, _) {
           final double? zoom = camera.zoom;
@@ -692,6 +789,12 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
         TileLayer(
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           userAgentPackageName: 'com.top_trading.app',
+          // Más tiles en memoria al hacer zoom/pan: menos recargas y menos
+          // parpadeo al volver a zonas ya vistas.
+          keepBuffer: 4,
+          panBuffer: 1,
+          maxNativeZoom: 19,
+          evictErrorTileStrategy: EvictErrorTileStrategy.notVisibleRespectMargin,
         ),
         if (_miUbicacion != null)
           MarkerLayer(markers: [
@@ -726,11 +829,12 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
     final conEtiqueta = _detalleVisible;
     return Marker(
       point: punto,
-      width: conEtiqueta ? 112 : 42,
-      height: conEtiqueta ? 90 : 42,
+      width: conEtiqueta ? 100 : 38,
+      height: conEtiqueta ? 72 : 38,
       // La punta de la gota queda justo sobre la coordenada.
       alignment: Alignment.topCenter,
-      child: pin,
+      // RepaintBoundary: al mover el mapa los pines no se repintan.
+      child: RepaintBoundary(child: pin),
     );
   }
 
@@ -759,17 +863,28 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
       ));
     }
 
-    // Tiendas; la seleccionada va al final para quedar encima.
+    // Tiendas: normales primero, premium encima de ellas y la
+    // seleccionada al final (siempre arriba de todo).
     final idSel = _seleccion?['id_tienda'];
-    final ordenadas = [
-      ...tiendas.where((t) => t['id_tienda'] != idSel),
-      ...tiendas.where((t) => t['id_tienda'] == idSel),
-    ];
+    final normales = <Map<String, dynamic>>[];
+    final vips = <Map<String, dynamic>>[];
+    Map<String, dynamic>? elegida;
+    for (final t in tiendas) {
+      if (t['id_tienda'] == idSel) {
+        elegida = t;
+      } else if (_esVip(t)) {
+        vips.add(t);
+      } else {
+        normales.add(t);
+      }
+    }
+    final ordenadas = [...normales, ...vips, if (elegida != null) elegida];
     for (final t in ordenadas) {
       marcadores.add(_marcador(
         _punto(t),
         _PinMapa(
-          color: _esVip(t) ? _kDorado : AppColors.primary,
+          esVip: _esVip(t),
+          color: _colorTienda(t),
           icono: _iconoCategoria(t['categoria'] as String?),
           nombre: t['nombre']?.toString() ?? '',
           estrellas: _estrellas(t),
@@ -805,7 +920,8 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   // Tarjeta flotante de la tienda seleccionada
   // -------------------------------------------------------------------
   Widget _tarjetaSeleccionada(Map<String, dynamic> t) {
-    final color = _esVip(t) ? _kDorado : AppColors.primary;
+    final color = _colorTienda(t);
+    final vende = _productosPorTienda[t['id_tienda']?.toString()];
     final dist = _distanciaKm(t);
     final estrellas = _estrellas(t);
     final detalle = [
@@ -818,16 +934,16 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
       color: _superficie,
       elevation: 6,
       shadowColor: Colors.black.withOpacity(0.25),
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         onTap: () => _mostrarDetalleTienda(t),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
+          padding: const EdgeInsets.fromLTRB(8, 8, 10, 8),
           child: Row(
             children: [
-              _badgeCategoria(t, color, 42),
-              const SizedBox(width: 12),
+              _badgeCategoria(t, color, 38),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -838,15 +954,25 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.plusJakartaSans(
                             fontWeight: FontWeight.w800,
-                            fontSize: 14,
+                            fontSize: 13,
                             color: _texto)),
                     if (detalle.isNotEmpty) ...[
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 1),
                       Text(detalle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.plusJakartaSans(
-                              fontSize: 11.5, color: _textoSec)),
+                              fontSize: 11, color: _textoSec)),
+                    ],
+                    if (vende != null) ...[
+                      const SizedBox(height: 1),
+                      Text('Vende: $vende',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primary)),
                     ],
                   ],
                 ),
@@ -910,7 +1036,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               behavior: HitTestBehavior.opaque,
               onTap: () => setState(() => _panelAbierto = !_panelAbierto),
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.symmetric(vertical: 7),
                 child: Center(
                   child: Container(
                     width: 38,
@@ -924,16 +1050,22 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 10, 8),
+              padding: const EdgeInsets.fromLTRB(18, 0, 10, 4),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text('Tiendas cercanas',
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 16,
+                          fontSize: 14,
                           fontWeight: FontWeight.w800,
                           color: _texto)),
                   TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                     onPressed:
                         cercanas.isEmpty ? null : () => _abrirListaCompleta(),
                     child: Row(
@@ -950,7 +1082,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
               ),
             ),
             SizedBox(
-              height: 112,
+              height: 84,
               child: cercanas.isEmpty
                   ? Center(
                       child: Text(
@@ -976,29 +1108,32 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
   }
 
   Widget _tarjetaCercana(Map<String, dynamic> t) {
-    final color = _esVip(t) ? _kDorado : AppColors.primary;
+    final color = _colorTienda(t);
     final portada = t['imagen_portada'] as String?;
     final logo = t['logo_url'] as String?;
     final foto = (portada != null && portada.isNotEmpty) ? portada : logo;
     final dist = _distanciaKm(t);
     final estrellas = _estrellas(t);
     final resenas = (t['total_valoraciones'] as num?)?.toInt();
-    final categoria = (t['categoria'] ?? t['municipio'] ?? '').toString();
+    final vende = _productosPorTienda[t['id_tienda']?.toString()];
+    final categoria = vende != null
+        ? 'Vende: $vende'
+        : (t['categoria'] ?? t['municipio'] ?? '').toString();
     final seleccionada = _seleccion?['id_tienda'] == t['id_tienda'];
 
     return Container(
-      width: 262,
-      margin: const EdgeInsets.only(right: 10),
+      width: 236,
+      margin: const EdgeInsets.only(right: 8),
       child: Material(
         color: _esOscuro ? const Color(0xFF2C2C2E) : const Color(0xFFF6F9FE),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         child: InkWell(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           onTap: () => _seleccionarYCentrar(t),
           child: Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: seleccionada ? color : _borde,
                 width: seleccionada ? 1.6 : 1,
@@ -1007,7 +1142,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
             child: Row(
               children: [
                 SizedBox(
-                  width: 86,
+                  width: 70,
                   height: double.infinity,
                   child: Stack(
                     clipBehavior: Clip.none,
@@ -1018,6 +1153,9 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                           child: (foto != null && foto.isNotEmpty)
                               ? Image.network(foto,
                                   fit: BoxFit.cover,
+                                  // Decodifica a su tamaño real (70px):
+                                  // menos memoria y scroll más fluido.
+                                  cacheWidth: 180,
                                   errorBuilder: (_, __, ___) =>
                                       _fotoVacia(color))
                               : _fotoVacia(color),
@@ -1026,12 +1164,12 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                       Positioned(
                         left: -2,
                         bottom: -2,
-                        child: _badgeCategoria(t, color, 30),
+                        child: _badgeCategoria(t, color, 26),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1042,13 +1180,13 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.plusJakartaSans(
                               fontWeight: FontWeight.w800,
-                              fontSize: 13.5,
+                              fontSize: 12.5,
                               color: _texto)),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       Row(
                         children: [
                           const Icon(Icons.star_rounded,
-                              size: 14, color: _kDorado),
+                              size: 13, color: _kDorado),
                           const SizedBox(width: 3),
                           Flexible(
                             child: Text(
@@ -1058,7 +1196,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 11.5,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w600,
                                   color: _textoSec),
                             ),
@@ -1066,23 +1204,23 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                         ],
                       ),
                       if (categoria.isNotEmpty) ...[
-                        const SizedBox(height: 2),
+                        const SizedBox(height: 1),
                         Text(categoria,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.plusJakartaSans(
-                                fontSize: 11, color: _textoSec)),
+                                fontSize: 10.5, color: _textoSec)),
                       ],
                       if (dist != null) ...[
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 2),
                         Row(
                           children: [
                             Icon(Icons.near_me_rounded,
-                                size: 12, color: color),
+                                size: 11, color: color),
                             const SizedBox(width: 3),
                             Text('${dist.toStringAsFixed(1)} km',
                                 style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 11.5,
+                                    fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                     color: color)),
                           ],
@@ -1152,7 +1290,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                 itemCount: lista.length,
                 itemBuilder: (context, i) {
                   final t = lista[i];
-                  final color = _esVip(t) ? _kDorado : AppColors.primary;
+                  final color = _colorTienda(t);
                   final dist = _distanciaKm(t);
                   final logo = t['logo_url'] as String?;
                   final sub = [
@@ -1247,6 +1385,7 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
                         ? Image.network(
                             fotoPrincipal,
                             fit: BoxFit.cover,
+                            cacheWidth: 240,
                             errorBuilder: (_, __, ___) => _fotoVacia(
                                 AppColors.primary),
                           )
@@ -1317,6 +1456,12 @@ class _MapaTiendasScreenState extends State<MapaTiendasScreen> {
 /// etiqueta (nombre + estrellas o categoría) encima. Se ancla por abajo
 /// (la punta de la gota es la coordenada real) y al seleccionarse solo
 /// escala -- nunca cambia el tamaño del Marker, así que no salta.
+///
+/// PRECISIÓN: el glifo Icons.location_on (24x24) dibuja la punta en y=22,
+/// o sea deja 2/24 de aire bajo ella. Se desplaza el pin esa fracción hacia
+/// abajo para que la punta caiga exactamente en la coordenada. El Transform
+/// va DENTRO del AnimatedScale (que pivota en el borde inferior), así la
+/// punta sigue fija en la coordenada también al seleccionar.
 class _PinMapa extends StatelessWidget {
   final Color color;
   final IconData icono;
@@ -1325,6 +1470,7 @@ class _PinMapa extends StatelessWidget {
   final String? estrellas;
   final bool conEtiqueta;
   final bool seleccionado;
+  final bool esVip;
   final VoidCallback onTap;
 
   const _PinMapa({
@@ -1336,11 +1482,22 @@ class _PinMapa extends StatelessWidget {
     required this.seleccionado,
     required this.onTap,
     this.subtitulo,
+    this.esVip = false,
   });
+
+  // Estilos creados una sola vez (antes se armaban por cada pin en cada
+  // rebuild).
+  static final TextStyle _estiloNombre = GoogleFonts.plusJakartaSans(
+      fontSize: 9,
+      fontWeight: FontWeight.w700,
+      height: 1.1,
+      color: AppColors.inkLight);
+  static final TextStyle _estiloEstrellas = GoogleFonts.plusJakartaSans(
+      fontSize: 8.5, height: 1.1, color: AppColors.inkSecundarioLight);
 
   @override
   Widget build(BuildContext context) {
-    final tam = conEtiqueta ? 46.0 : 40.0;
+    final tam = conEtiqueta ? 38.0 : 34.0;
 
     return GestureDetector(
       onTap: onTap,
@@ -1349,101 +1506,111 @@ class _PinMapa extends StatelessWidget {
         scale: seleccionado ? 1.18 : 1,
         alignment: Alignment.bottomCenter,
         duration: const Duration(milliseconds: 150),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            if (conEtiqueta) ...[
-              Container(
-                constraints: const BoxConstraints(maxWidth: 108),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: color.withOpacity(0.4)),
-                  boxShadow: [
-                    BoxShadow(
-                        color: Colors.black.withOpacity(0.15),
-                        blurRadius: 3,
-                        offset: const Offset(0, 1)),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      nombre,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          height: 1.1,
-                          color: AppColors.inkLight),
-                    ),
-                    if (estrellas != null)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.star_rounded,
-                              size: 10, color: _kDorado),
-                          const SizedBox(width: 2),
-                          Text(estrellas!,
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 9.5,
-                                  height: 1.1,
-                                  color: AppColors.inkSecundarioLight)),
-                        ],
-                      )
-                    else if (subtitulo != null && subtitulo!.isNotEmpty)
-                      Text(
-                        subtitulo!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 9.5,
-                            height: 1.1,
-                            color: AppColors.inkSecundarioLight),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 2),
-            ],
-            SizedBox(
-              width: tam,
-              height: tam,
-              child: Stack(
-                children: [
-                  Icon(
-                    Icons.location_on,
-                    size: tam,
-                    color: color,
-                    shadows: [
-                      Shadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 4,
+        child: Transform.translate(
+          offset: Offset(0, tam * 2 / 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              if (conEtiqueta) ...[
+                Container(
+                  constraints: const BoxConstraints(maxWidth: 94),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(color: color.withOpacity(0.45)),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.15),
+                          blurRadius: 3,
                           offset: const Offset(0, 1)),
                     ],
                   ),
-                  Positioned(
-                    top: tam * 0.15,
-                    left: tam * 0.28,
-                    child: Container(
-                      width: tam * 0.44,
-                      height: tam * 0.44,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        nombre,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: _estiloNombre,
                       ),
-                      child: Icon(icono, size: tam * 0.28, color: color),
-                    ),
+                      if (estrellas != null)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.star_rounded,
+                                size: 9, color: _kDorado),
+                            const SizedBox(width: 2),
+                            Text(estrellas!, style: _estiloEstrellas),
+                          ],
+                        )
+                      else if (subtitulo != null && subtitulo!.isNotEmpty)
+                        Text(
+                          subtitulo!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: _estiloEstrellas,
+                        ),
+                    ],
                   ),
-                ],
+                ),
+                const SizedBox(height: 1),
+              ],
+              SizedBox(
+                width: tam,
+                height: tam,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(
+                      Icons.location_on,
+                      size: tam,
+                      color: color,
+                      shadows: [
+                        Shadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 3,
+                            offset: const Offset(0, 1)),
+                      ],
+                    ),
+                    Positioned(
+                      top: tam * 0.15,
+                      left: tam * 0.28,
+                      child: Container(
+                        width: tam * 0.44,
+                        height: tam * 0.44,
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(icono, size: tam * 0.28, color: color),
+                      ),
+                    ),
+                    // Insignia de estrella solo en tiendas premium vigentes.
+                    if (esVip)
+                      Positioned(
+                        top: -tam * 0.04,
+                        right: -tam * 0.06,
+                        child: Container(
+                          width: tam * 0.38,
+                          height: tam * 0.38,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: color, width: 1),
+                          ),
+                          child: Icon(Icons.star_rounded,
+                              size: tam * 0.26, color: color),
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

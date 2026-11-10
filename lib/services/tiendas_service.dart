@@ -316,7 +316,7 @@ class TiendasService {
       CacheOfflineService.instance.guardar('destacados_$idTienda', lista);
       return lista;
     } catch (_) {
-      return CacheOfflineService.instance.leerLista('destacados_$idTienda') ?? [];
+      return await CacheOfflineService.instance.leerLista('destacados_$idTienda');
     }
   }
 
@@ -466,6 +466,67 @@ class TiendasService {
   /// Tiendas activas con coordenadas, para pintar los pines del mapa
   /// interactivo. Solo trae lo que el pin/globito necesita mostrar --
   /// no todo el resto de columnas de 'tiendas'.
+  /// Palabras que no aportan al buscar un producto.
+  static const _palabrasVacias = {
+    'de', 'del', 'la', 'el', 'los', 'las', 'y', 'o', 'con', 'para', 'en', 'un', 'una',
+  };
+
+  /// minúsculas, sin tildes ni signos (ñ -> n) para comparar textos.
+  static String _normalizarBusqueda(String t) {
+    const de = 'áàäâéèëêíìïîóòöôúùüûñ';
+    const a = 'aaaaeeeeiiiioooouuuun';
+    final sb = StringBuffer();
+    for (final c in t.toLowerCase().split('')) {
+      final i = de.indexOf(c);
+      sb.write(i >= 0 ? a[i] : c);
+    }
+    return sb
+        .toString()
+        .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  /// Busca PRODUCTOS (visibles y con stock) cuyo nombre contenga todas las
+  /// palabras de [consulta], sin importar mayúsculas ni tildes
+  /// ("moto electrica" encuentra "Moto Eléctrica 2000W"), y devuelve
+  /// { id_tienda: nombre del primer producto que coincidió }.
+  /// Lo usa el buscador del mapa para mostrar solo las tiendas que venden
+  /// lo buscado. Si falla la red devuelve vacío (el mapa sigue funcionando
+  /// con la búsqueda por nombre de tienda).
+  Future<Map<String, String>> buscarTiendasPorProducto(String consulta) async {
+    final palabras = _normalizarBusqueda(consulta)
+        .split(' ')
+        .where((w) => w.length >= 2 && !_palabrasVacias.contains(w))
+        .toList();
+    if (palabras.isEmpty) return {};
+    try {
+      var q = supabase
+          .from('productos')
+          .select('id_tienda, nombre')
+          .eq('es_visible', true)
+          .gt('cantidad_disponible', 0);
+      for (final w in palabras) {
+        // Filtro "flojo" en la BD: vocales y n -> comodín, así una tilde o
+        // una ñ guardada en el nombre no lo descarta. El filtro exacto
+        // (sin tildes) se hace abajo en Dart.
+        q = q.ilike('nombre', '%${w.replaceAll(RegExp(r'[aeioun]'), '_')}%');
+      }
+      final res = await q.limit(500);
+      final out = <String, String>{};
+      for (final r in List<Map<String, dynamic>>.from(res)) {
+        final nombre = r['nombre']?.toString() ?? '';
+        final n = _normalizarBusqueda(nombre);
+        if (!palabras.every(n.contains)) continue;
+        final id = r['id_tienda']?.toString();
+        if (id != null) out.putIfAbsent(id, () => nombre);
+      }
+      return out;
+    } catch (_) {
+      return {};
+    }
+  }
+
   Future<List<Map<String, dynamic>>> obtenerTiendasParaMapa() async {
     try {
       final res = await supabase
@@ -1174,13 +1235,19 @@ class TiendasService {
     required String idTienda,
     required String idPlan,
   }) async {
-    final plan = await supabase
-        .from('planes')
-        .select('codigo')
-        .eq('id_plan', idPlan)
-        .single();
-    await supabase.from('tiendas').update(
-        {'plan': plan['codigo'], 'estado': 'active'}).eq('id_tienda', idTienda);
+    // FIX: antes hacía un update directo sobre tiendas (plan/estado) y la
+    // base de datos lo rechazaba con CAMPO_PROTEGIDO. Ahora lo hace el RPC
+    // activar_plan_gratis (SECURITY DEFINER), igual que crear_tienda_plan_
+    // gratis en el registro: valida "una sola vez por cuenta", activa la
+    // tienda y fija el vencimiento a 14 días.
+    try {
+      await supabase.rpc('activar_plan_gratis', params: {
+        'p_id_tienda': idTienda,
+        'p_id_plan': idPlan,
+      });
+    } on PostgrestException catch (e) {
+      throw Exception(e.message);
+    }
   }
 
   Future<Map<String, dynamic>?> obtenerPlanPorCodigo(String codigo) async {

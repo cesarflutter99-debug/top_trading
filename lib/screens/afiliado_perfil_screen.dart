@@ -23,6 +23,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
+import '../core/app_links_config.dart';
 import '../core/supabase_client.dart';
 import '../services/tiendas_service.dart';
 import '../services/afiliado_state_service.dart';
@@ -276,7 +277,7 @@ class _AfiliadoPerfilScreenState extends State<AfiliadoPerfilScreen> {
   void _compartirCodigo() {
     if (_afiliado == null) return;
     final codigo = _afiliado!['codigo'] ?? '';
-    final link = 'io.supabase.toptrading://afiliado/$codigo';
+    final link = kEnlaceAfiliado(codigo);
     Share.share(
       '¡Únete a Al Lado! 🛍️\n'
       'Usa mi código de afiliado "$codigo" al registrar tu tienda y obtén '

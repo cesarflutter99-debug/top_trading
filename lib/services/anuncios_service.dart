@@ -28,6 +28,7 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import '../core/supabase_client.dart';
+import 'cache_offline_service.dart';
 import 'storage_service.dart';
 
 /// Tope de ranuras COMPRADAS por negocio (paquetes acumulados).
@@ -96,6 +97,23 @@ class Anuncio {
         whatsapp: j['whatsapp'] as String?,
       );
 
+  /// Para guardar el anuncio en el caché offline (mismas claves que fromJson).
+  Map<String, dynamic> toJson() => {
+        'id_anuncio': idAnuncio,
+        'tipo': tipo,
+        'titulo': titulo,
+        'texto': texto,
+        'imagen_url': imagenUrl,
+        'etiqueta': etiqueta,
+        'id_tienda': idTienda,
+        'id_producto': idProducto,
+        'id_negocio': idNegocio,
+        'destino_nombre': destinoNombre,
+        'destino_imagen': destinoImagen,
+        'precio_usd': precioUsd,
+        'whatsapp': whatsapp,
+      };
+
   /// Etiqueta legal fija por tipo -- solo se usa si el admin no puso
   /// una personalizada en la columna etiqueta.
   String get etiquetaFinal {
@@ -114,6 +132,22 @@ class Anuncio {
 }
 
 class AnunciosService {
+  /// Guarda una lista de anuncios en el caché offline (fire & forget).
+  void _guardarAnuncios(String clave, List<Anuncio> lista) {
+    CacheOfflineService.instance
+        .guardar(clave, lista.map((a) => a.toJson()).toList());
+  }
+
+  /// Última lista de anuncios guardada (vacía si no hay o está dañada).
+  Future<List<Anuncio>> _leerAnunciosCache(String clave) async {
+    try {
+      final filas = await CacheOfflineService.instance.leerLista(clave);
+      return filas.map((f) => Anuncio.fromJson(f)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Anuncios para intercalar en el feed (backend prioriza y rota:
   /// admin -> negocio -> producto, máximo de cupos server-side).
   /// Si se proveen [provincia] y/o [municipio], el RPC filtrará los anuncios
@@ -124,19 +158,28 @@ class AnunciosService {
     String? provincia,
     String? municipio,
   }) async {
+    final claveCache = 'anuncios_feed_${provincia ?? ''}_${municipio ?? ''}';
     try {
       final res = await supabase.rpc(
         'obtener_anuncios_feed',
         params: {'p_cantidad': cantidad, 'provincia': provincia, 'municipio': municipio},
       );
       final filas = List<Map<String, dynamic>>.from(res as List);
-      return filas
+      final lista = filas
           .map((f) => Anuncio.fromJson(
               Map<String, dynamic>.from(f['anuncio'] as Map)))
           .toList();
+      _guardarAnuncios(claveCache, lista);
+      return lista;
     } catch (e) {
       debugPrint('obtener_anuncios_feed RPC falló (¿offline o schema?): $e');
-      return _feedDirecto(cantidad);
+      final directo = await _feedDirecto(cantidad);
+      if (directo != null) {
+        _guardarAnuncios(claveCache, directo);
+        return directo;
+      }
+      // Sin conexión: se muestra la última copia guardada del feed
+      return _leerAnunciosCache(claveCache);
     }
   }
 
@@ -149,7 +192,7 @@ class AnunciosService {
   /// todavía. Así el usuario nunca ve siempre los mismos anuncios.
   static final Set<String> _idsMostradosFallback = {};
 
-  Future<List<Anuncio>> _feedDirecto(int cantidad) async {
+  Future<List<Anuncio>?> _feedDirecto(int cantidad) async {
     try {
       final data = await supabase
           .from('anuncios')
@@ -179,22 +222,25 @@ class AnunciosService {
       return ordenados.take(cantidad).toList();
     } catch (e) {
       debugPrint('fallback de feed directo falló (¿offline?): $e');
-      return [];
+      return null;
     }
   }
 
   /// Carrusel superior: solo tipo='admin', máx 5, rotación aleatoria.
   Future<List<Anuncio>> obtenerCarrusel({int limite = 5}) async {
+    const claveCache = 'anuncios_carrusel';
     try {
       final res = await supabase.rpc(
         'obtener_anuncios_carrusel',
         params: {'p_limite': limite},
       );
       final filas = List<Map<String, dynamic>>.from(res as List);
-      return filas
+      final lista = filas
           .map((f) => Anuncio.fromJson(
               Map<String, dynamic>.from(f['anuncio'] as Map)))
           .toList();
+      _guardarAnuncios(claveCache, lista);
+      return lista;
     } catch (e) {
       debugPrint('obtener_anuncios_carrusel RPC falló (¿offline o schema?): $e');
       try {
@@ -205,12 +251,15 @@ class AnunciosService {
             .eq('estado', 'aprobado')
             .order('creado_en', ascending: false)
             .limit(limite.clamp(0, 50));
-        return data
+        final lista = data
             .map((r) => Anuncio.fromJson(Map<String, dynamic>.from(r)))
             .toList();
+        _guardarAnuncios(claveCache, lista);
+        return lista;
       } catch (e2) {
         debugPrint('fallback de carrusel directo falló (¿offline?): $e2');
-        return [];
+        // Sin conexión: se muestra la última copia guardada del carrusel
+        return _leerAnunciosCache(claveCache);
       }
     }
   }
@@ -226,10 +275,13 @@ class AnunciosService {
           .select()
           .eq('id_anuncio', idAnuncio)
           .maybeSingle();
+      if (res != null) {
+        CacheOfflineService.instance.guardar('anuncio_$idAnuncio', res);
+      }
       return res;
     } catch (e) {
       debugPrint('obtenerAnuncioPorId falló (¿offline?): $e');
-      return null;
+      return await CacheOfflineService.instance.leerMapa('anuncio_$idAnuncio');
     }
   }
 
@@ -309,7 +361,11 @@ class AnunciosService {
       try {
         final res = await supabase
             .from('paquetes_anuncio')
-            .select('id_paquete, nombre, descripcion, precio_usd, duracion_dias, activo, orden')
+            // FIX: antes faltaba max_anuncios (ranuras), standalone y
+            // destino -- por eso el modal de pago no mostraba cuántos
+            // anuncios incluye el paquete. Son columnas reales de
+            // paquetes_anuncio.
+            .select('id_paquete, nombre, descripcion, precio_usd, duracion_dias, max_anuncios, activo, orden, standalone, destino')
             .eq('activo', true)
             .order('orden', ascending: true);
         final lista = List<Map<String, dynamic>>.from(res as List);
@@ -317,7 +373,7 @@ class AnunciosService {
         return lista;
       } catch (e2) {
         debugPrint('obtenerPaquetesActivos falló (¿offline?): $e2');
-        return CacheOfflineService.instance.leerLista('paquetes_anuncio_activos') ?? [];
+        return await CacheOfflineService.instance.leerLista('paquetes_anuncio_activos');
       }
     }
   }
@@ -337,7 +393,7 @@ class AnunciosService {
       return lista;
     } catch (e) {
       debugPrint('obtenerPaquetesRegistroNegocio falló: $e');
-      return CacheOfflineService.instance.leerLista('paquetes_registro_negocio') ?? [];
+      return await CacheOfflineService.instance.leerLista('paquetes_registro_negocio');
     }
   }
 
@@ -347,15 +403,21 @@ class AnunciosService {
     try {
       final res = await supabase
           .from('paquetes_anuncio_cuentas_pago')
-          .select('id_cuenta, id_paquete, codigo_pago, tipo_pago, monto, activo')
+          // FIX: antes pedía codigo_pago, tipo_pago y monto, columnas que
+          // NO existen en paquetes_anuncio_cuentas_pago. La consulta
+          // fallaba en silencio (catch -> lista vacía) y el modal decía
+          // "Sin cuentas configuradas". Las columnas reales son tipo,
+          // numero_tarjeta y qr_url, que es lo que lee el modal.
+          .select('id_cuenta, id_paquete, tipo, numero_tarjeta, qr_url, activo')
           .eq('id_paquete', idPaquete)
-          .eq('activo', true);
+          .eq('activo', true)
+          .order('creado_en');
       final lista = List<Map<String, dynamic>>.from(res as List);
       CacheOfflineService.instance.guardar('cuentas_paquete_$idPaquete', lista);
       return lista;
     } catch (e) {
       debugPrint('obtenerCuentasDePaquete falló: $e');
-      return CacheOfflineService.instance.leerLista('cuentas_paquete_$idPaquete') ?? [];
+      return await CacheOfflineService.instance.leerLista('cuentas_paquete_$idPaquete');
     }
   }
 
@@ -444,7 +506,7 @@ class AnunciosService {
       return lista;
     } catch (e) {
       debugPrint('comprasPendientesDeTienda falló: $e');
-      return CacheOfflineService.instance.leerLista('compras_tienda_$idTienda') ?? [];
+      return await CacheOfflineService.instance.leerLista('compras_tienda_$idTienda');
     }
   }
 
@@ -465,7 +527,7 @@ class AnunciosService {
       return lista;
     } catch (e) {
       debugPrint('comprasPendientesStandalone falló: $e');
-      return CacheOfflineService.instance.leerLista('compras_standalone_$uid') ?? [];
+      return await CacheOfflineService.instance.leerLista('compras_standalone_$uid');
     }
   }
 
@@ -502,7 +564,7 @@ class AnunciosService {
       }
       return total;
     } catch (_) {
-      final cached = CacheOfflineService.instance.leerMapa('ranuras_extra_$idTienda');
+      final cached = await CacheOfflineService.instance.leerMapa('ranuras_extra_$idTienda');
       if (cached != null && cached['total'] != null) {
         return cached['total'] as int;
       }
@@ -550,10 +612,10 @@ class AnunciosService {
           .eq('estado', 'aprobado');
       final count = (res as List).length;
       // Cachear el conteo por usuario
-      CacheOfflineService.instance.guardar('usados_unificados_$uid', count);
+      CacheOfflineService.instance.guardar('usados_unificados_$uid', {'total': count});
       return count;
     } catch (_) {
-      final cached = CacheOfflineService.instance.leerMapa('usados_unificados_$uid');
+      final cached = await CacheOfflineService.instance.leerMapa('usados_unificados_$uid');
       return cached?['total'] as int? ?? 0;
     }
   }
@@ -574,20 +636,20 @@ class AnunciosService {
         final h = DateTime.tryParse(p['hasta'] as String? ?? '');
         if (h != null && (hasta == null || h.isAfter(hasta))) hasta = h;
       }
-      // Cachear los permisos vigentes para este usuario
-      if (max > 0 || hasta != null) {
-        CacheOfflineService.instance.guardar('permisos_vigentes_$uid', {
-          'max': max,
-          'hasta': hasta?.toIso8601String(),
-        });
+      // Cachear los permisos vigentes para este usuario (siempre, incluso
+      // si quedaron en 0, para que el cache no conserve permisos vencidos)
+      CacheOfflineService.instance.guardar('permisos_vigentes_$uid', {
+        'max': max,
+        'hasta': hasta?.toIso8601String(),
+      });
+    } catch (_) {
+      // Sin red: recuperar la última copia guardada
+      final cached = await CacheOfflineService.instance.leerMapa('permisos_vigentes_$uid');
+      if (cached != null) {
+        max = cached['max'] as int? ?? 0;
+        final h = DateTime.tryParse(cached['hasta'] as String? ?? '');
+        if (h != null) hasta = h;
       }
-    } catch (_) {}
-    // Intentar recuperar de cache si la consulta falla
-    final cached = CacheOfflineService.instance.leerMapa('permisos_vigentes_$uid');
-    if (cached != null) {
-      max = cached['max'] as int? ?? 0;
-      final h = DateTime.tryParse(cached['hasta'] as String? ?? '');
-      if (h != null) hasta = h;
     }
     return (max: max, hasta: hasta);
   }

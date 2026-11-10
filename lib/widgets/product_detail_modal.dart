@@ -25,6 +25,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
+import '../core/app_links_config.dart';
 import '../core/supabase_client.dart';
 import '../core/auth_guard.dart';
 import '../services/currency_service.dart';
@@ -201,7 +202,7 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
   }
 
   void _shareTienda() {
-    final link = 'io.supabase.toptrading://tienda/${widget.data.idTienda}';
+    final link = kEnlaceTienda(widget.data.idTienda);
     Share.share(
       'Mira la tienda "${widget.data.nombreTienda}" en Al Lado: $link',
     );
@@ -209,8 +210,7 @@ class _ProductDetailModalState extends State<ProductDetailModal> {
 
   void _shareProducto() {
     final d = widget.data;
-    final link =
-        'io.supabase.toptrading://tienda/${d.idTienda}?producto=${d.idProducto}';
+    final link = kEnlaceTienda(d.idTienda, d.idProducto);
     Share.share(
         'Mira este producto: ${d.nombre} - \$${d.precioUsd.toStringAsFixed(2)} USD\n$link');
   }

@@ -39,6 +39,7 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/app_colors.dart';
+import '../core/app_links_config.dart';
 import '../widgets/tour_anchor.dart';
 import '../core/supabase_client.dart';
 import '../core/auth_guard.dart';
@@ -236,7 +237,7 @@ class _StoreScreenState extends State<StoreScreen> {
   void _compartirTienda([Map<String, dynamic>? datos]) {
     final t = datos ?? _tiendaCache;
     final nombre = (t?['nombre'] as String?)?.trim();
-    final link = 'io.supabase.toptrading://tienda/${widget.idTienda}';
+    final link = kEnlaceTienda(widget.idTienda);
     if (nombre == null || nombre.isEmpty) {
       // Sin nombre todavía cargado (raro, pero por si acaso): igual
       // compartimos el link, mejor que no hacer nada.
@@ -1210,8 +1211,7 @@ class _DetalleProductoModalState extends State<_DetalleProductoModal> {
     final nombre = widget.producto['nombre'] ?? 'producto';
     final precio = (widget.producto['precio_usd'] as num?)?.toStringAsFixed(2);
     final idProducto = widget.producto['id_producto']?.toString() ?? '';
-    final link =
-        'io.supabase.toptrading://tienda/${widget.idTienda}?producto=$idProducto';
+    final link = kEnlaceTienda(widget.idTienda, idProducto);
     Share.share(
         'Mira este producto: $nombre${precio != null ? ' - \$$precio USD' : ''}\n$link');
   }

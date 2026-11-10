@@ -7,6 +7,15 @@
 //   - onSolicitudCreada (pasado a ModalPagoPlan): además de recargar
 //     la solicitud pendiente local, refresca TiendaStateService --
 //     por si el estado de la tienda cambió al crear la solicitud.
+//
+// PLAN GRATIS UNA SOLA VEZ POR CUENTA (2026-11):
+//   - Antes se miraba tienda['plan_gratis_usado'] (dato de la TIENDA):
+//     si el usuario borraba la tienda y creaba otra, volvía a ver el
+//     botón. Ahora se consulta puedeUsarPlanGratis() (fn_puede_usar_plan_
+//     gratis, permanente por CUENTA -- la misma que usa el registro).
+//   - Si ya lo usó, la tarjeta del plan gratis se OCULTA (salvo que sea
+//     su plan actual).
+//   - _activarGratis() vuelve a comprobar antes de llamar al servidor.
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -30,6 +39,7 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
   Map<String, dynamic>? _solicitudPendiente;
   bool _cargandoSolicitud = true;
   bool _procesandoGratis = false;
+  bool _puedeUsarGratis = false;
 
   @override
   void initState() {
@@ -43,7 +53,16 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
     try {
       final solicitud = await _tiendasService
           .obtenerSolicitudPendienteDeTienda(widget.tienda['id_tienda']);
-      if (mounted) setState(() => _solicitudPendiente = solicitud);
+      bool puedeGratis = false;
+      try {
+        puedeGratis = await _tiendasService.puedeUsarPlanGratis();
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _solicitudPendiente = solicitud;
+          _puedeUsarGratis = puedeGratis;
+        });
+      }
     } finally {
       if (mounted) setState(() => _cargandoSolicitud = false);
     }
@@ -76,6 +95,16 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
   Future<void> _activarGratis(Map<String, dynamic> plan) async {
     setState(() => _procesandoGratis = true);
     try {
+      if (!await _tiendasService.puedeUsarPlanGratis()) {
+        if (mounted) {
+          setState(() => _puedeUsarGratis = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Ya usaste tu plan gratuito con esta cuenta.')),
+          );
+        }
+        return;
+      }
       await _tiendasService.activarPlanGratis(
         idTienda: widget.tienda['id_tienda'],
         idPlan: plan['id_plan'],
@@ -244,8 +273,12 @@ class _GestionarPlanesScreenState extends State<GestionarPlanesScreen> {
                   final esActual =
                       (p['codigo'] as String? ?? '').toLowerCase() ==
                           planActual;
-                  final yaUsoGratis =
-                      widget.tienda['plan_gratis_usado'] as bool? ?? false;
+                  // Plan gratis ya usado por esta cuenta: se esconde la
+                  // tarjeta (salvo que sea el plan actual de la tienda).
+                  if (esGratis && !esActual && !_puedeUsarGratis) {
+                    return const SizedBox.shrink();
+                  }
+                  final yaUsoGratis = !_puedeUsarGratis;
                   final esElPlanSolicitado = haySolicitudPendiente &&
                       _solicitudPendiente!['id_plan_solicitado'] ==
                           p['id_plan'];
